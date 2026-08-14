@@ -31,6 +31,11 @@ jobs:
           username: ${{ secrets.DROPLET_USER }}
           key: ${{ secrets.DROPLET_SSH_KEY }}
           port: ${{ secrets.DROPLET_SSH_PORT }}
+          # O build (docker compose build) reinstala dependências do zero e pode
+          # passar dos 10 minutos padrão da action em builds maiores — sem esse
+          # limite maior, a action mata o processo no meio do "npm ci" e o deploy
+          # falha por timeout, não por erro de verdade.
+          command_timeout: 40m
           script: |
             set -e
             cd /opt/plataforma-ofertas
