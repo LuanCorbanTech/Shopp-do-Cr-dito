@@ -1,0 +1,9 @@
+{
+  "name": "@plataforma-ofertas/admin-panel",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo \"admin-panel: setup do Next.js previsto para a Fase 7\" && exit 0",
+    "build": "echo \"admin-panel: setup do Next.js previsto para a Fase 7\" && exit 0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@plataforma-ofertas/workers",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "ts-node-dev --respawn src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@plataforma-ofertas/database": "*",
+    "@plataforma-ofertas/domain": "*",
+    "@plataforma-ofertas/queue": "*",
+    "@plataforma-ofertas/shared": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "ts-node-dev": "^2.0.0"
+  }
+}

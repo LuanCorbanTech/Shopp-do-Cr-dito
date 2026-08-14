@@ -1,0 +1,28 @@
+{
+  "name": "plataforma-ofertas",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Plataforma de Gestão, Validação, Roteamento e Disparo de Ofertas",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "packages/integrations/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "prisma:generate": "npm run generate --workspace=@plataforma-ofertas/database",
+    "prisma:migrate": "npm run migrate:dev --workspace=@plataforma-ofertas/database",
+    "dev:api": "npm run dev --workspace=@plataforma-ofertas/api",
+    "dev:workers": "npm run dev --workspace=@plataforma-ofertas/workers"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.9"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

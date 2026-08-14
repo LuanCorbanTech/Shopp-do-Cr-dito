@@ -1,0 +1,355 @@
+// Schema inicial (Fase 0) — modela o diagrama ER da seção 5 do documento de arquitetura.
+// Nomenclatura pode evoluir; manter o significado dos campos e os índices.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum OfferStatus {
+  RECEBIDO
+  PROCESSANDO_TELEFONE
+  TELEFONE_ATUALIZADO
+  VALIDANDO_WHATSAPP
+  WHATSAPP_VALIDADO
+  AGUARDANDO_ROTEAMENTO
+  AGUARDANDO_ENVIO
+  EM_PROCESSAMENTO_ENVIO
+  ENVIADO
+  SEM_WHATSAPP
+  SEM_ROTA_CONFIGURADA
+  ERRO_TELEFONE
+  ERRO_VALIDACAO_WHATSAPP
+  ERRO_ENVIO
+  CANCELADO
+  EXPIRADO
+}
+
+enum DispatchQueueStatus {
+  AGUARDANDO
+  RESERVADO
+  PROCESSADO
+  FALHOU
+}
+
+enum DispatchStatus {
+  SUCESSO
+  FALHA
+  RETRYING
+}
+
+enum HttpMethod {
+  GET
+  POST
+  PUT
+  PATCH
+  DELETE
+}
+
+enum AuthType {
+  NONE
+  API_KEY
+  BEARER_TOKEN
+  BASIC
+  HMAC
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+// ---------------------------------------------------------------------------
+// Origem
+// ---------------------------------------------------------------------------
+
+model Webhook {
+  id         String   @id @default(uuid())
+  identificador String @unique // usado na URL: /webhooks/ofertas/:identificador
+  origem     String
+  secretHmac String   @map("secret_hmac")
+  ativo      Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  offers Offer[]
+
+  @@map("webhooks")
+}
+
+// ---------------------------------------------------------------------------
+// Oferta (entidade central)
+// ---------------------------------------------------------------------------
+
+model Offer {
+  id               String      @id @default(uuid())
+  externalId       String?     @map("external_id")
+  idempotencyKey   String      @map("idempotency_key")
+
+  nome             String?
+  cpf              String?
+  telefoneOriginal String      @map("telefone_original")
+  telefoneAtualizado String?   @map("telefone_atualizado")
+  telefoneValidado String?     @map("telefone_validado")
+
+  bancoAutorizado  String?     @map("banco_autorizado")
+  produto          String?
+  valor            Decimal?    @db.Decimal(14, 2)
+  parcelas         Int?
+
+  webhookId        String      @map("webhook_id")
+  webhook          Webhook     @relation(fields: [webhookId], references: [id])
+
+  payloadOriginal  Json        @map("payload_original")
+  dadosAdicionais  Json?       @map("dados_adicionais")
+
+  status           OfferStatus @default(RECEBIDO)
+
+  routingRuleId    String?     @map("routing_rule_id")
+  routingRule      RoutingRule? @relation(fields: [routingRuleId], references: [id])
+
+  endpointId       String?     @map("endpoint_id")
+  endpoint         Endpoint?   @relation(fields: [endpointId], references: [id])
+
+  campaignId       String?     @map("campaign_id")
+  campaign         Campaign?   @relation(fields: [campaignId], references: [id])
+
+  reservedAt       DateTime?   @map("reserved_at")
+
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+
+  processingEvents OfferProcessing[]
+  phoneValidations PhoneValidation[]
+  dispatchQueueEntries DispatchQueue[]
+  dispatches       Dispatch[]
+  logs             LogEntry[]
+
+  @@unique([webhookId, idempotencyKey], map: "uq_offer_idempotency")
+  @@index([status], map: "idx_offers_status")
+  @@index([createdAt], map: "idx_offers_created_at")
+  @@index([updatedAt], map: "idx_offers_updated_at")
+  @@index([webhookId], map: "idx_offers_webhook_id")
+  @@index([endpointId], map: "idx_offers_endpoint_id")
+  @@index([routingRuleId], map: "idx_offers_routing_rule_id")
+  @@index([cpf], map: "idx_offers_cpf")
+  @@index([telefoneValidado], map: "idx_offers_telefone_validado")
+  @@index([reservedAt], map: "idx_offers_reserved_at")
+  @@map("offers")
+}
+
+// ---------------------------------------------------------------------------
+// Histórico de processamento (uma linha por etapa/tentativa)
+// ---------------------------------------------------------------------------
+
+model OfferProcessing {
+  id              String   @id @default(uuid())
+  offerId         String   @map("offer_id")
+  offer           Offer    @relation(fields: [offerId], references: [id])
+
+  etapa           String   // ex.: "LIMIT", "WHATSAPP", "ROTEAMENTO", "DISPARO"
+  resultado       String   // ex.: "SUCESSO", "FALHA", "IGNORADO"
+  request         Json?
+  response        Json?
+  httpStatus      Int?     @map("http_status")
+  tentativa       Int      @default(1)
+  tempoExecucaoMs Int?     @map("tempo_execucao_ms")
+
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([offerId, createdAt], map: "idx_offer_processing_offer_created")
+  @@map("offer_processing")
+}
+
+// ---------------------------------------------------------------------------
+// Validação/atualização de telefone (API Limit)
+// ---------------------------------------------------------------------------
+
+model PhoneValidation {
+  id                   String   @id @default(uuid())
+  offerId              String   @map("offer_id")
+  offer                Offer    @relation(fields: [offerId], references: [id])
+
+  limitAtivoNoMomento  Boolean  @map("limit_ativo_no_momento")
+  respostaLimit        Json?    @map("resposta_limit")
+  possuiWhatsapp       Boolean? @map("possui_whatsapp")
+
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  @@index([offerId], map: "idx_phone_validations_offer_id")
+  @@map("phone_validations")
+}
+
+// ---------------------------------------------------------------------------
+// Roteamento
+// ---------------------------------------------------------------------------
+
+model RoutingRule {
+  id          String   @id @default(uuid())
+  nome        String
+  condicoes   Json     // ex.: { "bancoAutorizado": "C6", "webhookId": "..." }
+  endpointId  String   @map("endpoint_id")
+  endpoint    Endpoint @relation(fields: [endpointId], references: [id])
+  prioridade  Int      // menor número = mais específica/precedência maior
+  ativo       Boolean  @default(true)
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  offers      Offer[]
+
+  @@index([prioridade], map: "idx_routing_rules_prioridade")
+  @@index([endpointId], map: "idx_routing_rules_endpoint_id")
+  @@map("routing_rules")
+}
+
+// ---------------------------------------------------------------------------
+// Endpoints de disparo
+// ---------------------------------------------------------------------------
+
+model Endpoint {
+  id                String     @id @default(uuid())
+  nome              String
+  url               String
+  metodoHttp        HttpMethod @default(POST) @map("metodo_http")
+  headers           Json?
+  authType          AuthType   @default(NONE) @map("auth_type")
+  credenciaisRef    String?    @map("credenciais_ref") // referência ao secret manager, nunca o valor em si
+
+  capacidadeMinuto  Int?       @map("capacidade_minuto")
+  capacidadeHora    Int        @map("capacidade_hora")
+  capacidadeDia     Int?       @map("capacidade_dia")
+
+  timeoutMs         Int        @default(10000) @map("timeout_ms")
+  maxTentativas     Int        @default(5) @map("max_tentativas")
+  prioridade        Int        @default(10)
+  horarioPermitido  String?    @map("horario_permitido") // ex.: "08:00-20:00"
+
+  ativo             Boolean    @default(true)
+
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+
+  routingRules      RoutingRule[]
+  offers            Offer[]
+  dispatchQueueEntries DispatchQueue[]
+  dispatches        Dispatch[]
+
+  @@map("endpoints")
+}
+
+// ---------------------------------------------------------------------------
+// Fila de disparo (por endpoint)
+// ---------------------------------------------------------------------------
+
+model DispatchQueue {
+  id          String              @id @default(uuid())
+  offerId     String              @map("offer_id")
+  offer       Offer               @relation(fields: [offerId], references: [id])
+  endpointId  String              @map("endpoint_id")
+  endpoint    Endpoint            @relation(fields: [endpointId], references: [id])
+
+  status      DispatchQueueStatus @default(AGUARDANDO)
+  scheduledAt DateTime?           @map("scheduled_at")
+  reservedAt  DateTime?           @map("reserved_at")
+
+  createdAt   DateTime            @default(now()) @map("created_at")
+
+  @@index([endpointId, status], map: "idx_dispatch_queue_endpoint_status")
+  @@map("dispatch_queue")
+}
+
+// ---------------------------------------------------------------------------
+// Disparos efetivamente executados (Hyperflow)
+// ---------------------------------------------------------------------------
+
+model Dispatch {
+  id          String         @id @default(uuid())
+  offerId     String         @map("offer_id")
+  offer       Offer          @relation(fields: [offerId], references: [id])
+  endpointId  String         @map("endpoint_id")
+  endpoint    Endpoint       @relation(fields: [endpointId], references: [id])
+
+  request     Json?
+  response    Json?
+  httpStatus  Int?           @map("http_status")
+  tentativa   Int            @default(1)
+  status      DispatchStatus
+
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@index([endpointId], map: "idx_dispatches_endpoint_id")
+  @@index([offerId], map: "idx_dispatches_offer_id")
+  @@map("dispatches")
+}
+
+// ---------------------------------------------------------------------------
+// Campanhas (base para distribuição percentual futura — item 45)
+// ---------------------------------------------------------------------------
+
+model Campaign {
+  id                     String   @id @default(uuid())
+  nome                   String
+  distribuicaoPercentual Json?    @map("distribuicao_percentual") // ex.: { "endpointId1": 40, "endpointId2": 60 }
+  ativo                  Boolean  @default(true)
+
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  offers                 Offer[]
+
+  @@map("campaigns")
+}
+
+// ---------------------------------------------------------------------------
+// Configurações dinâmicas (ex.: Consulta Limit ATIVADO/DESATIVADO)
+// ---------------------------------------------------------------------------
+
+model IntegrationConfig {
+  id        String   @id @default(uuid())
+  chave     String   @unique // ex.: "LIMIT_CONSULTA", "WHATSAPP_VALIDACAO"
+  valor     Json
+  ativo     Boolean  @default(true)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("integration_configs")
+}
+
+model SystemSetting {
+  id    String @id @default(uuid())
+  chave String @unique
+  valor Json
+
+  @@map("system_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Logs
+// ---------------------------------------------------------------------------
+
+model LogEntry {
+  id        String   @id @default(uuid())
+  offerId   String?  @map("offer_id")
+  offer     Offer?   @relation(fields: [offerId], references: [id])
+
+  worker    String?
+  nivel     LogLevel @default(INFO)
+  mensagem  String
+  contexto  Json?    // CPF/telefone devem vir mascarados aqui (ver seção 9 do doc de arquitetura)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([offerId], map: "idx_logs_offer_id")
+  @@index([createdAt], map: "idx_logs_created_at")
+  @@map("logs")
+}

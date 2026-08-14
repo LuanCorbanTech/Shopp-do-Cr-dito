@@ -1,0 +1,27 @@
+import Fastify from "fastify";
+import { logger } from "@plataforma-ofertas/shared";
+import { prisma, PrismaOffersPort } from "@plataforma-ofertas/database";
+import { registerRawBodyParser } from "./plugins/raw-body";
+import { registerWebhookRoutes } from "./webhooks/routes";
+
+const app = Fastify({ logger: false });
+
+registerRawBodyParser(app);
+
+const offersPort = new PrismaOffersPort(prisma);
+const toleranceSeconds = Number(process.env.WEBHOOK_HMAC_DEFAULT_TOLERANCE_SECONDS ?? 300);
+
+registerWebhookRoutes(app, offersPort, toleranceSeconds);
+
+app.get("/health", async () => ({ status: "ok" }));
+
+const port = Number(process.env.API_PORT ?? 3000);
+const host = process.env.API_HOST ?? "0.0.0.0";
+
+app
+  .listen({ port, host })
+  .then(() => logger.info(`API ouvindo em http://${host}:${port}`))
+  .catch((err) => {
+    logger.error(err, "Falha ao iniciar a API");
+    process.exit(1);
+  });
