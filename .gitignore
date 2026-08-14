@@ -8,3 +8,5 @@ build/
 coverage/
 .turbo/
 packages/database/prisma/migrations/.tmp/
+*.tsbuildinfo
+.next/
