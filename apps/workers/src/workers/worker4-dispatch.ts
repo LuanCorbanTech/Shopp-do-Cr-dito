@@ -69,6 +69,29 @@ export async function runDispatchWorkerOnce(params: RunDispatchWorkerOnceParams)
 
     for (const offer of offers) {
       const telefone = offer.telefoneValidado ?? offer.telefoneAtualizado ?? offer.telefoneOriginal;
+
+      // Defensivo: a essa altura do pipeline (Worker 4) sempre deveria existir um
+      // telefone — o Worker 2 já cancela qualquer oferta que chegue sem nenhum
+      // telefone disponível (ver worker2-whatsapp.ts) antes dela avançar até aqui.
+      // Se ainda assim isso acontecer (bug em outro lugar do pipeline), falha de
+      // forma explícita em vez de mandar um telefone vazio pro Hyperflow.
+      if (!telefone) {
+        const tentativaSemTelefone = offer.tentativasEnvio + 1;
+        await dispatchPort.markDispatchFailed(offer.id, {
+          endpointId: endpoint.id,
+          request: null,
+          response: null,
+          httpStatus: null,
+          erro: "Oferta sem nenhum telefone disponível chegou ao disparo — isso não deveria acontecer.",
+          tentativa: tentativaSemTelefone,
+          proximaTentativaEm: null,
+          cancelar: true,
+        });
+        logger.error({ offerId: offer.id }, "Disparo cancelado: oferta chegou ao Worker 4 sem telefone");
+        totalProcessed += 1;
+        continue;
+      }
+
       const tentativa = offer.tentativasEnvio + 1;
       const result = await hyperflowService.dispatch({
         offerId: offer.id,

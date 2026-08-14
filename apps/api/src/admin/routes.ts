@@ -132,6 +132,7 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         }
         await adminRepo.deleteWebhook(request.params.id);
         reply.code(204);
+        return;
       });
 
       instance.get("/endpoints", async () => adminRepo.listEndpoints());

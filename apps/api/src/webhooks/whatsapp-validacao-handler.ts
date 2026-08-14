@@ -58,6 +58,20 @@ export async function handleWhatsappValidacaoWebhook(
 
   const telefoneUsado = offer.telefoneAtualizado ?? offer.telefoneOriginal;
 
+  // Mesma proteção do Worker 2 (worker2-whatsapp.ts): se por algum motivo não
+  // existir telefone nenhum associado a essa oferta, cancela de forma explícita
+  // em vez de gravar um telefone vazio. Ainda responde 200 pra CorbanTech —
+  // o problema é nosso, não deles.
+  if (!telefoneUsado) {
+    await port.markWhatsappFailed(offer.id, {
+      erro: "Callback da CorbanTech chegou, mas a oferta não tem nenhum telefone registrado.",
+      tentativa: offer.tentativasWhatsapp + 1,
+      proximaTentativaEm: null,
+      cancelar: true,
+    });
+    return { kind: "processed", offerId: offer.id };
+  }
+
   if (params.body.error) {
     const config = await configPort.getConfig("WHATSAPP_VALIDACAO");
     const maxTentativas = Number(config?.valor.maxTentativas ?? DEFAULT_MAX_TENTATIVAS);

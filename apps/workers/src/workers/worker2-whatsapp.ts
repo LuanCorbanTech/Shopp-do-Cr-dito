@@ -117,6 +117,22 @@ export async function runWhatsappWorkerOnce(params: RunWhatsappWorkerOnceParams)
   for (const offer of ofertasAtrasadas) {
     const telefoneUsado = offer.telefoneAtualizado ?? offer.telefoneOriginal;
     if (!offer.whatsappRequestId) continue; // defensivo — não deveria acontecer dado o filtro da query
+
+    // Mesma proteção da Fase 1 — se por algum motivo o telefone não estiver mais
+    // disponível (não deveria acontecer, já que ter um whatsappRequestId significa
+    // que a Fase 1 já validou um telefone antes de iniciar a consulta).
+    if (!telefoneUsado) {
+      await whatsappPort.markWhatsappFailed(offer.id, {
+        erro: "Fallback manual encontrou a oferta sem telefone disponível.",
+        tentativa: offer.tentativasWhatsapp + 1,
+        proximaTentativaEm: null,
+        cancelar: true,
+      });
+      logger.warn({ offerId: offer.id }, "Validação de WhatsApp (fallback) cancelada: sem telefone disponível");
+      processadas += 1;
+      continue;
+    }
+
     try {
       const resultado = await whatsappService.getCheckResult(offer.whatsappRequestId);
       if (resultado.status === "processing") {
