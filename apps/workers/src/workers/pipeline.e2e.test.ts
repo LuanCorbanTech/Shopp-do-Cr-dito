@@ -59,10 +59,28 @@ describe("pipeline completo (RECEBIDO -> ENVIADO)", () => {
     });
     expect(repo.offers.get(offer.id)?.status).toBe("TELEFONE_ATUALIZADO");
 
+    // A validação de WhatsApp é assíncrona (ver worker2-whatsapp.ts): a 1ª chamada só
+    // inicia a consulta (request_id); a 2ª (fallback do fluxo, aqui simulando o
+    // resultado já disponível) busca e resolve o resultado.
     await runWhatsappWorkerOnce({
       whatsappPort: repo,
       configPort: repo,
-      whatsappService: { validate: async () => ({ possuiWhatsapp: true, respostaBruta: {} }) },
+      whatsappService: {
+        startCheck: async ({ phone }) => ({ requestId: `req-${offer.id}`, phone }),
+        getCheckResult: async () => ({ status: "done", hasWhatsapp: true }),
+      },
+    });
+    expect(repo.offers.get(offer.id)?.status).toBe("VALIDANDO_WHATSAPP");
+
+    await runWhatsappWorkerOnce({
+      whatsappPort: repo,
+      configPort: repo,
+      whatsappService: {
+        startCheck: async ({ phone }) => ({ requestId: `req-${offer.id}`, phone }),
+        getCheckResult: async () => ({ status: "done", hasWhatsapp: true }),
+      },
+      awaitingResultTimeoutMs: 0,
+      now: new Date(Date.now() + 1000),
     });
     expect(repo.offers.get(offer.id)?.status).toBe("AGUARDANDO_ROTEAMENTO");
 
@@ -102,10 +120,28 @@ describe("pipeline completo (RECEBIDO -> ENVIADO)", () => {
     const offer = repo.addOffer({ telefoneOriginal: "62988887777", bancoAutorizado: "BMG", status: "RECEBIDO" });
 
     await runLimitWorkerOnce({ phonePort: repo, configPort: repo, limitService: { lookupPhone: async () => { throw new Error("não deveria ser chamado"); } } });
+
+    let telefoneRecebido: string | null = null;
     await runWhatsappWorkerOnce({
       whatsappPort: repo,
       configPort: repo,
-      whatsappService: { validate: async (telefone) => ({ possuiWhatsapp: telefone === "62988887777", respostaBruta: {} }) },
+      whatsappService: {
+        startCheck: async ({ phone }) => {
+          telefoneRecebido = phone;
+          return { requestId: "req-bmg", phone };
+        },
+        getCheckResult: async () => ({ status: "done", hasWhatsapp: telefoneRecebido === "62988887777" }),
+      },
+    });
+    await runWhatsappWorkerOnce({
+      whatsappPort: repo,
+      configPort: repo,
+      whatsappService: {
+        startCheck: async ({ phone }) => ({ requestId: "req-bmg", phone }),
+        getCheckResult: async () => ({ status: "done", hasWhatsapp: telefoneRecebido === "62988887777" }),
+      },
+      awaitingResultTimeoutMs: 0,
+      now: new Date(Date.now() + 1000),
     });
     await runRoutingWorkerOnce({ routingPort: repo });
     await runDispatchWorkerOnce({

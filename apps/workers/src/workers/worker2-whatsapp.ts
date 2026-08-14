@@ -1,7 +1,6 @@
 import { logger, maskPhone } from "@plataforma-ofertas/shared";
 import {
-  nextAttemptDate,
-  hasExceededMaxAttempts,
+  decideWhatsappCheckFailureOutcome,
   DEFAULT_BACKOFF_SCHEDULE_SECONDS,
   DEFAULT_MAX_TENTATIVAS,
   type WhatsappValidationPort,
@@ -12,9 +11,23 @@ import {
 // Usa telefone_atualizado se o Limit rodou; senão cai para telefone_original —
 // a decisão "qual telefone usar" já foi resolvida pelo Worker 1 (item 12: "EM AMBOS OS
 // CASOS -> validar WhatsApp").
+//
+// A API de validação da CorbanTech é assíncrona (docs/integrations/
+// APIValidacaoWhatsAppCorbanTech.pdf): iniciar a consulta só devolve um request_id
+// (HTTP 202); o resultado chega depois. Este worker tem duas fases a cada ciclo:
+//   1) Inicia consultas novas para ofertas recém-reservadas (TELEFONE_ATUALIZADO ->
+//      VALIDANDO_WHATSAPP), guardando o request_id.
+//   2) Busca manualmente (fallback) o resultado de ofertas que ficaram esperando
+//      demais sem o webhook chegar (ver apps/api/src/webhooks/whatsapp-validacao
+//      para o caminho "rápido", via callback). O request_id fica disponível na
+//      CorbanTech por 14 dias, então esse fallback funciona mesmo que o webhook
+//      falhe ou o endpoint fique fora do ar temporariamente.
 
 export interface WhatsappValidator {
-  validate(telefone: string): Promise<{ possuiWhatsapp: boolean; respostaBruta: unknown }>;
+  startCheck(params: { phone: string }): Promise<{ requestId: string; phone: string }>;
+  getCheckResult(
+    requestId: string
+  ): Promise<{ status: "processing" | "done" | "error"; hasWhatsapp?: boolean; message?: string }>;
 }
 
 export interface RunWhatsappWorkerOnceParams {
@@ -22,11 +35,20 @@ export interface RunWhatsappWorkerOnceParams {
   configPort: IntegrationConfigPort;
   whatsappService: WhatsappValidator;
   batchSize?: number;
+  /** Depois de quanto tempo sem resposta um request_id é considerado "atrasado" e buscado manualmente. */
+  awaitingResultTimeoutMs?: number;
   now?: Date;
 }
 
 export async function runWhatsappWorkerOnce(params: RunWhatsappWorkerOnceParams): Promise<number> {
-  const { whatsappPort, configPort, whatsappService, batchSize = 20, now = new Date() } = params;
+  const {
+    whatsappPort,
+    configPort,
+    whatsappService,
+    batchSize = 20,
+    awaitingResultTimeoutMs = 90_000,
+    now = new Date(),
+  } = params;
 
   const config = await configPort.getConfig("WHATSAPP_VALIDACAO");
   const maxTentativas = Number(config?.valor.maxTentativas ?? DEFAULT_MAX_TENTATIVAS);
@@ -34,32 +56,84 @@ export async function runWhatsappWorkerOnce(params: RunWhatsappWorkerOnceParams)
     ? (config!.valor.backoffSecondsSchedule as number[])
     : DEFAULT_BACKOFF_SCHEDULE_SECONDS;
 
-  const offers = await whatsappPort.claimOffersForValidation(batchSize);
+  let processadas = 0;
 
-  for (const offer of offers) {
+  // Fase 1 — inicia consultas novas.
+  const novasOfertas = await whatsappPort.claimOffersForValidation(batchSize);
+  for (const offer of novasOfertas) {
     const telefoneUsado = offer.telefoneAtualizado ?? offer.telefoneOriginal;
-    const tentativa = offer.tentativasWhatsapp + 1;
     try {
-      const result = await whatsappService.validate(telefoneUsado);
-      await whatsappPort.markWhatsappValidated(offer.id, {
-        possuiWhatsapp: result.possuiWhatsapp,
-        respostaBruta: result.respostaBruta,
-        telefoneUsado,
-      });
+      const { requestId } = await whatsappService.startCheck({ phone: telefoneUsado });
+      await whatsappPort.markWhatsappCheckStarted(offer.id, { requestId, telefoneUsado });
+      processadas += 1;
     } catch (error) {
-      const cancelar = hasExceededMaxAttempts(tentativa, maxTentativas);
+      const outcome = decideWhatsappCheckFailureOutcome({
+        tentativaAtual: offer.tentativasWhatsapp,
+        maxTentativas,
+        backoffSchedule: schedule,
+        now,
+      });
       await whatsappPort.markWhatsappFailed(offer.id, {
         erro: error instanceof Error ? error.message : String(error),
-        tentativa,
-        proximaTentativaEm: cancelar ? null : nextAttemptDate(tentativa, now, schedule),
-        cancelar,
+        tentativa: outcome.tentativa,
+        proximaTentativaEm: outcome.proximaTentativaEm,
+        cancelar: outcome.cancelar,
       });
       logger.warn(
-        { offerId: offer.id, telefone: maskPhone(telefoneUsado), tentativa, cancelar },
-        "Falha na validação de WhatsApp"
+        { offerId: offer.id, telefone: maskPhone(telefoneUsado), tentativa: outcome.tentativa, cancelar: outcome.cancelar },
+        "Falha ao iniciar consulta de WhatsApp"
+      );
+      processadas += 1;
+    }
+  }
+
+  // Fase 2 — fallback: busca manualmente o resultado de quem está esperando demais
+  // (o webhook deveria ter chegado e não chegou).
+  const ofertasAtrasadas = await whatsappPort.findOffersAwaitingWhatsappResult({
+    olderThanMs: awaitingResultTimeoutMs,
+    limit: batchSize,
+    now,
+  });
+  for (const offer of ofertasAtrasadas) {
+    const telefoneUsado = offer.telefoneAtualizado ?? offer.telefoneOriginal;
+    if (!offer.whatsappRequestId) continue; // defensivo — não deveria acontecer dado o filtro da query
+    try {
+      const resultado = await whatsappService.getCheckResult(offer.whatsappRequestId);
+      if (resultado.status === "processing") {
+        continue; // ainda genuinamente processando — não é falha, só não deu tempo.
+      }
+      if (resultado.status === "done") {
+        await whatsappPort.markWhatsappValidated(offer.id, {
+          possuiWhatsapp: Boolean(resultado.hasWhatsapp),
+          respostaBruta: resultado,
+          telefoneUsado,
+        });
+        logger.info(
+          { offerId: offer.id, viaFallbackManual: true },
+          "Resultado de WhatsApp recuperado por consulta manual (webhook não chegou a tempo)"
+        );
+      } else {
+        const outcome = decideWhatsappCheckFailureOutcome({
+          tentativaAtual: offer.tentativasWhatsapp,
+          maxTentativas,
+          backoffSchedule: schedule,
+          now,
+        });
+        await whatsappPort.markWhatsappFailed(offer.id, {
+          erro: resultado.message ?? "Validação de WhatsApp retornou erro",
+          tentativa: outcome.tentativa,
+          proximaTentativaEm: outcome.proximaTentativaEm,
+          cancelar: outcome.cancelar,
+        });
+      }
+      processadas += 1;
+    } catch (error) {
+      logger.warn(
+        { offerId: offer.id, error: error instanceof Error ? error.message : String(error) },
+        "Falha ao buscar manualmente o resultado da validação de WhatsApp — tenta de novo no próximo ciclo"
       );
     }
   }
 
-  return offers.length;
+  return processadas;
 }

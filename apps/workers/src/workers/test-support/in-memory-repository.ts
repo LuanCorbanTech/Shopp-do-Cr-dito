@@ -70,6 +70,8 @@ export class InMemoryPipelineRepository
       tentativasTelefone: partial.tentativasTelefone ?? 0,
       tentativasWhatsapp: partial.tentativasWhatsapp ?? 0,
       tentativasEnvio: partial.tentativasEnvio ?? 0,
+      whatsappRequestId: partial.whatsappRequestId ?? null,
+      whatsappCheckIniciadoEm: partial.whatsappCheckIniciadoEm ?? null,
       reservedAt: partial.reservedAt ?? null,
       proximaTentativaEm: partial.proximaTentativaEm ?? null,
       createdAt: partial.createdAt ?? new Date(Date.now() + this.idCounter), // preserva ordem de inserção
@@ -164,6 +166,42 @@ export class InMemoryPipelineRepository
     return this.claimByStatus(["TELEFONE_ATUALIZADO"], "VALIDANDO_WHATSAPP", limit);
   }
 
+  async markWhatsappCheckStarted(
+    offerId: string,
+    params: { requestId: string; telefoneUsado: string }
+  ): Promise<void> {
+    const offer = this.require(offerId);
+    offer.whatsappRequestId = params.requestId;
+    offer.whatsappCheckIniciadoEm = new Date();
+    offer.reservedAt = null;
+    this.processingLog.push({ offerId, etapa: "WHATSAPP", resultado: "CONSULTA_INICIADA" });
+  }
+
+  async findOfferByWhatsappRequestId(requestId: string): Promise<OfferSnapshot | null> {
+    const offer = [...this.offers.values()].find((o) => o.whatsappRequestId === requestId);
+    return offer ? this.snapshot(offer) : null;
+  }
+
+  async findOffersAwaitingWhatsappResult(params: {
+    olderThanMs: number;
+    limit: number;
+    now?: Date;
+  }): Promise<OfferSnapshot[]> {
+    const now = params.now ?? new Date();
+    const cutoff = now.getTime() - params.olderThanMs;
+    const candidates = [...this.offers.values()]
+      .filter(
+        (o) =>
+          o.status === "VALIDANDO_WHATSAPP" &&
+          o.whatsappRequestId !== null &&
+          o.whatsappCheckIniciadoEm !== null &&
+          o.whatsappCheckIniciadoEm.getTime() < cutoff
+      )
+      .sort((a, b) => (a.whatsappCheckIniciadoEm?.getTime() ?? 0) - (b.whatsappCheckIniciadoEm?.getTime() ?? 0))
+      .slice(0, params.limit);
+    return candidates.map((o) => this.snapshot(o));
+  }
+
   async markWhatsappValidated(
     offerId: string,
     params: { possuiWhatsapp: boolean; telefoneUsado: string }
@@ -171,6 +209,8 @@ export class InMemoryPipelineRepository
     const offer = this.require(offerId);
     offer.status = params.possuiWhatsapp ? "AGUARDANDO_ROTEAMENTO" : "SEM_WHATSAPP";
     offer.telefoneValidado = params.possuiWhatsapp ? params.telefoneUsado : null;
+    offer.whatsappRequestId = null;
+    offer.whatsappCheckIniciadoEm = null;
     offer.reservedAt = null;
     this.processingLog.push({
       offerId,
@@ -185,6 +225,8 @@ export class InMemoryPipelineRepository
   ): Promise<void> {
     const offer = this.require(offerId);
     offer.status = params.cancelar ? "CANCELADO" : "ERRO_VALIDACAO_WHATSAPP";
+    offer.whatsappRequestId = null;
+    offer.whatsappCheckIniciadoEm = null;
     offer.reservedAt = null;
     offer.tentativasWhatsapp += 1;
     offer.proximaTentativaEm = params.proximaTentativaEm;

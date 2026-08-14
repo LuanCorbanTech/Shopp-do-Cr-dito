@@ -135,6 +135,15 @@ model Offer {
   tentativasEnvio    Int       @default(0) @map("tentativas_envio")
   proximaTentativaEm DateTime? @map("proxima_tentativa_em")
 
+  // API de Validação de WhatsApp da CorbanTech é assíncrona (docs/integrations/
+  // APIValidacaoWhatsAppCorbanTech.pdf): guardamos o request_id devolvido por
+  // POST /api/v1/whatsapp/check para casar com o resultado, que chega depois por
+  // webhook (rota /webhooks/whatsapp-validacao) OU é buscado manualmente pelo
+  // Worker 2 se o webhook não chegar em tempo (whatsappCheckIniciadoEm é usado
+  // para decidir quando essa consulta manual de fallback é acionada).
+  whatsappRequestId       String?   @map("whatsapp_request_id")
+  whatsappCheckIniciadoEm DateTime? @map("whatsapp_check_iniciado_em")
+
   createdAt        DateTime    @default(now()) @map("created_at")
   updatedAt        DateTime    @updatedAt @map("updated_at")
 
@@ -155,6 +164,8 @@ model Offer {
   @@index([telefoneValidado], map: "idx_offers_telefone_validado")
   @@index([reservedAt], map: "idx_offers_reserved_at")
   @@index([status, proximaTentativaEm], map: "idx_offers_status_proxima_tentativa")
+  @@index([whatsappRequestId], map: "idx_offers_whatsapp_request_id")
+  @@index([status, whatsappCheckIniciadoEm], map: "idx_offers_status_whatsapp_check_iniciado")
   @@map("offers")
 }
 

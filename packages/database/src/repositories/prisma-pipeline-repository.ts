@@ -39,6 +39,8 @@ type OfferRow = {
   tentativasWhatsapp: number;
   tentativasEnvio: number;
   reservedAt?: Date | null;
+  whatsappRequestId: string | null;
+  whatsappCheckIniciadoEm: Date | null;
 };
 
 const OFFER_COLUMNS_SQL = Prisma.sql`
@@ -48,7 +50,8 @@ const OFFER_COLUMNS_SQL = Prisma.sql`
   produto, valor, parcelas, status::text AS status,
   routing_rule_id AS "routingRuleId", endpoint_id AS "endpointId",
   tentativas_telefone AS "tentativasTelefone", tentativas_whatsapp AS "tentativasWhatsapp",
-  tentativas_envio AS "tentativasEnvio", reserved_at AS "reservedAt"
+  tentativas_envio AS "tentativasEnvio", reserved_at AS "reservedAt",
+  whatsapp_request_id AS "whatsappRequestId", whatsapp_check_iniciado_em AS "whatsappCheckIniciadoEm"
 `;
 
 function mapRow(row: OfferRow): OfferSnapshot {
@@ -70,6 +73,8 @@ function mapRow(row: OfferRow): OfferSnapshot {
     tentativasTelefone: row.tentativasTelefone,
     tentativasWhatsapp: row.tentativasWhatsapp,
     tentativasEnvio: row.tentativasEnvio,
+    whatsappRequestId: row.whatsappRequestId,
+    whatsappCheckIniciadoEm: row.whatsappCheckIniciadoEm,
   };
 }
 
@@ -201,6 +206,55 @@ export class PrismaPipelineRepository
     return this.claimByStatus(["TELEFONE_ATUALIZADO"], "VALIDANDO_WHATSAPP", limit);
   }
 
+  async markWhatsappCheckStarted(
+    offerId: string,
+    params: { requestId: string; telefoneUsado: string }
+  ): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: {
+          whatsappRequestId: params.requestId,
+          whatsappCheckIniciadoEm: new Date(),
+          reservedAt: null,
+        },
+      }),
+      this.prisma.offerProcessing.create({
+        data: {
+          offerId,
+          etapa: "WHATSAPP",
+          resultado: "CONSULTA_INICIADA",
+          response: { requestId: params.requestId },
+          tentativa: 1,
+        },
+      }),
+    ]);
+  }
+
+  async findOfferByWhatsappRequestId(requestId: string): Promise<OfferSnapshot | null> {
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      SELECT ${OFFER_COLUMNS_SQL} FROM offers WHERE whatsapp_request_id = ${requestId} LIMIT 1
+    `;
+    return rows[0] ? mapRow(rows[0]) : null;
+  }
+
+  async findOffersAwaitingWhatsappResult(params: {
+    olderThanMs: number;
+    limit: number;
+    now?: Date;
+  }): Promise<OfferSnapshot[]> {
+    const cutoff = new Date((params.now ?? new Date()).getTime() - params.olderThanMs);
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      SELECT ${OFFER_COLUMNS_SQL} FROM offers
+      WHERE status = 'VALIDANDO_WHATSAPP'::"OfferStatus"
+        AND whatsapp_request_id IS NOT NULL
+        AND whatsapp_check_iniciado_em < ${cutoff}
+      ORDER BY whatsapp_check_iniciado_em
+      LIMIT ${params.limit}
+    `;
+    return rows.map(mapRow);
+  }
+
   async markWhatsappValidated(
     offerId: string,
     params: { possuiWhatsapp: boolean; respostaBruta: unknown; telefoneUsado: string }
@@ -211,6 +265,8 @@ export class PrismaPipelineRepository
         data: {
           status: params.possuiWhatsapp ? "AGUARDANDO_ROTEAMENTO" : "SEM_WHATSAPP",
           telefoneValidado: params.possuiWhatsapp ? params.telefoneUsado : null,
+          whatsappRequestId: null,
+          whatsappCheckIniciadoEm: null,
           reservedAt: null,
         },
       }),
@@ -239,6 +295,8 @@ export class PrismaPipelineRepository
         where: { id: offerId },
         data: {
           status: params.cancelar ? "CANCELADO" : "ERRO_VALIDACAO_WHATSAPP",
+          whatsappRequestId: null,
+          whatsappCheckIniciadoEm: null,
           reservedAt: null,
           tentativasWhatsapp: { increment: 1 },
           proximaTentativaEm: params.proximaTentativaEm,

@@ -21,6 +21,8 @@ export interface OfferSnapshot {
   tentativasTelefone: number;
   tentativasWhatsapp: number;
   tentativasEnvio: number;
+  whatsappRequestId: string | null;
+  whatsappCheckIniciadoEm: Date | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +67,28 @@ export interface PhoneProcessingPort {
 export interface WhatsappValidationPort {
   /** Reserva ofertas TELEFONE_ATUALIZADO -> VALIDANDO_WHATSAPP. */
   claimOffersForValidation(limit: number): Promise<OfferSnapshot[]>;
+  /**
+   * A API de validação é assíncrona (POST /check só devolve um request_id) —
+   * isto registra que a consulta foi iniciada, para casar com o resultado
+   * quando ele chegar (webhook ou consulta manual de fallback). A oferta
+   * permanece em VALIDANDO_WHATSAPP.
+   */
+  markWhatsappCheckStarted(
+    offerId: string,
+    params: { requestId: string; telefoneUsado: string }
+  ): Promise<void>;
+  /** Usado pelo endpoint que recebe o webhook de callback, para achar a oferta pelo request_id. */
+  findOfferByWhatsappRequestId(requestId: string): Promise<OfferSnapshot | null>;
+  /**
+   * Fallback: ofertas em VALIDANDO_WHATSAPP cujo request_id está há mais de
+   * `olderThanMs` sem resposta (o webhook não chegou) — o Worker 2 busca o
+   * resultado manualmente por essas (GET /check/{request_id}, disponível por 14 dias).
+   */
+  findOffersAwaitingWhatsappResult(params: {
+    olderThanMs: number;
+    limit: number;
+    now?: Date;
+  }): Promise<OfferSnapshot[]>;
   /** possuiWhatsapp=true avança para AGUARDANDO_ROTEAMENTO; false encerra em SEM_WHATSAPP. */
   markWhatsappValidated(
     offerId: string,

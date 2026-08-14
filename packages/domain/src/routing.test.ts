@@ -21,6 +21,8 @@ function offer(overrides: Partial<OfferSnapshot> = {}): OfferSnapshot {
     tentativasTelefone: 0,
     tentativasWhatsapp: 0,
     tentativasEnvio: 0,
+    whatsappRequestId: null,
+    whatsappCheckIniciadoEm: null,
     ...overrides,
   };
 }
