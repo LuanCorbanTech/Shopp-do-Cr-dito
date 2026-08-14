@@ -23,9 +23,13 @@ const limitService = createLimitService({
   baseUrl: process.env.LIMIT_API_BASE_URL || "http://localhost:9901",
   apiKey: process.env.LIMIT_API_KEY,
 });
+const whatsappApiKey = process.env.WHATSAPP_VALIDATION_API_KEY;
+if (!whatsappApiKey) {
+  throw new Error("WHATSAPP_VALIDATION_API_KEY não configurada (obrigatória — ver docs/integrations)");
+}
 const whatsappService = createWhatsAppValidationService({
   baseUrl: process.env.WHATSAPP_VALIDATION_API_BASE_URL || "http://localhost:9902",
-  apiKey: process.env.WHATSAPP_VALIDATION_API_KEY,
+  apiKey: whatsappApiKey,
 });
 const hyperflowService = createHyperflowService();
 
