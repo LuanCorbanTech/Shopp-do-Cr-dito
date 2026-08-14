@@ -152,7 +152,7 @@ export class InMemoryPipelineRepository
   async markPhoneUpdated(
     offerId: string,
     params: {
-      telefoneAtualizado: string;
+      telefoneAtualizado: string | null;
       dadosPessoa?: Record<string, unknown> | null;
       possuiWhatsappSegundoLemit?: boolean | null;
     }
