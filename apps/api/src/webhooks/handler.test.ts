@@ -1,77 +1,99 @@
 import { describe, expect, it } from "vitest";
-import { handleWebhookOffer } from "./handler";
-import { computeSignature } from "./hmac";
+import { handleWebhookRequest } from "./handler";
+import { computeSignature, computeSimpleHmac } from "./hmac";
 import { createFakeOffersPort } from "./test-support/fake-offers-port";
 
 const NOW = 1_700_000_000;
 const SECRET = "segredo-do-webhook";
-const WEBHOOK = {
+const WEBHOOK_OFERTAS_V1 = {
   id: "webhook-1",
   identificador: "origem-teste",
   origem: "Origem de Teste",
   secretHmac: SECRET,
   ativo: true,
+  esquemaAssinatura: "ofertas_v1",
+  headerAssinatura: "x-ofertas-signature",
+  headerTimestamp: "x-ofertas-timestamp",
+};
+const WEBHOOK_SIMPLES = {
+  id: "webhook-2",
+  identificador: "odysseia",
+  origem: "Odysseia",
+  secretHmac: SECRET,
+  ativo: true,
+  esquemaAssinatura: "hmac_sha256_simple",
+  headerAssinatura: "x-odysseia-signature",
+  headerTimestamp: null,
 };
 
-function signedHeaders(rawBody: string, timestamp = NOW) {
+function ofertasV1Headers(rawBody: string, timestamp = NOW) {
   const timestampHeader = String(timestamp);
   return {
-    timestamp: timestampHeader,
-    signature: computeSignature(SECRET, timestampHeader, rawBody),
+    "x-ofertas-timestamp": timestampHeader,
+    "x-ofertas-signature": computeSignature(SECRET, timestampHeader, rawBody),
   };
 }
 
-describe("handleWebhookOffer", () => {
+function odysseiaHeaders(rawBody: string) {
+  return { "x-odysseia-signature": computeSimpleHmac(SECRET, rawBody) };
+}
+
+describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
   it("cria a oferta com status RECEBIDO em uma requisição válida", async () => {
-    const { port } = createFakeOffersPort([WEBHOOK]);
+    const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
     const body = { telefone: "62999999999", external_id: "abc-1" };
     const rawBody = JSON.stringify(body);
 
-    const outcome = await handleWebhookOffer(port, {
+    const outcome = await handleWebhookRequest(port, {
       identificador: "origem-teste",
       rawBody,
       body,
-      headers: signedHeaders(rawBody),
+      headers: ofertasV1Headers(rawBody),
       toleranceSeconds: 300,
       nowSeconds: NOW,
     });
 
-    expect(outcome.kind).toBe("created");
+    expect(outcome.kind).toBe("single");
+    if (outcome.kind === "single") expect(outcome.resultado.kind).toBe("created");
   });
 
   it("não cria duplicado quando a mesma oferta chega duas vezes (idempotência)", async () => {
-    const { port } = createFakeOffersPort([WEBHOOK]);
+    const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
     const body = { telefone: "62999999999", external_id: "abc-1" };
     const rawBody = JSON.stringify(body);
     const params = {
       identificador: "origem-teste",
       rawBody,
       body,
-      headers: signedHeaders(rawBody),
+      headers: ofertasV1Headers(rawBody),
       toleranceSeconds: 300,
       nowSeconds: NOW,
     };
 
-    const first = await handleWebhookOffer(port, params);
-    const second = await handleWebhookOffer(port, params);
+    const first = await handleWebhookRequest(port, params);
+    const second = await handleWebhookRequest(port, params);
 
-    expect(first.kind).toBe("created");
-    expect(second.kind).toBe("duplicate");
-    if (first.kind === "created" && second.kind === "duplicate") {
-      expect(second.offerId).toBe(first.offerId);
+    expect(first.kind).toBe("single");
+    expect(second.kind).toBe("single");
+    if (first.kind === "single" && second.kind === "single") {
+      expect(first.resultado.kind).toBe("created");
+      expect(second.resultado.kind).toBe("duplicate");
+      if (first.resultado.kind === "created" && second.resultado.kind === "duplicate") {
+        expect(second.resultado.offerId).toBe(first.resultado.offerId);
+      }
     }
   });
 
   it("rejeita quando o webhook não existe ou está inativo", async () => {
-    const { port } = createFakeOffersPort([{ ...WEBHOOK, ativo: false }]);
+    const { port } = createFakeOffersPort([{ ...WEBHOOK_OFERTAS_V1, ativo: false }]);
     const body = { telefone: "62999999999" };
     const rawBody = JSON.stringify(body);
 
-    const outcome = await handleWebhookOffer(port, {
+    const outcome = await handleWebhookRequest(port, {
       identificador: "origem-teste",
       rawBody,
       body,
-      headers: signedHeaders(rawBody),
+      headers: ofertasV1Headers(rawBody),
       toleranceSeconds: 300,
       nowSeconds: NOW,
     });
@@ -80,36 +102,159 @@ describe("handleWebhookOffer", () => {
   });
 
   it("rejeita assinatura inválida", async () => {
-    const { port } = createFakeOffersPort([WEBHOOK]);
+    const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
     const body = { telefone: "62999999999" };
     const rawBody = JSON.stringify(body);
 
-    const outcome = await handleWebhookOffer(port, {
+    const outcome = await handleWebhookRequest(port, {
       identificador: "origem-teste",
       rawBody,
       body,
-      headers: { timestamp: String(NOW), signature: "assinatura-forjada" },
+      headers: { "x-ofertas-timestamp": String(NOW), "x-ofertas-signature": "assinatura-forjada" },
       toleranceSeconds: 300,
       nowSeconds: NOW,
     });
 
-    expect(outcome.kind).toBe("invalid_signature");
+    expect(outcome).toEqual({ kind: "invalid_signature", reason: "signature_mismatch" });
   });
 
   it("rejeita payload sem telefone", async () => {
-    const { port } = createFakeOffersPort([WEBHOOK]);
+    const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
     const body = { telefone: "" };
     const rawBody = JSON.stringify(body);
 
-    const outcome = await handleWebhookOffer(port, {
+    const outcome = await handleWebhookRequest(port, {
       identificador: "origem-teste",
       rawBody,
       body,
-      headers: signedHeaders(rawBody),
+      headers: ofertasV1Headers(rawBody),
       toleranceSeconds: 300,
       nowSeconds: NOW,
     });
 
-    expect(outcome.kind).toBe("invalid_payload");
+    expect(outcome.kind).toBe("single");
+    if (outcome.kind === "single") expect(outcome.resultado.kind).toBe("invalid_payload");
+  });
+});
+
+describe("handleWebhookRequest — esquema hmac_sha256_simple (ex.: Odysseia)", () => {
+  it("aceita a assinatura de header único, sem timestamp", async () => {
+    const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = { telefone: "85992100340", cpf: "85868388372" };
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: odysseiaHeaders(rawBody),
+      toleranceSeconds: 300,
+    });
+
+    expect(outcome.kind).toBe("single");
+    if (outcome.kind === "single") expect(outcome.resultado.kind).toBe("created");
+  });
+
+  it("rejeita quando o header de assinatura está ausente", async () => {
+    const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = { telefone: "85992100340" };
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: {},
+      toleranceSeconds: 300,
+    });
+
+    expect(outcome).toEqual({ kind: "invalid_signature", reason: "missing_signature" });
+  });
+
+  it("rejeita assinatura incorreta", async () => {
+    const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = { telefone: "85992100340" };
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: { "x-odysseia-signature": "0".repeat(64) },
+      toleranceSeconds: 300,
+    });
+
+    expect(outcome).toEqual({ kind: "invalid_signature", reason: "signature_mismatch" });
+  });
+});
+
+describe("handleWebhookRequest — lote (array de leads)", () => {
+  it("processa cada item do lote de forma independente, mesmo com um item inválido no meio", async () => {
+    const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = [
+      { telefone: "85992100340", external_id: "lead-1" },
+      { telefone: "" }, // inválido — não deve invalidar o resto do lote
+      { telefone: "85996888516", external_id: "lead-3" },
+    ];
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: odysseiaHeaders(rawBody),
+      toleranceSeconds: 300,
+    });
+
+    expect(outcome.kind).toBe("batch");
+    if (outcome.kind === "batch") {
+      expect(outcome.resultados).toHaveLength(3);
+      expect(outcome.resultados[0].kind).toBe("created");
+      expect(outcome.resultados[1].kind).toBe("invalid_payload");
+      expect(outcome.resultados[2].kind).toBe("created");
+    }
+  });
+
+  it("reenviar o mesmo lote inteiro não duplica nada (idempotência por item)", async () => {
+    const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = [
+      { telefone: "85992100340", external_id: "lead-1" },
+      { telefone: "85996888516", external_id: "lead-2" },
+    ];
+    const rawBody = JSON.stringify(body);
+    const params = {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: odysseiaHeaders(rawBody),
+      toleranceSeconds: 300,
+    };
+
+    const first = await handleWebhookRequest(port, params);
+    const second = await handleWebhookRequest(port, params);
+
+    expect(first.kind).toBe("batch");
+    expect(second.kind).toBe("batch");
+    if (first.kind === "batch" && second.kind === "batch") {
+      expect(first.resultados.map((r) => r.kind)).toEqual(["created", "created"]);
+      expect(second.resultados.map((r) => r.kind)).toEqual(["duplicate", "duplicate"]);
+    }
+  });
+
+  it("um lote inteiro com assinatura inválida é rejeitado antes de processar qualquer item", async () => {
+    const { port, offersByKey } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = [{ telefone: "85992100340" }];
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: { "x-odysseia-signature": "assinatura-forjada" },
+      toleranceSeconds: 300,
+    });
+
+    expect(outcome.kind).toBe("invalid_signature");
+    expect(offersByKey.size).toBe(0);
   });
 });

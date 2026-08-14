@@ -95,6 +95,20 @@ export class AdminRepository {
 
   // -- Endpoints (item 19) ---------------------------------------------------------
 
+  // -- Parceiros (webhooks de entrada) -----------------------------------------
+
+  listWebhooks() {
+    return this.prisma.webhook.findMany({ orderBy: { origem: "asc" } });
+  }
+
+  createWebhook(data: Parameters<PrismaClient["webhook"]["create"]>[0]["data"]) {
+    return this.prisma.webhook.create({ data });
+  }
+
+  updateWebhook(id: string, data: Parameters<PrismaClient["webhook"]["update"]>[0]["data"]) {
+    return this.prisma.webhook.update({ where: { id }, data });
+  }
+
   listEndpoints() {
     return this.prisma.endpoint.findMany({ orderBy: { nome: "asc" } });
   }

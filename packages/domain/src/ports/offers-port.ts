@@ -9,6 +9,12 @@ export interface WebhookRecord {
   origem: string;
   secretHmac: string;
   ativo: boolean;
+  /** "ofertas_v1" (esquema original) ou "hmac_sha256_simple" — ver apps/api/src/webhooks/hmac.ts. */
+  esquemaAssinatura: string;
+  /** Nome do header HTTP com a assinatura (minúsculo), ex.: "x-odysseia-signature". */
+  headerAssinatura: string;
+  /** Só usado no esquema "ofertas_v1" — null quando o esquema não tem timestamp/replay. */
+  headerTimestamp: string | null;
 }
 
 export interface OfferRecord {

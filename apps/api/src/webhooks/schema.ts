@@ -3,16 +3,12 @@
 // o restante é aceito como opcional para não travar origens que enviam payloads
 // parciais; `additionalProperties: true` porque "dados adicionais" é livre e o
 // payload inteiro é preservado em payload_original de qualquer forma.
+//
+// O corpo aceita UM lead (objeto) OU um lote de vários leads (array de objetos) —
+// alguns parceiros mandam em lote e reenviam o lote inteiro se não responder 2xx a
+// tempo (ver handler.ts).
 
-export const webhookParamsSchema = {
-  type: "object",
-  required: ["identificador"],
-  properties: {
-    identificador: { type: "string", minLength: 1 },
-  },
-} as const;
-
-export const webhookBodySchema = {
+const leadSchema = {
   type: "object",
   required: ["telefone"],
   properties: {
@@ -30,4 +26,16 @@ export const webhookBodySchema = {
     dados_adicionais: { type: "object" },
   },
   additionalProperties: true,
+} as const;
+
+export const webhookParamsSchema = {
+  type: "object",
+  required: ["identificador"],
+  properties: {
+    identificador: { type: "string", minLength: 1 },
+  },
+} as const;
+
+export const webhookBodySchema = {
+  oneOf: [leadSchema, { type: "array", items: leadSchema, minItems: 1 }],
 } as const;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { computeSignature, verifyWebhookSignature } from "./hmac";
+import { computeSignature, computeSimpleHmac, verifyWebhookSignature } from "./hmac";
 
-describe("verifyWebhookSignature", () => {
+describe("verifyWebhookSignature — esquema ofertas_v1 (timestamp + signature)", () => {
   const secret = "test-secret";
   const rawBody = JSON.stringify({ telefone: "62999999999" });
   const nowSeconds = 1_700_000_000;
@@ -11,10 +11,12 @@ describe("verifyWebhookSignature", () => {
     const signature = computeSignature(secret, timestamp, rawBody);
 
     const result = verifyWebhookSignature({
+      scheme: "ofertas_v1",
       secret,
       rawBody,
-      timestampHeader: timestamp,
-      signatureHeader: signature,
+      headers: { "x-ofertas-timestamp": timestamp, "x-ofertas-signature": signature },
+      headerAssinatura: "x-ofertas-signature",
+      headerTimestamp: "x-ofertas-timestamp",
       toleranceSeconds: 300,
       nowSeconds,
     });
@@ -24,10 +26,12 @@ describe("verifyWebhookSignature", () => {
 
   it("rejeita quando faltam headers de timestamp/assinatura", () => {
     const result = verifyWebhookSignature({
+      scheme: "ofertas_v1",
       secret,
       rawBody,
-      timestampHeader: undefined,
-      signatureHeader: undefined,
+      headers: {},
+      headerAssinatura: "x-ofertas-signature",
+      headerTimestamp: "x-ofertas-timestamp",
       toleranceSeconds: 300,
       nowSeconds,
     });
@@ -40,10 +44,12 @@ describe("verifyWebhookSignature", () => {
     const signature = computeSignature(secret, oldTimestamp, rawBody);
 
     const result = verifyWebhookSignature({
+      scheme: "ofertas_v1",
       secret,
       rawBody,
-      timestampHeader: oldTimestamp,
-      signatureHeader: signature,
+      headers: { "x-ofertas-timestamp": oldTimestamp, "x-ofertas-signature": signature },
+      headerAssinatura: "x-ofertas-signature",
+      headerTimestamp: "x-ofertas-timestamp",
       toleranceSeconds: 300,
       nowSeconds,
     });
@@ -57,10 +63,12 @@ describe("verifyWebhookSignature", () => {
     const tamperedBody = JSON.stringify({ telefone: "62988888888" });
 
     const result = verifyWebhookSignature({
+      scheme: "ofertas_v1",
       secret,
       rawBody: tamperedBody,
-      timestampHeader: timestamp,
-      signatureHeader: signature,
+      headers: { "x-ofertas-timestamp": timestamp, "x-ofertas-signature": signature },
+      headerAssinatura: "x-ofertas-signature",
+      headerTimestamp: "x-ofertas-timestamp",
       toleranceSeconds: 300,
       nowSeconds,
     });
@@ -73,14 +81,95 @@ describe("verifyWebhookSignature", () => {
     const signature = computeSignature("outro-segredo", timestamp, rawBody);
 
     const result = verifyWebhookSignature({
+      scheme: "ofertas_v1",
       secret,
       rawBody,
-      timestampHeader: timestamp,
-      signatureHeader: signature,
+      headers: { "x-ofertas-timestamp": timestamp, "x-ofertas-signature": signature },
+      headerAssinatura: "x-ofertas-signature",
+      headerTimestamp: "x-ofertas-timestamp",
       toleranceSeconds: 300,
       nowSeconds,
     });
 
     expect(result.valid).toBe(false);
+  });
+});
+
+describe("verifyWebhookSignature — esquema hmac_sha256_simple (um único header, sem timestamp)", () => {
+  const secret = "test-secret";
+  const rawBody = JSON.stringify({ telefone: "85992100340" });
+
+  it("aceita uma assinatura válida", () => {
+    const signature = computeSimpleHmac(secret, rawBody);
+
+    const result = verifyWebhookSignature({
+      scheme: "hmac_sha256_simple",
+      secret,
+      rawBody,
+      headers: { "x-odysseia-signature": signature },
+      headerAssinatura: "x-odysseia-signature",
+      toleranceSeconds: 300,
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it("rejeita quando o header de assinatura está ausente", () => {
+    const result = verifyWebhookSignature({
+      scheme: "hmac_sha256_simple",
+      secret,
+      rawBody,
+      headers: {},
+      headerAssinatura: "x-odysseia-signature",
+      toleranceSeconds: 300,
+    });
+
+    expect(result).toEqual({ valid: false, reason: "missing_signature" });
+  });
+
+  it("rejeita quando o corpo foi alterado após a assinatura", () => {
+    const signature = computeSimpleHmac(secret, rawBody);
+    const tamperedBody = JSON.stringify({ telefone: "62988888888" });
+
+    const result = verifyWebhookSignature({
+      scheme: "hmac_sha256_simple",
+      secret,
+      rawBody: tamperedBody,
+      headers: { "x-odysseia-signature": signature },
+      headerAssinatura: "x-odysseia-signature",
+      toleranceSeconds: 300,
+    });
+
+    expect(result).toEqual({ valid: false, reason: "signature_mismatch" });
+  });
+
+  it("rejeita assinatura calculada com o segredo errado", () => {
+    const signature = computeSimpleHmac("outro-segredo", rawBody);
+
+    const result = verifyWebhookSignature({
+      scheme: "hmac_sha256_simple",
+      secret,
+      rawBody,
+      headers: { "x-odysseia-signature": signature },
+      headerAssinatura: "x-odysseia-signature",
+      toleranceSeconds: 300,
+    });
+
+    expect(result.valid).toBe(false);
+  });
+
+  it("não exige nem valida timestamp (esquema não tem replay protection)", () => {
+    const signature = computeSimpleHmac(secret, rawBody);
+
+    const result = verifyWebhookSignature({
+      scheme: "hmac_sha256_simple",
+      secret,
+      rawBody,
+      headers: { "x-odysseia-signature": signature, "x-timestamp-qualquer": "0" },
+      headerAssinatura: "x-odysseia-signature",
+      toleranceSeconds: 300,
+    });
+
+    expect(result.valid).toBe(true);
   });
 });

@@ -1,6 +1,9 @@
+import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { AdminRepository } from "@plataforma-ofertas/database";
 import { requireAdminAuth } from "./auth";
+
+const ESQUEMAS_ASSINATURA_VALIDOS = ["ofertas_v1", "hmac_sha256_simple"];
 
 // API do painel administrativo (seção 8 do doc de arquitetura / itens 31-38 do
 // escopo original): dashboard, toggle do Limit, CRUD de endpoints e regras de
@@ -24,6 +27,71 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       instance.post<{ Body: { ativo: boolean } }>("/integrations/limit", async (request) => {
         const updated = await adminRepo.setLimitEnabled(Boolean(request.body?.ativo));
         return { ativo: updated.ativo };
+      });
+
+      instance.get("/webhooks", async () => adminRepo.listWebhooks());
+
+      instance.post<{
+        Body: {
+          identificador?: string;
+          origem?: string;
+          secretHmac?: string;
+          esquemaAssinatura?: string;
+          headerAssinatura?: string;
+          headerTimestamp?: string | null;
+        };
+      }>("/webhooks", async (request, reply) => {
+        const body = request.body ?? {};
+        if (!body.identificador || !body.origem) {
+          reply.code(400);
+          return { error: "identificador_e_origem_obrigatorios" };
+        }
+        const esquemaAssinatura = body.esquemaAssinatura || "ofertas_v1";
+        if (!ESQUEMAS_ASSINATURA_VALIDOS.includes(esquemaAssinatura)) {
+          reply.code(400);
+          return { error: "esquema_assinatura_invalido", validos: ESQUEMAS_ASSINATURA_VALIDOS };
+        }
+        const usaOfertasV1 = esquemaAssinatura === "ofertas_v1";
+        const webhook = await adminRepo.createWebhook({
+          identificador: body.identificador,
+          origem: body.origem,
+          // Se o parceiro não mandou o próprio secret (ex.: quando é a gente quem
+          // define e passa pra eles), geramos um aleatório em vez de deixar vazio.
+          secretHmac: body.secretHmac || randomBytes(32).toString("hex"),
+          esquemaAssinatura,
+          headerAssinatura: (body.headerAssinatura || (usaOfertasV1 ? "x-ofertas-signature" : "")).toLowerCase(),
+          headerTimestamp: usaOfertasV1 ? (body.headerTimestamp || "x-ofertas-timestamp").toLowerCase() : null,
+        });
+        reply.code(201);
+        return webhook;
+      });
+
+      instance.patch<{
+        Params: { id: string };
+        Body: {
+          origem?: string;
+          ativo?: boolean;
+          secretHmac?: string;
+          esquemaAssinatura?: string;
+          headerAssinatura?: string;
+          headerTimestamp?: string | null;
+        };
+      }>("/webhooks/:id", async (request, reply) => {
+        const body = request.body ?? {};
+        if (body.esquemaAssinatura && !ESQUEMAS_ASSINATURA_VALIDOS.includes(body.esquemaAssinatura)) {
+          reply.code(400);
+          return { error: "esquema_assinatura_invalido", validos: ESQUEMAS_ASSINATURA_VALIDOS };
+        }
+        return adminRepo.updateWebhook(request.params.id, {
+          ...(body.origem !== undefined ? { origem: body.origem } : {}),
+          ...(body.ativo !== undefined ? { ativo: body.ativo } : {}),
+          ...(body.secretHmac ? { secretHmac: body.secretHmac } : {}),
+          ...(body.esquemaAssinatura ? { esquemaAssinatura: body.esquemaAssinatura } : {}),
+          ...(body.headerAssinatura ? { headerAssinatura: body.headerAssinatura.toLowerCase() } : {}),
+          ...(body.headerTimestamp !== undefined
+            ? { headerTimestamp: body.headerTimestamp ? body.headerTimestamp.toLowerCase() : null }
+            : {}),
+        });
       });
 
       instance.get("/endpoints", async () => adminRepo.listEndpoints());

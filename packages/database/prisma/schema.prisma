@@ -80,6 +80,22 @@ model Webhook {
   origem     String
   secretHmac String   @map("secret_hmac")
   ativo      Boolean  @default(true)
+
+  // Cada fornecedor de leads pode ter seu próprio jeito de assinar o corpo da
+  // requisição — não dá pra assumir que todo mundo usa o mesmo esquema que a gente
+  // definiu originalmente (X-Ofertas-Timestamp + X-Ofertas-Signature). Esses três
+  // campos deixam isso configurável por parceiro, sem precisar tocar em código pra
+  // integrar um fornecedor novo com um esquema já suportado (ver
+  // apps/api/src/webhooks/hmac.ts).
+  //   "ofertas_v1"          -> esquema original: dois headers (timestamp + signature),
+  //                            HMAC-SHA256(secret, "timestamp.corpo"), com janela de
+  //                            tolerância contra replay.
+  //   "hmac_sha256_simple"  -> um único header, HMAC-SHA256(secret, corpo) em hex, sem
+  //                            timestamp/replay (ex.: fornecedor "Odysseia").
+  esquemaAssinatura String  @default("ofertas_v1") @map("esquema_assinatura")
+  headerAssinatura  String  @default("x-ofertas-signature") @map("header_assinatura")
+  headerTimestamp   String? @default("x-ofertas-timestamp") @map("header_timestamp")
+
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 

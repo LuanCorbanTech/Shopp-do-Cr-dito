@@ -8,6 +8,7 @@ export const metadata = {
 
 const NAV = [
   { href: "/", label: "Dashboard" },
+  { href: "/parceiros", label: "Parceiros" },
   { href: "/integracoes", label: "Integrações" },
   { href: "/endpoints", label: "Endpoints" },
   { href: "/regras", label: "Regras de roteamento" },
