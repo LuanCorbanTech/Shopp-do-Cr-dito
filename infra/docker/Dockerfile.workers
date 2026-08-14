@@ -1,0 +1,34 @@
+# Build de produção dos 6 workers (loops de polling). Contexto do build =
+# raiz do monorepo:
+#   docker build -f infra/docker/Dockerfile.workers -t plataforma-ofertas-workers .
+FROM node:20-slim AS builder
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages ./packages
+COPY apps ./apps
+
+RUN npm ci
+
+RUN npm run build --workspace=@plataforma-ofertas/shared
+RUN npm run build --workspace=@plataforma-ofertas/domain
+RUN npm run build --workspace=@plataforma-ofertas/queue
+RUN npm run build --workspace=@plataforma-ofertas/integration-limit
+RUN npm run build --workspace=@plataforma-ofertas/integration-whatsapp
+RUN npm run build --workspace=@plataforma-ofertas/integration-hyperflow
+RUN npm run generate --workspace=@plataforma-ofertas/database
+RUN npm run build --workspace=@plataforma-ofertas/database
+RUN npm run build --workspace=@plataforma-ofertas/workers
+
+FROM node:20-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app ./
+
+# Sem porta exposta: os workers só fazem polling contra Postgres/Redis, não
+# recebem tráfego HTTP.
+CMD ["node", "apps/workers/dist/index.js"]

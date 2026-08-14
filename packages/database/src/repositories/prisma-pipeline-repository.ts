@@ -1,0 +1,508 @@
+import { Prisma, type PrismaClient, type OfferStatus } from "@prisma/client";
+import type {
+  IntegrationConfigPort,
+  IntegrationConfigSnapshot,
+  PhoneProcessingPort,
+  WhatsappValidationPort,
+  RoutingPort,
+  RoutingRuleSnapshot,
+  DispatchPort,
+  EndpointSnapshot,
+  RetryPort,
+  ReconciliationPort,
+  StuckOfferSnapshot,
+  OfferSnapshot,
+} from "@plataforma-ofertas/domain";
+
+// Implementação Prisma/PostgreSQL de todas as portas usadas pelos workers 1-6.
+// A reserva de ofertas usa SQL bruto (UPDATE ... WHERE id IN (SELECT ... FOR UPDATE
+// SKIP LOCKED) RETURNING ...) porque o Prisma Client não expõe FOR UPDATE SKIP LOCKED
+// na API de alto nível — é exatamente a estratégia descrita na seção 6.3 do doc de
+// arquitetura, e garante que dois workers nunca peguem a mesma oferta.
+
+type OfferRow = {
+  id: string;
+  webhookId: string;
+  externalId: string | null;
+  cpf: string | null;
+  telefoneOriginal: string;
+  telefoneAtualizado: string | null;
+  telefoneValidado: string | null;
+  bancoAutorizado: string | null;
+  produto: string | null;
+  valor: Prisma.Decimal | number | null;
+  parcelas: number | null;
+  status: string;
+  routingRuleId: string | null;
+  endpointId: string | null;
+  tentativasTelefone: number;
+  tentativasWhatsapp: number;
+  tentativasEnvio: number;
+  reservedAt?: Date | null;
+};
+
+const OFFER_COLUMNS_SQL = Prisma.sql`
+  id, webhook_id AS "webhookId", external_id AS "externalId", cpf,
+  telefone_original AS "telefoneOriginal", telefone_atualizado AS "telefoneAtualizado",
+  telefone_validado AS "telefoneValidado", banco_autorizado AS "bancoAutorizado",
+  produto, valor, parcelas, status::text AS status,
+  routing_rule_id AS "routingRuleId", endpoint_id AS "endpointId",
+  tentativas_telefone AS "tentativasTelefone", tentativas_whatsapp AS "tentativasWhatsapp",
+  tentativas_envio AS "tentativasEnvio", reserved_at AS "reservedAt"
+`;
+
+function mapRow(row: OfferRow): OfferSnapshot {
+  return {
+    id: row.id,
+    webhookId: row.webhookId,
+    externalId: row.externalId,
+    cpf: row.cpf,
+    telefoneOriginal: row.telefoneOriginal,
+    telefoneAtualizado: row.telefoneAtualizado,
+    telefoneValidado: row.telefoneValidado,
+    bancoAutorizado: row.bancoAutorizado,
+    produto: row.produto,
+    valor: row.valor === null ? null : Number(row.valor),
+    parcelas: row.parcelas,
+    status: row.status,
+    routingRuleId: row.routingRuleId,
+    endpointId: row.endpointId,
+    tentativasTelefone: row.tentativasTelefone,
+    tentativasWhatsapp: row.tentativasWhatsapp,
+    tentativasEnvio: row.tentativasEnvio,
+  };
+}
+
+export class PrismaPipelineRepository
+  implements
+    IntegrationConfigPort,
+    PhoneProcessingPort,
+    WhatsappValidationPort,
+    RoutingPort,
+    DispatchPort,
+    RetryPort,
+    ReconciliationPort
+{
+  constructor(private readonly prisma: PrismaClient) {}
+
+  private async claimByStatus(
+    fromStatuses: string[],
+    toStatus: string,
+    limit: number
+  ): Promise<OfferSnapshot[]> {
+    const statusesSql = Prisma.join(fromStatuses.map((s) => Prisma.sql`${s}::"OfferStatus"`));
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      UPDATE offers
+      SET status = ${toStatus}::"OfferStatus", reserved_at = now(), updated_at = now()
+      WHERE id IN (
+        SELECT id FROM offers
+        WHERE status IN (${statusesSql})
+        ORDER BY created_at
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING ${OFFER_COLUMNS_SQL}
+    `;
+    return rows.map(mapRow);
+  }
+
+  // -------------------------------------------------------------------------
+  // IntegrationConfigPort
+  // -------------------------------------------------------------------------
+
+  async getConfig(chave: string): Promise<IntegrationConfigSnapshot | null> {
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave } });
+    if (!config) return null;
+    return { chave: config.chave, ativo: config.ativo, valor: (config.valor as Record<string, unknown>) ?? {} };
+  }
+
+  // -------------------------------------------------------------------------
+  // Worker 1 — Limit
+  // -------------------------------------------------------------------------
+
+  async claimOffersReceived(limit: number): Promise<OfferSnapshot[]> {
+    return this.claimByStatus(["RECEBIDO"], "PROCESSANDO_TELEFONE", limit);
+  }
+
+  async markPhoneSkippedLimitDisabled(offerId: string): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: { status: "TELEFONE_ATUALIZADO", reservedAt: null },
+      }),
+      this.prisma.phoneValidation.create({
+        data: { offerId, limitAtivoNoMomento: false },
+      }),
+      this.prisma.offerProcessing.create({
+        data: { offerId, etapa: "LIMIT", resultado: "IGNORADO", tentativa: 1 },
+      }),
+    ]);
+  }
+
+  async markPhoneUpdated(
+    offerId: string,
+    params: { telefoneAtualizado: string; respostaBruta: unknown; tentativa: number }
+  ): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: { status: "TELEFONE_ATUALIZADO", telefoneAtualizado: params.telefoneAtualizado, reservedAt: null },
+      }),
+      this.prisma.phoneValidation.create({
+        data: {
+          offerId,
+          limitAtivoNoMomento: true,
+          respostaLimit: toJsonInput(params.respostaBruta),
+        },
+      }),
+      this.prisma.offerProcessing.create({
+        data: {
+          offerId,
+          etapa: "LIMIT",
+          resultado: "SUCESSO",
+          response: toJsonInput(params.respostaBruta),
+          tentativa: params.tentativa,
+        },
+      }),
+    ]);
+  }
+
+  async markPhoneFailed(
+    offerId: string,
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean }
+  ): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: {
+          status: params.cancelar ? "CANCELADO" : "ERRO_TELEFONE",
+          reservedAt: null,
+          tentativasTelefone: { increment: 1 },
+          proximaTentativaEm: params.proximaTentativaEm,
+        },
+      }),
+      this.prisma.offerProcessing.create({
+        data: {
+          offerId,
+          etapa: "LIMIT",
+          resultado: "FALHA",
+          response: { erro: params.erro },
+          tentativa: params.tentativa,
+        },
+      }),
+    ]);
+  }
+
+  // -------------------------------------------------------------------------
+  // Worker 2 — Validação WhatsApp
+  // -------------------------------------------------------------------------
+
+  async claimOffersForValidation(limit: number): Promise<OfferSnapshot[]> {
+    return this.claimByStatus(["TELEFONE_ATUALIZADO"], "VALIDANDO_WHATSAPP", limit);
+  }
+
+  async markWhatsappValidated(
+    offerId: string,
+    params: { possuiWhatsapp: boolean; respostaBruta: unknown; telefoneUsado: string }
+  ): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: {
+          status: params.possuiWhatsapp ? "AGUARDANDO_ROTEAMENTO" : "SEM_WHATSAPP",
+          telefoneValidado: params.possuiWhatsapp ? params.telefoneUsado : null,
+          reservedAt: null,
+        },
+      }),
+      this.prisma.phoneValidation.updateMany({
+        where: { offerId },
+        data: { possuiWhatsapp: params.possuiWhatsapp },
+      }),
+      this.prisma.offerProcessing.create({
+        data: {
+          offerId,
+          etapa: "WHATSAPP",
+          resultado: params.possuiWhatsapp ? "SUCESSO" : "SEM_WHATSAPP",
+          response: toJsonInput(params.respostaBruta),
+          tentativa: 1,
+        },
+      }),
+    ]);
+  }
+
+  async markWhatsappFailed(
+    offerId: string,
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean }
+  ): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: {
+          status: params.cancelar ? "CANCELADO" : "ERRO_VALIDACAO_WHATSAPP",
+          reservedAt: null,
+          tentativasWhatsapp: { increment: 1 },
+          proximaTentativaEm: params.proximaTentativaEm,
+        },
+      }),
+      this.prisma.offerProcessing.create({
+        data: {
+          offerId,
+          etapa: "WHATSAPP",
+          resultado: "FALHA",
+          response: { erro: params.erro },
+          tentativa: params.tentativa,
+        },
+      }),
+    ]);
+  }
+
+  // -------------------------------------------------------------------------
+  // Worker 3 — Roteamento
+  // -------------------------------------------------------------------------
+
+  async claimOffersForRouting(limit: number): Promise<OfferSnapshot[]> {
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      UPDATE offers
+      SET reserved_at = now()
+      WHERE id IN (
+        SELECT id FROM offers
+        WHERE status IN ('AGUARDANDO_ROTEAMENTO'::"OfferStatus", 'SEM_ROTA_CONFIGURADA'::"OfferStatus")
+          AND reserved_at IS NULL
+        ORDER BY created_at
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING ${OFFER_COLUMNS_SQL}
+    `;
+    return rows.map(mapRow);
+  }
+
+  async listActiveRoutingRulesSortedByPriority(): Promise<RoutingRuleSnapshot[]> {
+    const rules = await this.prisma.routingRule.findMany({
+      where: { ativo: true },
+      orderBy: { prioridade: "asc" },
+    });
+    return rules.map((r) => ({
+      id: r.id,
+      condicoes: (r.condicoes as Record<string, unknown>) ?? {},
+      endpointId: r.endpointId,
+      prioridade: r.prioridade,
+    }));
+  }
+
+  async isEndpointActive(endpointId: string): Promise<boolean> {
+    const endpoint = await this.prisma.endpoint.findUnique({ where: { id: endpointId } });
+    return Boolean(endpoint?.ativo);
+  }
+
+  async assignRoute(
+    offerId: string,
+    params: { routingRuleId: string; endpointId: string }
+  ): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: {
+          status: "AGUARDANDO_ENVIO",
+          routingRuleId: params.routingRuleId,
+          endpointId: params.endpointId,
+          reservedAt: null,
+        },
+      }),
+      this.prisma.offerProcessing.create({
+        data: { offerId, etapa: "ROTEAMENTO", resultado: "SUCESSO", tentativa: 1 },
+      }),
+    ]);
+  }
+
+  async markNoRoute(offerId: string): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: { status: "SEM_ROTA_CONFIGURADA", reservedAt: null },
+      }),
+      this.prisma.offerProcessing.create({
+        data: { offerId, etapa: "ROTEAMENTO", resultado: "SEM_ROTA", tentativa: 1 },
+      }),
+    ]);
+  }
+
+  // -------------------------------------------------------------------------
+  // Worker 4 — Disparo
+  // -------------------------------------------------------------------------
+
+  async listActiveEndpoints(): Promise<EndpointSnapshot[]> {
+    const endpoints = await this.prisma.endpoint.findMany({ where: { ativo: true } });
+    return endpoints.map((e) => ({
+      id: e.id,
+      nome: e.nome,
+      url: e.url,
+      metodoHttp: e.metodoHttp,
+      headers: (e.headers as Record<string, string> | null) ?? null,
+      authType: e.authType,
+      credenciaisRef: e.credenciaisRef,
+      capacidadeMinuto: e.capacidadeMinuto,
+      capacidadeHora: e.capacidadeHora,
+      capacidadeDia: e.capacidadeDia,
+      timeoutMs: e.timeoutMs,
+      maxTentativas: e.maxTentativas,
+      ativo: e.ativo,
+    }));
+  }
+
+  async claimOffersForDispatch(endpointId: string, limit: number): Promise<OfferSnapshot[]> {
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      UPDATE offers
+      SET status = 'EM_PROCESSAMENTO_ENVIO'::"OfferStatus", reserved_at = now(), updated_at = now()
+      WHERE id IN (
+        SELECT id FROM offers
+        WHERE status = 'AGUARDANDO_ENVIO'::"OfferStatus" AND endpoint_id = ${endpointId}
+        ORDER BY created_at
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING ${OFFER_COLUMNS_SQL}
+    `;
+    return rows.map(mapRow);
+  }
+
+  async markDispatched(
+    offerId: string,
+    params: {
+      endpointId: string;
+      request: unknown;
+      response: unknown;
+      httpStatus: number | null;
+      tentativa: number;
+    }
+  ): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: { status: "ENVIADO", reservedAt: null },
+      }),
+      this.prisma.dispatch.create({
+        data: {
+          offerId,
+          endpointId: params.endpointId,
+          request: toJsonInput(params.request),
+          response: toJsonInput(params.response),
+          httpStatus: params.httpStatus,
+          tentativa: params.tentativa,
+          status: "SUCESSO",
+        },
+      }),
+      this.prisma.offerProcessing.create({
+        data: {
+          offerId,
+          etapa: "DISPARO",
+          resultado: "SUCESSO",
+          httpStatus: params.httpStatus,
+          response: toJsonInput(params.response),
+          tentativa: params.tentativa,
+        },
+      }),
+    ]);
+  }
+
+  async markDispatchFailed(
+    offerId: string,
+    params: {
+      endpointId: string;
+      request: unknown;
+      response: unknown;
+      httpStatus: number | null;
+      erro: string;
+      tentativa: number;
+      proximaTentativaEm: Date | null;
+      cancelar: boolean;
+    }
+  ): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: {
+          status: params.cancelar ? "CANCELADO" : "ERRO_ENVIO",
+          reservedAt: null,
+          tentativasEnvio: { increment: 1 },
+          proximaTentativaEm: params.proximaTentativaEm,
+        },
+      }),
+      this.prisma.dispatch.create({
+        data: {
+          offerId,
+          endpointId: params.endpointId,
+          request: toJsonInput(params.request),
+          response: toJsonInput(params.response),
+          httpStatus: params.httpStatus,
+          tentativa: params.tentativa,
+          status: params.cancelar ? "FALHA" : "RETRYING",
+        },
+      }),
+      this.prisma.offerProcessing.create({
+        data: {
+          offerId,
+          etapa: "DISPARO",
+          resultado: "FALHA",
+          httpStatus: params.httpStatus,
+          response: { erro: params.erro },
+          tentativa: params.tentativa,
+        },
+      }),
+    ]);
+  }
+
+  // -------------------------------------------------------------------------
+  // Worker 5 — Retry
+  // -------------------------------------------------------------------------
+
+  async findRetryableOffers(limit: number): Promise<OfferSnapshot[]> {
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      SELECT ${OFFER_COLUMNS_SQL} FROM offers
+      WHERE status IN ('ERRO_TELEFONE'::"OfferStatus", 'ERRO_VALIDACAO_WHATSAPP'::"OfferStatus", 'ERRO_ENVIO'::"OfferStatus")
+        AND (proxima_tentativa_em IS NULL OR proxima_tentativa_em <= now())
+      ORDER BY updated_at
+      LIMIT ${limit}
+    `;
+    return rows.map(mapRow);
+  }
+
+  async revertForRetry(offerId: string, targetStatus: string): Promise<void> {
+    await this.prisma.offer.update({
+      where: { id: offerId },
+      data: { status: targetStatus as OfferStatus, proximaTentativaEm: null },
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Worker 6 — Reconciliação
+  // -------------------------------------------------------------------------
+
+  async findStuckOffers(olderThanMs: number, limit: number): Promise<StuckOfferSnapshot[]> {
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      SELECT ${OFFER_COLUMNS_SQL} FROM offers
+      WHERE reserved_at IS NOT NULL
+        AND reserved_at < now() - (${olderThanMs}::text || ' milliseconds')::interval
+        AND status IN (
+          'PROCESSANDO_TELEFONE'::"OfferStatus", 'VALIDANDO_WHATSAPP'::"OfferStatus",
+          'EM_PROCESSAMENTO_ENVIO'::"OfferStatus", 'AGUARDANDO_ROTEAMENTO'::"OfferStatus",
+          'SEM_ROTA_CONFIGURADA'::"OfferStatus"
+        )
+      ORDER BY reserved_at
+      LIMIT ${limit}
+    `;
+    return rows.map((row) => ({ ...mapRow(row), reservedAt: row.reservedAt ?? null }));
+  }
+
+  async releaseStuckOffer(offerId: string, targetStatus: string): Promise<void> {
+    await this.prisma.offer.update({
+      where: { id: offerId },
+      data: { status: targetStatus as OfferStatus, reservedAt: null },
+    });
+  }
+}
+
+function toJsonInput(value: unknown): Prisma.InputJsonValue | undefined {
+  if (value === null || value === undefined) return undefined;
+  return value as Prisma.InputJsonValue;
+}

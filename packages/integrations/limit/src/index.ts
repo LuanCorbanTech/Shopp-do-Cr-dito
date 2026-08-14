@@ -1,22 +1,90 @@
-// LimitService — encapsula toda a integração com a API Limit (seção 5-11 do escopo original).
-// Implementação real prevista para a Fase 2. Este stub documenta o contrato esperado.
-//
-// Regras que o serviço real deverá respeitar:
-// - Só é chamado pelo Worker 1 quando IntegrationConfig("LIMIT_CONSULTA").ativo === true,
-//   verificado NO MOMENTO da execução (não em cache antigo — ver seção 10 do doc de arquitetura).
-// - Nunca sobrescreve `telefone_original`; grava o resultado em `telefone_atualizado`.
-// - Deve respeitar retry configurável (max tentativas, backoff, status HTTP retryable).
+// LimitService — encapsula toda a integração com a API Limit (seção 5-11 do escopo
+// original). O contrato exato (rota, payload, campos de resposta) depende do provedor
+// real; como o escopo não define isso, este cliente assume um contrato REST simples
+// e razoável (POST {baseUrl}/lookup, resposta com { telefone }). Ajuste extractPhone/
+// a rota quando a documentação real da API Limit estiver disponível — é a única
+// mudança necessária, isolada neste arquivo.
+
+export interface LimitLookupParams {
+  cpf: string | null;
+  telefoneOriginal: string;
+}
 
 export interface LimitLookupResult {
   telefoneAtualizado: string | null;
   respostaBruta: unknown;
+  httpStatus: number | null;
+}
+
+export interface LimitServiceConfig {
+  baseUrl: string;
+  apiKey?: string;
+  timeoutMs?: number;
 }
 
 export interface LimitService {
-  isEnabled(): Promise<boolean>;
-  lookupPhone(params: { cpf: string; telefoneOriginal: string }): Promise<LimitLookupResult>;
+  lookupPhone(params: LimitLookupParams): Promise<LimitLookupResult>;
 }
 
-export function createLimitService(): LimitService {
-  throw new Error("createLimitService: implementação prevista para a Fase 2.");
+export class LimitServiceError extends Error {
+  constructor(
+    message: string,
+    public readonly httpStatus: number | null,
+    public readonly respostaBruta: unknown
+  ) {
+    super(message);
+    this.name = "LimitServiceError";
+  }
+}
+
+export function createLimitService(config: LimitServiceConfig): LimitService {
+  const timeoutMs = config.timeoutMs ?? 10_000;
+  const baseUrl = config.baseUrl.replace(/\/$/, "");
+
+  return {
+    async lookupPhone({ cpf, telefoneOriginal }: LimitLookupParams): Promise<LimitLookupResult> {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(`${baseUrl}/lookup`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+          },
+          body: JSON.stringify({ cpf, telefone: telefoneOriginal }),
+          signal: controller.signal,
+        });
+        const respostaBruta = await safeParseJson(response);
+        if (!response.ok) {
+          throw new LimitServiceError(`API Limit respondeu ${response.status}`, response.status, respostaBruta);
+        }
+        return {
+          telefoneAtualizado: extractPhone(respostaBruta),
+          respostaBruta,
+          httpStatus: response.status,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  };
+}
+
+function extractPhone(payload: unknown): string | null {
+  if (payload && typeof payload === "object" && "telefone" in (payload as Record<string, unknown>)) {
+    const value = (payload as Record<string, unknown>).telefone;
+    return typeof value === "string" && value.length > 0 ? value : null;
+  }
+  return null;
+}
+
+async function safeParseJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }

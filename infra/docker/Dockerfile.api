@@ -1,0 +1,38 @@
+# Build de produção da API (Fastify). Contexto do build = raiz do monorepo:
+#   docker build -f infra/docker/Dockerfile.api -t plataforma-ofertas-api .
+#
+# node:20-slim (Debian) em vez de alpine: evita problemas conhecidos do engine
+# do Prisma com musl libc no alpine.
+FROM node:20-slim AS builder
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages ./packages
+COPY apps ./apps
+
+RUN npm ci
+
+# Build em ordem de dependência (workspaces não garantem ordem topológica
+# automática em "npm run build --workspaces").
+RUN npm run build --workspace=@plataforma-ofertas/shared
+RUN npm run build --workspace=@plataforma-ofertas/domain
+RUN npm run build --workspace=@plataforma-ofertas/queue
+RUN npm run build --workspace=@plataforma-ofertas/integration-limit
+RUN npm run build --workspace=@plataforma-ofertas/integration-whatsapp
+RUN npm run build --workspace=@plataforma-ofertas/integration-hyperflow
+RUN npm run generate --workspace=@plataforma-ofertas/database
+RUN npm run build --workspace=@plataforma-ofertas/database
+RUN npm run build --workspace=@plataforma-ofertas/api
+
+FROM node:20-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+# openssl é exigido pelo query engine do Prisma em runtime.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app ./
+
+EXPOSE 3000
+CMD ["node", "apps/api/dist/server.js"]

@@ -5,16 +5,22 @@
   "scripts": {
     "dev": "ts-node-dev --respawn src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "@plataforma-ofertas/database": "*",
     "@plataforma-ofertas/domain": "*",
     "@plataforma-ofertas/queue": "*",
-    "@plataforma-ofertas/shared": "*"
+    "@plataforma-ofertas/shared": "*",
+    "@plataforma-ofertas/integration-limit": "*",
+    "@plataforma-ofertas/integration-whatsapp": "*",
+    "@plataforma-ofertas/integration-hyperflow": "*",
+    "ioredis": "^5.4.1"
   },
   "devDependencies": {
     "typescript": "^5.5.4",
-    "ts-node-dev": "^2.0.0"
+    "ts-node-dev": "^2.0.0",
+    "vitest": "^2.0.5"
   }
 }

@@ -126,6 +126,14 @@ model Offer {
 
   reservedAt       DateTime?   @map("reserved_at")
 
+  // Controle de retry (item 28) — contadores por etapa, já que cada etapa tem sua
+  // própria política. proximaTentativaEm é a "não processar antes de" usada pelo
+  // Worker 5 para aplicar backoff sem apertar em loop.
+  tentativasTelefone Int       @default(0) @map("tentativas_telefone")
+  tentativasWhatsapp Int       @default(0) @map("tentativas_whatsapp")
+  tentativasEnvio    Int       @default(0) @map("tentativas_envio")
+  proximaTentativaEm DateTime? @map("proxima_tentativa_em")
+
   createdAt        DateTime    @default(now()) @map("created_at")
   updatedAt        DateTime    @updatedAt @map("updated_at")
 
@@ -145,6 +153,7 @@ model Offer {
   @@index([cpf], map: "idx_offers_cpf")
   @@index([telefoneValidado], map: "idx_offers_telefone_validado")
   @@index([reservedAt], map: "idx_offers_reserved_at")
+  @@index([status, proximaTentativaEm], map: "idx_offers_status_proxima_tentativa")
   @@map("offers")
 }
 

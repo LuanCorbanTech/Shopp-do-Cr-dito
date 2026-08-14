@@ -1,0 +1,24 @@
+# Build de produção do painel administrativo (Next.js). Contexto do build =
+# raiz do monorepo:
+#   docker build -f infra/docker/Dockerfile.admin-panel -t plataforma-ofertas-admin-panel .
+#
+# Sem dependência do Prisma aqui (o painel só fala com a API via HTTP), então
+# alpine é seguro.
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages ./packages
+COPY apps ./apps
+
+RUN npm ci
+RUN npm run build --workspace=@plataforma-ofertas/admin-panel
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=builder /app ./
+
+EXPOSE 3001
+CMD ["npm", "run", "start", "--workspace=@plataforma-ofertas/admin-panel"]

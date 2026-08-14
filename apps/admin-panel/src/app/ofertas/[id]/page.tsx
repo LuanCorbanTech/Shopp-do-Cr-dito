@@ -1,0 +1,104 @@
+import { adminApiFetch } from "@/lib/api";
+import { StatusBadge } from "@/components/status-badge";
+
+export const dynamic = "force-dynamic";
+
+interface OfferTimeline {
+  offer: {
+    id: string;
+    externalId: string | null;
+    cpf: string | null;
+    telefoneOriginal: string;
+    telefoneAtualizado: string | null;
+    telefoneValidado: string | null;
+    bancoAutorizado: string | null;
+    status: string;
+    createdAt: string;
+    webhook: { identificador: string; origem: string };
+    endpoint: { nome: string } | null;
+    routingRule: { nome: string } | null;
+  };
+  processingEvents: Array<{
+    id: string;
+    etapa: string;
+    resultado: string;
+    tentativa: number;
+    createdAt: string;
+  }>;
+  dispatches: Array<{ id: string; status: string; httpStatus: number | null; createdAt: string }>;
+}
+
+export default async function OfertaDetailPage({ params }: { params: { id: string } }) {
+  let data: OfferTimeline | null = null;
+  let error: string | null = null;
+  try {
+    data = await adminApiFetch<OfferTimeline>(`/admin/offers/${params.id}`);
+  } catch (e) {
+    error = e instanceof Error ? e.message : String(e);
+  }
+
+  if (error) {
+    return <p className="empty-state">Não foi possível carregar a oferta: {error}</p>;
+  }
+  if (!data) return null;
+
+  const { offer, processingEvents } = data;
+
+  return (
+    <div>
+      <p>
+        <a href="/ofertas">← voltar para ofertas</a>
+      </p>
+      <h1>
+        Oferta {offer.externalId ?? offer.id.slice(0, 8)} <StatusBadge status={offer.status} />
+      </h1>
+      <p className="subtitle">
+        Origem: {offer.webhook.origem} ({offer.webhook.identificador})
+      </p>
+
+      <div className="stat-grid">
+        <div className="stat-tile">
+          <div className="value" style={{ fontSize: 15 }}>
+            {offer.telefoneValidado ?? offer.telefoneAtualizado ?? offer.telefoneOriginal}
+          </div>
+          <div className="label">Telefone usado</div>
+        </div>
+        <div className="stat-tile">
+          <div className="value" style={{ fontSize: 15 }}>
+            {offer.bancoAutorizado ?? "—"}
+          </div>
+          <div className="label">Banco autorizado</div>
+        </div>
+        <div className="stat-tile">
+          <div className="value" style={{ fontSize: 15 }}>
+            {offer.endpoint?.nome ?? "—"}
+          </div>
+          <div className="label">Endpoint</div>
+        </div>
+        <div className="stat-tile">
+          <div className="value" style={{ fontSize: 15 }}>
+            {offer.routingRule?.nome ?? "—"}
+          </div>
+          <div className="label">Regra aplicada</div>
+        </div>
+      </div>
+
+      <h2>Timeline</h2>
+      <ul className="timeline">
+        <li>
+          <span className="ts">{new Date(offer.createdAt).toLocaleString("pt-BR")}</span>
+          Oferta recebida
+        </li>
+        {processingEvents.map((event) => (
+          <li key={event.id}>
+            <span className="ts">{new Date(event.createdAt).toLocaleString("pt-BR")}</span>
+            {event.etapa} — {event.resultado} (tentativa {event.tentativa})
+          </li>
+        ))}
+        {processingEvents.length === 0 && (
+          <li className="empty-state">Nenhum evento de processamento registrado ainda.</li>
+        )}
+      </ul>
+    </div>
+  );
+}

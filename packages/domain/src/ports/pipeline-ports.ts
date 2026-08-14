@@ -1,0 +1,171 @@
+// Portas usadas pelos workers 1-6 (seção 6.1 do doc de arquitetura). Cada worker
+// depende só da porta que precisa — implementações concretas (Prisma) vivem em
+// @plataforma-ofertas/database. Mantém os workers testáveis com fakes em memória,
+// nos mesmos moldes do OffersPort da Fase 1.
+
+export interface OfferSnapshot {
+  id: string;
+  webhookId: string;
+  externalId: string | null;
+  cpf: string | null;
+  telefoneOriginal: string;
+  telefoneAtualizado: string | null;
+  telefoneValidado: string | null;
+  bancoAutorizado: string | null;
+  produto: string | null;
+  valor: number | null;
+  parcelas: number | null;
+  status: string;
+  routingRuleId: string | null;
+  endpointId: string | null;
+  tentativasTelefone: number;
+  tentativasWhatsapp: number;
+  tentativasEnvio: number;
+}
+
+// ---------------------------------------------------------------------------
+// Configuração dinâmica (seção 27 do escopo original)
+// ---------------------------------------------------------------------------
+
+export interface IntegrationConfigSnapshot {
+  chave: string;
+  ativo: boolean;
+  valor: Record<string, unknown>;
+}
+
+export interface IntegrationConfigPort {
+  getConfig(chave: string): Promise<IntegrationConfigSnapshot | null>;
+}
+
+// ---------------------------------------------------------------------------
+// Worker 1 — Processamento inicial (Limit)
+// ---------------------------------------------------------------------------
+
+export interface PhoneProcessingPort {
+  /** Reserva ofertas RECEBIDO -> PROCESSANDO_TELEFONE (SELECT FOR UPDATE SKIP LOCKED). */
+  claimOffersReceived(limit: number): Promise<OfferSnapshot[]>;
+  /** Limit desativado: usa telefone original e avança direto, registrando o motivo. */
+  markPhoneSkippedLimitDisabled(offerId: string): Promise<void>;
+  /** Limit respondeu com sucesso. */
+  markPhoneUpdated(
+    offerId: string,
+    params: { telefoneAtualizado: string; respostaBruta: unknown; tentativa: number }
+  ): Promise<void>;
+  /** Limit falhou — agenda retry ou cancela se esgotou tentativas. */
+  markPhoneFailed(
+    offerId: string,
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean }
+  ): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Worker 2 — Validação WhatsApp
+// ---------------------------------------------------------------------------
+
+export interface WhatsappValidationPort {
+  /** Reserva ofertas TELEFONE_ATUALIZADO -> VALIDANDO_WHATSAPP. */
+  claimOffersForValidation(limit: number): Promise<OfferSnapshot[]>;
+  /** possuiWhatsapp=true avança para AGUARDANDO_ROTEAMENTO; false encerra em SEM_WHATSAPP. */
+  markWhatsappValidated(
+    offerId: string,
+    params: { possuiWhatsapp: boolean; respostaBruta: unknown; telefoneUsado: string }
+  ): Promise<void>;
+  markWhatsappFailed(
+    offerId: string,
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean }
+  ): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Worker 3 — Roteamento
+// ---------------------------------------------------------------------------
+
+export interface RoutingRuleSnapshot {
+  id: string;
+  condicoes: Record<string, unknown>;
+  endpointId: string;
+  prioridade: number;
+}
+
+export interface RoutingPort {
+  /** Ofertas AGUARDANDO_ROTEAMENTO e SEM_ROTA_CONFIGURADA (reprocessa quando regra nova existe). */
+  claimOffersForRouting(limit: number): Promise<OfferSnapshot[]>;
+  listActiveRoutingRulesSortedByPriority(): Promise<RoutingRuleSnapshot[]>;
+  isEndpointActive(endpointId: string): Promise<boolean>;
+  assignRoute(offerId: string, params: { routingRuleId: string; endpointId: string }): Promise<void>;
+  markNoRoute(offerId: string): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Worker 4 — Disparo
+// ---------------------------------------------------------------------------
+
+export interface EndpointSnapshot {
+  id: string;
+  nome: string;
+  url: string;
+  metodoHttp: string;
+  headers: Record<string, string> | null;
+  authType: string;
+  credenciaisRef: string | null;
+  capacidadeMinuto: number | null;
+  capacidadeHora: number;
+  capacidadeDia: number | null;
+  timeoutMs: number;
+  maxTentativas: number;
+  ativo: boolean;
+}
+
+export interface DispatchPort {
+  listActiveEndpoints(): Promise<EndpointSnapshot[]>;
+  /** Reserva ofertas AGUARDANDO_ENVIO de um endpoint -> EM_PROCESSAMENTO_ENVIO. */
+  claimOffersForDispatch(endpointId: string, limit: number): Promise<OfferSnapshot[]>;
+  markDispatched(
+    offerId: string,
+    params: {
+      endpointId: string;
+      request: unknown;
+      response: unknown;
+      httpStatus: number | null;
+      tentativa: number;
+    }
+  ): Promise<void>;
+  markDispatchFailed(
+    offerId: string,
+    params: {
+      endpointId: string;
+      request: unknown;
+      response: unknown;
+      httpStatus: number | null;
+      erro: string;
+      tentativa: number;
+      proximaTentativaEm: Date | null;
+      cancelar: boolean;
+    }
+  ): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Worker 5 — Retry
+// ---------------------------------------------------------------------------
+
+export interface RetryPort {
+  /** status em ERRO_* com proximaTentativaEm nula ou já passada. */
+  findRetryableOffers(limit: number): Promise<OfferSnapshot[]>;
+  /** Devolve a oferta ao estado que faz o worker correspondente reprocessá-la. */
+  revertForRetry(offerId: string, targetStatus: string): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Worker 6 — Reconciliação
+// ---------------------------------------------------------------------------
+
+export interface StuckOfferSnapshot extends OfferSnapshot {
+  reservedAt: Date | null;
+}
+
+export interface ReconciliationPort {
+  /** Ofertas em estado transitório (EM_PROCESSAMENTO_*) travadas há mais que o SLA. */
+  findStuckOffers(olderThanMs: number, limit: number): Promise<StuckOfferSnapshot[]>;
+  releaseStuckOffer(offerId: string, targetStatus: string): Promise<void>;
+}

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "fastify": "^4.28.1",
+    "prom-client": "^15.1.3",
     "@plataforma-ofertas/database": "*",
     "@plataforma-ofertas/domain": "*",
     "@plataforma-ofertas/shared": "*"
