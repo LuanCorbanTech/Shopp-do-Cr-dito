@@ -19,9 +19,13 @@ import { runReconciliationWorkerOnce } from "./workers/worker6-reconciliation";
 const repo = new PrismaPipelineRepository(prisma);
 const redis = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 
+const limitApiKey = process.env.LIMIT_API_KEY;
+if (!limitApiKey) {
+  throw new Error("LIMIT_API_KEY não configurada (obrigatória — token Bearer da Lemit, api.lemit.com.br)");
+}
 const limitService = createLimitService({
-  baseUrl: process.env.LIMIT_API_BASE_URL || "http://localhost:9901",
-  apiKey: process.env.LIMIT_API_KEY,
+  baseUrl: process.env.LIMIT_API_BASE_URL, // vazio/ausente -> usa o default real da Lemit
+  apiKey: limitApiKey,
 });
 const whatsappApiKey = process.env.WHATSAPP_VALIDATION_API_KEY;
 if (!whatsappApiKey) {

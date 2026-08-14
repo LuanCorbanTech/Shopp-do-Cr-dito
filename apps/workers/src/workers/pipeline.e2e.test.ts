@@ -48,6 +48,7 @@ describe("pipeline completo (RECEBIDO -> ENVIADO)", () => {
 
     const offer = repo.addOffer({
       telefoneOriginal: "62999999999",
+      cpf: "85868388372",
       bancoAutorizado: "C6",
       status: "RECEBIDO",
     });
@@ -55,7 +56,14 @@ describe("pipeline completo (RECEBIDO -> ENVIADO)", () => {
     await runLimitWorkerOnce({
       phonePort: repo,
       configPort: repo,
-      limitService: { lookupPhone: async () => ({ telefoneAtualizado: "5562999999999", respostaBruta: {} }) },
+      limitService: {
+        lookupPhone: async () => ({
+          telefoneAtualizado: "5562999999999",
+          possuiWhatsappSegundoLemit: true,
+          dadosPessoa: null,
+          respostaBruta: {},
+        }),
+      },
     });
     expect(repo.offers.get(offer.id)?.status).toBe("TELEFONE_ATUALIZADO");
 

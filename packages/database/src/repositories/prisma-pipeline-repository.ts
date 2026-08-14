@@ -146,18 +146,30 @@ export class PrismaPipelineRepository
 
   async markPhoneUpdated(
     offerId: string,
-    params: { telefoneAtualizado: string; respostaBruta: unknown; tentativa: number }
+    params: {
+      telefoneAtualizado: string;
+      respostaBruta: unknown;
+      dadosPessoa: Record<string, unknown> | null;
+      possuiWhatsappSegundoLemit: boolean | null;
+      tentativa: number;
+    }
   ): Promise<void> {
     await this.prisma.$transaction([
       this.prisma.offer.update({
         where: { id: offerId },
-        data: { status: "TELEFONE_ATUALIZADO", telefoneAtualizado: params.telefoneAtualizado, reservedAt: null },
+        data: {
+          status: "TELEFONE_ATUALIZADO",
+          telefoneAtualizado: params.telefoneAtualizado,
+          dadosPessoaLemit: toJsonInput(params.dadosPessoa),
+          reservedAt: null,
+        },
       }),
       this.prisma.phoneValidation.create({
         data: {
           offerId,
           limitAtivoNoMomento: true,
           respostaLimit: toJsonInput(params.respostaBruta),
+          possuiWhatsapp: params.possuiWhatsappSegundoLemit,
         },
       }),
       this.prisma.offerProcessing.create({
@@ -168,6 +180,21 @@ export class PrismaPipelineRepository
           response: toJsonInput(params.respostaBruta),
           tentativa: params.tentativa,
         },
+      }),
+    ]);
+  }
+
+  async markPhoneSkippedSemDocumento(offerId: string): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: { status: "TELEFONE_ATUALIZADO", reservedAt: null },
+      }),
+      this.prisma.phoneValidation.create({
+        data: { offerId, limitAtivoNoMomento: true },
+      }),
+      this.prisma.offerProcessing.create({
+        data: { offerId, etapa: "LIMIT", resultado: "SEM_DOCUMENTO", tentativa: 1 },
       }),
     ]);
   }

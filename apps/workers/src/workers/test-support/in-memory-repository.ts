@@ -21,6 +21,10 @@ export interface MutableOffer extends OfferSnapshot {
   reservedAt: Date | null;
   proximaTentativaEm: Date | null;
   createdAt: Date;
+  // Não fazem parte de OfferSnapshot (Worker 1 só escreve, nenhum worker precisa
+  // ler de volta) — ficam aqui só pra dar visibilidade nos testes.
+  dadosPessoaLemit?: Record<string, unknown> | null;
+  possuiWhatsappSegundoLemit?: boolean | null;
 }
 
 const IN_FLIGHT_STATUSES = [
@@ -72,6 +76,8 @@ export class InMemoryPipelineRepository
       tentativasEnvio: partial.tentativasEnvio ?? 0,
       whatsappRequestId: partial.whatsappRequestId ?? null,
       whatsappCheckIniciadoEm: partial.whatsappCheckIniciadoEm ?? null,
+      dadosPessoaLemit: partial.dadosPessoaLemit ?? null,
+      possuiWhatsappSegundoLemit: partial.possuiWhatsappSegundoLemit ?? null,
       reservedAt: partial.reservedAt ?? null,
       proximaTentativaEm: partial.proximaTentativaEm ?? null,
       createdAt: partial.createdAt ?? new Date(Date.now() + this.idCounter), // preserva ordem de inserção
@@ -136,13 +142,26 @@ export class InMemoryPipelineRepository
     this.processingLog.push({ offerId, etapa: "LIMIT", resultado: "IGNORADO" });
   }
 
+  async markPhoneSkippedSemDocumento(offerId: string): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "TELEFONE_ATUALIZADO";
+    offer.reservedAt = null;
+    this.processingLog.push({ offerId, etapa: "LIMIT", resultado: "SEM_DOCUMENTO" });
+  }
+
   async markPhoneUpdated(
     offerId: string,
-    params: { telefoneAtualizado: string }
+    params: {
+      telefoneAtualizado: string;
+      dadosPessoa?: Record<string, unknown> | null;
+      possuiWhatsappSegundoLemit?: boolean | null;
+    }
   ): Promise<void> {
     const offer = this.require(offerId);
     offer.status = "TELEFONE_ATUALIZADO";
     offer.telefoneAtualizado = params.telefoneAtualizado;
+    offer.dadosPessoaLemit = params.dadosPessoa ?? null;
+    offer.possuiWhatsappSegundoLemit = params.possuiWhatsappSegundoLemit ?? null;
     offer.reservedAt = null;
     this.processingLog.push({ offerId, etapa: "LIMIT", resultado: "SUCESSO" });
   }

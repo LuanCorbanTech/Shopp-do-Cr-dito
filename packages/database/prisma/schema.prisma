@@ -114,6 +114,14 @@ model Offer {
   payloadOriginal  Json        @map("payload_original")
   dadosAdicionais  Json?       @map("dados_adicionais")
 
+  // Enriquecimento do lead via Lemit (api.lemit.com.br, consulta por CPF no Worker 1
+  // — packages/integrations/limit): o objeto "pessoa" completo devolvido por eles
+  // (nome, celulares, e-mails, endereços, score de crédito, vínculos, etc.), salvo
+  // direto no registro do lead. A resposta HTTP crua de cada tentativa também é
+  // guardada em phone_validations.resposta_limit (auditoria) — este campo aqui é
+  // só a cópia "pronta pra uso" mais recente.
+  dadosPessoaLemit Json?       @map("dados_pessoa_lemit")
+
   status           OfferStatus @default(RECEBIDO)
 
   routingRuleId    String?     @map("routing_rule_id")

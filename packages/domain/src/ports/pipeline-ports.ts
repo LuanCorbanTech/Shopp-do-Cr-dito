@@ -46,14 +46,24 @@ export interface IntegrationConfigPort {
 export interface PhoneProcessingPort {
   /** Reserva ofertas RECEBIDO -> PROCESSANDO_TELEFONE (SELECT FOR UPDATE SKIP LOCKED). */
   claimOffersReceived(limit: number): Promise<OfferSnapshot[]>;
-  /** Limit desativado: usa telefone original e avança direto, registrando o motivo. */
+  /** Limit (Lemit) desativado: usa telefone original e avança direto, registrando o motivo. */
   markPhoneSkippedLimitDisabled(offerId: string): Promise<void>;
-  /** Limit respondeu com sucesso. */
+  /** Limit (Lemit) ativado mas o lead não tem CPF — sem CPF não há como consultar; usa telefone original. */
+  markPhoneSkippedSemDocumento(offerId: string): Promise<void>;
+  /** Lemit respondeu com sucesso. */
   markPhoneUpdated(
     offerId: string,
-    params: { telefoneAtualizado: string; respostaBruta: unknown; tentativa: number }
+    params: {
+      telefoneAtualizado: string;
+      respostaBruta: unknown;
+      /** Objeto "pessoa" completo devolvido pela Lemit — salvo direto no registro do lead. */
+      dadosPessoa: Record<string, unknown> | null;
+      /** Segundo a própria Lemit (informativo) — não substitui a validação oficial do Worker 2. */
+      possuiWhatsappSegundoLemit: boolean | null;
+      tentativa: number;
+    }
   ): Promise<void>;
-  /** Limit falhou — agenda retry ou cancela se esgotou tentativas. */
+  /** Lemit falhou — agenda retry ou cancela se esgotou tentativas. */
   markPhoneFailed(
     offerId: string,
     params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean }
