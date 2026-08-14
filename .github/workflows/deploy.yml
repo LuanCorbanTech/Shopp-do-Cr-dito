@@ -1,0 +1,42 @@
+# Deploy automático para o droplet a cada push na branch principal.
+#
+# IMPORTANTE: ajuste "branches" abaixo para o nome real da branch padrão do
+# seu repositório no GitHub (pode ser "main" ou "master" — confira em
+# Settings > Branches no GitHub, ou rodando `git branch` localmente).
+#
+# Requer os secrets abaixo configurados em Settings > Secrets and variables >
+# Actions do repositório (ver DEPLOY.md para o passo a passo):
+#   DROPLET_HOST     -> IP do droplet
+#   DROPLET_USER     -> usuário SSH (ex.: deploy)
+#   DROPLET_SSH_KEY  -> chave privada SSH (par dedicado, só para o GitHub Actions)
+#   DROPLET_SSH_PORT -> porta SSH (normalmente 22)
+
+name: Deploy para o Droplet
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH no droplet
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          port: ${{ secrets.DROPLET_SSH_PORT }}
+          script: |
+            set -e
+            cd /opt/plataforma-ofertas
+            git fetch origin
+            git reset --hard origin/HEAD
+            docker compose -f docker-compose.prod.yml --env-file .env build
+            docker compose -f docker-compose.prod.yml --env-file .env run --rm api npm run prisma:migrate:deploy
+            docker compose -f docker-compose.prod.yml --env-file .env up -d
+            docker image prune -f
