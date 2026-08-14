@@ -54,7 +54,7 @@ export class InMemoryPipelineRepository
   readonly processingLog: Array<{ offerId: string; etapa: string; resultado: string }> = [];
   private idCounter = 0;
 
-  addOffer(partial: Partial<MutableOffer> & { telefoneOriginal: string }): MutableOffer {
+  addOffer(partial: Partial<MutableOffer> & { telefoneOriginal: string | null }): MutableOffer {
     this.idCounter += 1;
     const offer: MutableOffer = {
       id: partial.id ?? `offer-${this.idCounter}`,

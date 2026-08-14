@@ -25,7 +25,7 @@ type OfferRow = {
   webhookId: string;
   externalId: string | null;
   cpf: string | null;
-  telefoneOriginal: string;
+  telefoneOriginal: string | null;
   telefoneAtualizado: string | null;
   telefoneValidado: string | null;
   bancoAutorizado: string | null;
@@ -147,7 +147,7 @@ export class PrismaPipelineRepository
   async markPhoneUpdated(
     offerId: string,
     params: {
-      telefoneAtualizado: string;
+      telefoneAtualizado: string | null;
       respostaBruta: unknown;
       dadosPessoa: Record<string, unknown> | null;
       possuiWhatsappSegundoLemit: boolean | null;

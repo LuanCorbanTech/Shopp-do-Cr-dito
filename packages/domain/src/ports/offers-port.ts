@@ -30,8 +30,13 @@ export interface CreateOfferInput {
   idempotencyKey: string;
   externalId?: string | null;
   nome?: string | null;
-  cpf?: string | null;
-  telefoneOriginal: string;
+  // Obrigatório desde que o CPF virou o campo de entrada exigido na captação (é a
+  // partir dele que o Worker 1 consulta a Lemit — ver worker1-limit.ts).
+  cpf: string;
+  // Pode não vir na captação — nesse caso o telefone só aparece depois, quando a
+  // Lemit devolve um a partir do CPF (telefoneAtualizado). Ver o guard em
+  // worker2-whatsapp.ts para o caso em que nenhum telefone nunca aparece.
+  telefoneOriginal: string | null;
   bancoAutorizado?: string | null;
   produto?: string | null;
   valor?: number | null;

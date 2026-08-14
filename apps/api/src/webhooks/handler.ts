@@ -18,8 +18,8 @@ import { resolveIdempotencyKey } from "./idempotency";
 
 export interface RawWebhookPayload {
   nome?: string;
-  cpf?: string;
-  telefone: string;
+  cpf: string;
+  telefone?: string;
   banco_autorizado?: string;
   external_id?: string;
   idempotency_key?: string;
@@ -92,8 +92,8 @@ async function processOfferItem(
   webhook: WebhookRecord,
   body: RawWebhookPayload
 ): Promise<WebhookItemOutcome> {
-  if (!body || !body.telefone || String(body.telefone).trim().length === 0) {
-    return { kind: "invalid_payload", reason: "telefone é obrigatório" };
+  if (!body || !body.cpf || String(body.cpf).trim().length === 0) {
+    return { kind: "invalid_payload", reason: "cpf é obrigatório" };
   }
 
   const { key: idempotencyKey } = resolveIdempotencyKey({
@@ -107,8 +107,8 @@ async function processOfferItem(
     idempotencyKey,
     externalId: body.external_id ?? null,
     nome: body.nome ?? null,
-    cpf: body.cpf ?? null,
-    telefoneOriginal: body.telefone,
+    cpf: body.cpf,
+    telefoneOriginal: body.telefone ?? null,
     bancoAutorizado: body.banco_autorizado ?? null,
     produto: body.produto ?? null,
     valor: body.valor ?? null,

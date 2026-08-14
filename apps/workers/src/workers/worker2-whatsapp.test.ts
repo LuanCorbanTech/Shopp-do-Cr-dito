@@ -147,4 +147,28 @@ describe("runWhatsappWorkerOnce", () => {
     expect(updated?.tentativasWhatsapp).toBe(1);
     expect(updated?.proximaTentativaEm).not.toBeNull();
   });
+
+  it("cancela (sem chamar a API) quando não existe nenhum telefone disponível", async () => {
+    const repo = new InMemoryPipelineRepository();
+    // Lead sem telefone na captação e sem telefone_atualizado — cenário possível
+    // desde que o telefone deixou de ser obrigatório na captação (só o CPF é).
+    const offer = repo.addOffer({ telefoneOriginal: null, status: "TELEFONE_ATUALIZADO" });
+
+    let chamouApi = false;
+    await runWhatsappWorkerOnce({
+      whatsappPort: repo,
+      configPort: repo,
+      whatsappService: {
+        startCheck: async ({ phone }) => {
+          chamouApi = true;
+          return { requestId: "nao-deveria-chamar", phone };
+        },
+        getCheckResult: async () => ({ status: "processing" }),
+      },
+    });
+
+    expect(chamouApi).toBe(false);
+    const updated = repo.offers.get(offer.id);
+    expect(updated?.status).toBe("CANCELADO");
+  });
 });

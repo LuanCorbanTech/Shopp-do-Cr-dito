@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { handleWebhookRequest } from "./handler";
+import { handleWebhookRequest, type RawWebhookPayload } from "./handler";
 import { computeSignature, computeSimpleHmac } from "./hmac";
 import { createFakeOffersPort } from "./test-support/fake-offers-port";
 
@@ -41,7 +41,7 @@ function odysseiaHeaders(rawBody: string) {
 describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
   it("cria a oferta com status RECEBIDO em uma requisição válida", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
-    const body = { telefone: "62999999999", external_id: "abc-1" };
+    const body = { cpf: "11111111111", telefone: "62999999999", external_id: "abc-1" };
     const rawBody = JSON.stringify(body);
 
     const outcome = await handleWebhookRequest(port, {
@@ -59,7 +59,7 @@ describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
 
   it("não cria duplicado quando a mesma oferta chega duas vezes (idempotência)", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
-    const body = { telefone: "62999999999", external_id: "abc-1" };
+    const body = { cpf: "11111111111", telefone: "62999999999", external_id: "abc-1" };
     const rawBody = JSON.stringify(body);
     const params = {
       identificador: "origem-teste",
@@ -86,7 +86,7 @@ describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
 
   it("rejeita quando o webhook não existe ou está inativo", async () => {
     const { port } = createFakeOffersPort([{ ...WEBHOOK_OFERTAS_V1, ativo: false }]);
-    const body = { telefone: "62999999999" };
+    const body = { cpf: "11111111111", telefone: "62999999999" };
     const rawBody = JSON.stringify(body);
 
     const outcome = await handleWebhookRequest(port, {
@@ -103,7 +103,7 @@ describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
 
   it("rejeita assinatura inválida", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
-    const body = { telefone: "62999999999" };
+    const body = { cpf: "11111111111", telefone: "62999999999" };
     const rawBody = JSON.stringify(body);
 
     const outcome = await handleWebhookRequest(port, {
@@ -118,9 +118,12 @@ describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
     expect(outcome).toEqual({ kind: "invalid_signature", reason: "signature_mismatch" });
   });
 
-  it("rejeita payload sem telefone", async () => {
+  it("rejeita payload sem cpf", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
-    const body = { telefone: "" };
+    // Cast proposital: simula um parceiro mandando um payload sem cpf (algo que o
+    // TypeScript não deixaria montar direto, mas que pode chegar de verdade vindo
+    // de fora — é exatamente esse caso que o guard em tempo de execução cobre).
+    const body = { telefone: "62999999999" } as unknown as RawWebhookPayload;
     const rawBody = JSON.stringify(body);
 
     const outcome = await handleWebhookRequest(port, {
@@ -134,6 +137,24 @@ describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
 
     expect(outcome.kind).toBe("single");
     if (outcome.kind === "single") expect(outcome.resultado.kind).toBe("invalid_payload");
+  });
+
+  it("aceita payload sem telefone, desde que tenha cpf (telefone chega depois via Lemit)", async () => {
+    const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
+    const body = { cpf: "11111111111" };
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "origem-teste",
+      rawBody,
+      body,
+      headers: ofertasV1Headers(rawBody),
+      toleranceSeconds: 300,
+      nowSeconds: NOW,
+    });
+
+    expect(outcome.kind).toBe("single");
+    if (outcome.kind === "single") expect(outcome.resultado.kind).toBe("created");
   });
 });
 
@@ -157,7 +178,7 @@ describe("handleWebhookRequest — esquema hmac_sha256_simple (ex.: Odysseia)", 
 
   it("rejeita quando o header de assinatura está ausente", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
-    const body = { telefone: "85992100340" };
+    const body = { cpf: "85868388372", telefone: "85992100340" };
     const rawBody = JSON.stringify(body);
 
     const outcome = await handleWebhookRequest(port, {
@@ -173,7 +194,7 @@ describe("handleWebhookRequest — esquema hmac_sha256_simple (ex.: Odysseia)", 
 
   it("rejeita assinatura incorreta", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
-    const body = { telefone: "85992100340" };
+    const body = { cpf: "85868388372", telefone: "85992100340" };
     const rawBody = JSON.stringify(body);
 
     const outcome = await handleWebhookRequest(port, {
@@ -192,9 +213,9 @@ describe("handleWebhookRequest — lote (array de leads)", () => {
   it("processa cada item do lote de forma independente, mesmo com um item inválido no meio", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
     const body = [
-      { telefone: "85992100340", external_id: "lead-1" },
-      { telefone: "" }, // inválido — não deve invalidar o resto do lote
-      { telefone: "85996888516", external_id: "lead-3" },
+      { cpf: "11111111111", telefone: "85992100340", external_id: "lead-1" },
+      { cpf: "" }, // inválido (cpf vazio) — não deve invalidar o resto do lote
+      { cpf: "22222222222", telefone: "85996888516", external_id: "lead-3" },
     ];
     const rawBody = JSON.stringify(body);
 
@@ -218,8 +239,8 @@ describe("handleWebhookRequest — lote (array de leads)", () => {
   it("reenviar o mesmo lote inteiro não duplica nada (idempotência por item)", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
     const body = [
-      { telefone: "85992100340", external_id: "lead-1" },
-      { telefone: "85996888516", external_id: "lead-2" },
+      { cpf: "11111111111", telefone: "85992100340", external_id: "lead-1" },
+      { cpf: "22222222222", telefone: "85996888516", external_id: "lead-2" },
     ];
     const rawBody = JSON.stringify(body);
     const params = {
@@ -243,7 +264,7 @@ describe("handleWebhookRequest — lote (array de leads)", () => {
 
   it("um lote inteiro com assinatura inválida é rejeitado antes de processar qualquer item", async () => {
     const { port, offersByKey } = createFakeOffersPort([WEBHOOK_SIMPLES]);
-    const body = [{ telefone: "85992100340" }];
+    const body = [{ cpf: "11111111111", telefone: "85992100340" }];
     const rawBody = JSON.stringify(body);
 
     const outcome = await handleWebhookRequest(port, {

@@ -115,7 +115,7 @@ model Offer {
 
   nome             String?
   cpf              String?
-  telefoneOriginal String      @map("telefone_original")
+  telefoneOriginal String?     @map("telefone_original")
   telefoneAtualizado String?   @map("telefone_atualizado")
   telefoneValidado String?     @map("telefone_validado")
 

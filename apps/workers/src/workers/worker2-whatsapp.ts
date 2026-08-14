@@ -62,6 +62,26 @@ export async function runWhatsappWorkerOnce(params: RunWhatsappWorkerOnceParams)
   const novasOfertas = await whatsappPort.claimOffersForValidation(batchSize);
   for (const offer of novasOfertas) {
     const telefoneUsado = offer.telefoneAtualizado ?? offer.telefoneOriginal;
+
+    // Pode acontecer do parceiro não mandar telefone na captação E a Lemit também
+    // não devolver nenhum pra esse CPF (ou a integração da Lemit estar desativada
+    // no painel) — nesse caso não existe telefone nenhum pra validar. Cancela de
+    // forma explícita em vez de chamar a API da CorbanTech com um telefone vazio.
+    if (!telefoneUsado) {
+      await whatsappPort.markWhatsappFailed(offer.id, {
+        erro: "Nenhum telefone disponível: não veio na captação e a Lemit não retornou um para esse CPF.",
+        tentativa: offer.tentativasWhatsapp + 1,
+        proximaTentativaEm: null,
+        cancelar: true,
+      });
+      logger.warn(
+        { offerId: offer.id },
+        "Validação de WhatsApp cancelada: lead sem telefone (nem na captação, nem via Lemit)"
+      );
+      processadas += 1;
+      continue;
+    }
+
     try {
       const { requestId } = await whatsappService.startCheck({ phone: telefoneUsado });
       await whatsappPort.markWhatsappCheckStarted(offer.id, { requestId, telefoneUsado });

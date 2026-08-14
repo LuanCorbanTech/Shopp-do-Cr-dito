@@ -8,7 +8,7 @@ export interface OfferSnapshot {
   webhookId: string;
   externalId: string | null;
   cpf: string | null;
-  telefoneOriginal: string;
+  telefoneOriginal: string | null;
   telefoneAtualizado: string | null;
   telefoneValidado: string | null;
   bancoAutorizado: string | null;
@@ -54,7 +54,10 @@ export interface PhoneProcessingPort {
   markPhoneUpdated(
     offerId: string,
     params: {
-      telefoneAtualizado: string;
+      // Nullable: se o lead chegou sem telefone na captação e a Lemit também não
+      // devolveu um pra esse CPF, não há telefone nenhum disponível ainda (ver
+      // guard em worker2-whatsapp.ts para esse caso).
+      telefoneAtualizado: string | null;
       respostaBruta: unknown;
       /** Objeto "pessoa" completo devolvido pela Lemit — salvo direto no registro do lead. */
       dadosPessoa: Record<string, unknown> | null;
