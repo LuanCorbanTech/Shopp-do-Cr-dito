@@ -74,18 +74,32 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           return { error: "esquema_assinatura_invalido", validos: ESQUEMAS_ASSINATURA_VALIDOS };
         }
         const usaOfertasV1 = esquemaAssinatura === "ofertas_v1";
-        const webhook = await adminRepo.createWebhook({
-          identificador: body.identificador,
-          origem: body.origem,
-          // Se o parceiro não mandou o próprio secret (ex.: quando é a gente quem
-          // define e passa pra eles), geramos um aleatório em vez de deixar vazio.
-          secretHmac: body.secretHmac || randomBytes(32).toString("hex"),
-          esquemaAssinatura,
-          headerAssinatura: (body.headerAssinatura || (usaOfertasV1 ? "x-ofertas-signature" : "")).toLowerCase(),
-          headerTimestamp: usaOfertasV1 ? (body.headerTimestamp || "x-ofertas-timestamp").toLowerCase() : null,
-        });
-        reply.code(201);
-        return webhook;
+        try {
+          const webhook = await adminRepo.createWebhook({
+            identificador: body.identificador,
+            origem: body.origem,
+            // Se o parceiro não mandou o próprio secret (ex.: quando é a gente quem
+            // define e passa pra eles), geramos um aleatório em vez de deixar vazio.
+            secretHmac: body.secretHmac || randomBytes(32).toString("hex"),
+            esquemaAssinatura,
+            headerAssinatura: (body.headerAssinatura || (usaOfertasV1 ? "x-ofertas-signature" : "")).toLowerCase(),
+            headerTimestamp: usaOfertasV1 ? (body.headerTimestamp || "x-ofertas-timestamp").toLowerCase() : null,
+          });
+          reply.code(201);
+          return webhook;
+        } catch (error) {
+          // P2002 = violação de unique constraint do Prisma — já existe um webhook
+          // com esse identificador (ex.: reenvio duplo do formulário, ou alguém já
+          // cadastrou esse parceiro antes). Erro amigável em vez do 500 cru.
+          if (isPrismaUniqueConstraintError(error)) {
+            reply.code(409);
+            return {
+              error: "identificador_ja_existe",
+              mensagem: `Já existe um webhook com o identificador "${body.identificador}". Use outro identificador ou edite/exclua o existente.`,
+            };
+          }
+          throw error;
+        }
       });
 
       instance.patch<{
@@ -180,5 +194,14 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       });
     },
     { prefix: "/admin" }
+  );
+}
+
+function isPrismaUniqueConstraintError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "P2002"
   );
 }

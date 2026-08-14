@@ -30,9 +30,10 @@ const ESQUEMA_LABEL: Record<string, string> = {
 export default async function WebhooksPage({
   searchParams,
 }: {
-  searchParams: { erro?: string };
+  searchParams: { erro?: string; criado?: string };
 }) {
   const erro = searchParams.erro;
+  const criado = searchParams.criado;
   let webhooks: Webhook[] = [];
   let error: string | null = null;
   try {
@@ -50,6 +51,13 @@ export default async function WebhooksPage({
         Cadastrar um parceiro novo normalmente não exige mexer em código, só criar aqui embaixo.
       </p>
 
+      {criado && (
+        <p className="empty-state" style={{ borderColor: "#0ca30c", color: "#0ca30c" }}>
+          ✓ Webhook &quot;{criado}&quot; criado com sucesso! Ele já aparece na lista abaixo, com a URL e o
+          segredo prontos pra passar pro parceiro.
+        </p>
+      )}
+
       {erro && (
         <p className="empty-state" style={{ borderColor: "#c0392b", color: "#c0392b" }}>
           {erro}
@@ -59,7 +67,16 @@ export default async function WebhooksPage({
       {error && <p className="empty-state">Não foi possível carregar: {error}</p>}
 
       {webhooks.map((wh) => (
-        <div key={wh.id} className="card" style={{ marginBottom: 16 }}>
+        <div
+          key={wh.id}
+          className="card"
+          style={{
+            marginBottom: 16,
+            ...(wh.identificador === criado
+              ? { borderColor: "#0ca30c", borderWidth: 2, boxShadow: "0 0 0 1px #0ca30c" }
+              : {}),
+          }}
+        >
           <div className="toggle-form">
             <strong>{wh.origem}</strong>
             <span className={`badge ${wh.ativo ? "good" : "neutral"}`}>
