@@ -116,6 +116,24 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         });
       });
 
+      // Excluir um parceiro só é permitido se ele nunca recebeu nenhum lead — caso
+      // contrário a exclusão quebraria a referência dos leads antigos (webhook_id)
+      // e perderíamos o histórico. Com leads no histórico, o jeito é "Desativar"
+      // em vez de excluir.
+      instance.delete<{ Params: { id: string } }>("/webhooks/:id", async (request, reply) => {
+        const totalLeads = await adminRepo.countOffersForWebhook(request.params.id);
+        if (totalLeads > 0) {
+          reply.code(409);
+          return {
+            error: "parceiro_tem_leads",
+            totalLeads,
+            mensagem: `Esse parceiro já recebeu ${totalLeads} lead(s). Não é possível excluir sem perder o histórico — use "Desativar" em vez disso.`,
+          };
+        }
+        await adminRepo.deleteWebhook(request.params.id);
+        reply.code(204);
+      });
+
       instance.get("/endpoints", async () => adminRepo.listEndpoints());
 
       instance.post<{ Body: Record<string, unknown> }>("/endpoints", async (request, reply) => {

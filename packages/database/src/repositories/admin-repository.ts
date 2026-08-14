@@ -161,6 +161,16 @@ export class AdminRepository {
     return this.prisma.webhook.update({ where: { id }, data });
   }
 
+  // Quantidade de leads já recebidos por esse parceiro — usado pra decidir se dá
+  // pra excluir de verdade (0 leads) ou se só dá pra desativar (tem histórico).
+  countOffersForWebhook(webhookId: string) {
+    return this.prisma.offer.count({ where: { webhookId } });
+  }
+
+  deleteWebhook(id: string) {
+    return this.prisma.webhook.delete({ where: { id } });
+  }
+
   listEndpoints() {
     return this.prisma.endpoint.findMany({ orderBy: { nome: "asc" } });
   }
