@@ -469,4 +469,29 @@ Métricas mínimas: ofertas/minuto e /hora (geral e por webhook/banco/endpoint);
 
 ---
 
+## 14. Notas de implementação (adicionadas após a Fase 0-8)
+
+Registradas aqui para quem for manter o código, para não achar que o desenho abaixo é
+o que foi de fato construído em cada detalhe. Ver `README.md` para a lista completa.
+
+- **Worker 4 não usa BullMQ.** A seção 6.2 acima descreve fila por endpoint via
+  BullMQ; a implementação real (`apps/workers/src/workers/worker4-dispatch.ts`) usa
+  polling direto na tabela `offers` (a "fila" é a query `WHERE status=AGUARDANDO_ENVIO
+  AND endpoint_id=X`) + contador atômico no Redis para a capacidade. Motivo: evita
+  dupla escrita entre Postgres e uma fila de jobs, e mantém os 6 workers no mesmo
+  formato. Ver seção equivalente do README para o raciocínio completo.
+- **Ports & adapters, não acesso direto ao Prisma nos workers/handlers.** Toda a
+  lógica de negócio (webhook, 6 workers, motor de roteamento) depende de interfaces
+  definidas em `packages/domain/src/ports`, implementadas via Prisma em
+  `packages/database`. Isso não estava explícito neste documento, mas é a razão pela
+  qual foi possível testar a orquestração inteira (129 testes) sem depender do
+  Prisma Client gerado.
+- **Autenticação do painel é um token Bearer único**, não JWT com usuários/papéis —
+  simplificação de MVP registrada na seção 8 do README.
+- **LimitService/WhatsAppValidationService/HyperflowService são clientes HTTP
+  genéricos** com um contrato REST assumido — a documentação real dessas três APIs
+  não estava disponível; ajustar o contrato é uma mudança isolada por arquivo.
+
+---
+
 *Próximo passo sugerido após validação deste documento: iniciar a Fase 0 (setup de repositório e infraestrutura) e a Fase 1 (ingestão via webhook).*
