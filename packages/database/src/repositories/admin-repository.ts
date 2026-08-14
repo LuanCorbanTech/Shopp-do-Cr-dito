@@ -1,5 +1,21 @@
 import type { PrismaClient } from "@prisma/client";
 
+// Nunca devolve a credencial em texto puro pro painel — só se está configurada e os
+// últimos 4 caracteres, pra confirmar visualmente que é a chave certa sem expor o resto.
+function mascararCredencial(valor: unknown): {
+  apiKeyConfigurada: boolean;
+  apiKeyMascarada: string | null;
+  baseUrl: string | null;
+} {
+  const v = (valor ?? {}) as { apiKey?: string; baseUrl?: string };
+  const apiKey = v.apiKey ?? null;
+  return {
+    apiKeyConfigurada: Boolean(apiKey),
+    apiKeyMascarada: apiKey ? `${"•".repeat(Math.max(apiKey.length - 4, 0))}${apiKey.slice(-4)}` : null,
+    baseUrl: v.baseUrl ?? null,
+  };
+}
+
 // Consultas usadas pela API administrativa (seção 31-38 do escopo original / seção 8
 // do doc de arquitetura). Ao contrário dos workers, aqui vamos direto ao Prisma sem
 // uma porta/interface adicional — é código de leitura/CRUD simples, e o ganho de
@@ -91,6 +107,42 @@ export class AdminRepository {
       this.prisma.offerProcessing.findFirst({ where: { etapa: "LIMIT" }, orderBy: { createdAt: "desc" } }),
     ]);
     return { processados, erros, ultimaExecucao: ultima?.createdAt ?? null };
+  }
+
+  // -- Credenciais Lemit / CorbanTech WhatsApp (editáveis no painel, sem precisar
+  // tocar no servidor) ---------------------------------------------------------
+  // Reaproveita a mesma tabela "integration_configs" do toggle do Limit — cada
+  // credencial vira uma chave própria com { apiKey, baseUrl } dentro de "valor".
+  // Os workers leem essa tabela a cada ciclo (packages/workers/src/index.ts), então
+  // uma troca aqui vale no próximo ciclo do worker, sem reiniciar nada.
+
+  async getCredenciaisIntegracoes() {
+    const [lemit, whatsapp] = await Promise.all([
+      this.prisma.integrationConfig.findUnique({ where: { chave: "LEMIT_CREDENCIAIS" } }),
+      this.prisma.integrationConfig.findUnique({ where: { chave: "WHATSAPP_VALIDACAO_CREDENCIAIS" } }),
+    ]);
+    return {
+      lemit: mascararCredencial(lemit?.valor),
+      whatsapp: mascararCredencial(whatsapp?.valor),
+    };
+  }
+
+  async salvarCredenciaisIntegracao(
+    chave: "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS",
+    dados: { apiKey?: string; baseUrl?: string }
+  ) {
+    const atual = await this.prisma.integrationConfig.findUnique({ where: { chave } });
+    const valorAtual = (atual?.valor ?? {}) as { apiKey?: string; baseUrl?: string };
+    const apiKey =
+      dados.apiKey !== undefined && dados.apiKey.trim() !== "" ? dados.apiKey.trim() : valorAtual.apiKey ?? null;
+    const baseUrl =
+      dados.baseUrl !== undefined ? (dados.baseUrl.trim() === "" ? null : dados.baseUrl.trim()) : valorAtual.baseUrl ?? null;
+    const novoValor = { apiKey, baseUrl };
+    return this.prisma.integrationConfig.upsert({
+      where: { chave },
+      update: { valor: novoValor },
+      create: { chave, valor: novoValor, ativo: true },
+    });
   }
 
   // -- Endpoints (item 19) ---------------------------------------------------------

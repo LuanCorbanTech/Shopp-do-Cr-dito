@@ -1,5 +1,5 @@
 import { adminApiFetch } from "@/lib/api";
-import { setLimitEnabled } from "./actions";
+import { setLimitEnabled, salvarCredenciais } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +10,17 @@ interface LimitStatus {
   ultimaExecucao: string | null;
 }
 
+interface CredencialStatus {
+  apiKeyConfigurada: boolean;
+  apiKeyMascarada: string | null;
+  baseUrl: string | null;
+}
+
+interface CredenciaisIntegracoes {
+  lemit: CredencialStatus;
+  whatsapp: CredencialStatus;
+}
+
 export default async function IntegracoesPage() {
   let status: LimitStatus | null = null;
   let error: string | null = null;
@@ -17,6 +28,14 @@ export default async function IntegracoesPage() {
     status = await adminApiFetch<LimitStatus>("/admin/integrations/limit");
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
+  }
+
+  let credenciais: CredenciaisIntegracoes | null = null;
+  let erroCredenciais: string | null = null;
+  try {
+    credenciais = await adminApiFetch<CredenciaisIntegracoes>("/admin/integrations/credenciais");
+  } catch (e) {
+    erroCredenciais = e instanceof Error ? e.message : String(e);
   }
 
   return (
@@ -61,6 +80,89 @@ export default async function IntegracoesPage() {
           </div>
         </div>
       )}
+
+      <h1 style={{ marginTop: 40 }}>Credenciais</h1>
+      <p className="subtitle">
+        Chaves usadas pelos workers para chamar a Lemit e a CorbanTech. Salvar aqui vale a partir
+        do próximo ciclo do worker (poucos segundos) — não precisa reiniciar nada no servidor.
+        Deixe o campo da chave em branco para manter a chave atual e só trocar a URL.
+      </p>
+
+      {erroCredenciais && <p className="empty-state">Não foi possível carregar: {erroCredenciais}</p>}
+
+      {credenciais && (
+        <div className="card-grid" style={{ display: "grid", gap: 20, gridTemplateColumns: "1fr 1fr" }}>
+          <CredencialForm
+            titulo="Lemit (consulta por CPF)"
+            integracao="lemit"
+            status={credenciais.lemit}
+            baseUrlPlaceholder="https://api.lemit.com.br (padrão, deixe em branco)"
+          />
+          <CredencialForm
+            titulo="CorbanTech (validação de WhatsApp)"
+            integracao="whatsapp"
+            status={credenciais.whatsapp}
+            baseUrlPlaceholder="https://SEU-DOMINIO (raiz da API da CorbanTech)"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CredencialForm({
+  titulo,
+  integracao,
+  status,
+  baseUrlPlaceholder,
+}: {
+  titulo: string;
+  integracao: "lemit" | "whatsapp";
+  status: CredencialStatus;
+  baseUrlPlaceholder: string;
+}) {
+  return (
+    <div className="card">
+      <div className="toggle-form">
+        <strong>{titulo}</strong>
+        <span className={`badge ${status.apiKeyConfigurada ? "good" : "neutral"}`}>
+          {status.apiKeyConfigurada ? "● CHAVE CONFIGURADA" : "○ SEM CHAVE"}
+        </span>
+      </div>
+      {status.apiKeyConfigurada && (
+        <p className="subtitle" style={{ marginTop: 4 }}>
+          Chave atual termina em: <code>{status.apiKeyMascarada}</code>
+        </p>
+      )}
+      <form action={salvarCredenciais.bind(null, integracao)} style={{ marginTop: 12 }}>
+        <div style={{ marginBottom: 10 }}>
+          <label htmlFor={`${integracao}-apiKey`} style={{ display: "block", marginBottom: 4 }}>
+            Chave da API {status.apiKeyConfigurada ? "(deixe em branco para manter a atual)" : ""}
+          </label>
+          <input
+            id={`${integracao}-apiKey`}
+            name="apiKey"
+            type="password"
+            autoComplete="off"
+            placeholder={status.apiKeyConfigurada ? "••••••••" : "cole a chave aqui"}
+            style={{ width: "100%" }}
+          />
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <label htmlFor={`${integracao}-baseUrl`} style={{ display: "block", marginBottom: 4 }}>
+            URL base (opcional)
+          </label>
+          <input
+            id={`${integracao}-baseUrl`}
+            name="baseUrl"
+            type="text"
+            defaultValue={status.baseUrl ?? ""}
+            placeholder={baseUrlPlaceholder}
+            style={{ width: "100%" }}
+          />
+        </div>
+        <button type="submit">Salvar</button>
+      </form>
     </div>
   );
 }

@@ -19,22 +19,56 @@ import { runReconciliationWorkerOnce } from "./workers/worker6-reconciliation";
 const repo = new PrismaPipelineRepository(prisma);
 const redis = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 
-const limitApiKey = process.env.LIMIT_API_KEY;
-if (!limitApiKey) {
-  throw new Error("LIMIT_API_KEY não configurada (obrigatória — token Bearer da Lemit, api.lemit.com.br)");
+// Credenciais da Lemit e da CorbanTech (WhatsApp) agora são editáveis no painel
+// ("Integrações") em vez de fixas no .env — ficam salvas em integration_configs e são
+// lidas do banco A CADA CICLO do worker (nunca uma vez só no arranque), então trocar a
+// chave no painel vale no ciclo seguinte, sem reiniciar container. O .env continua
+// funcionando como fallback (ex.: ambiente local sem painel configurado ainda). Se
+// nenhuma das duas fontes tiver valor, a consulta daquele item falha e entra no fluxo
+// normal de retry/backoff — não derruba o worker inteiro como antes.
+
+async function resolverCredenciaisLemit(): Promise<{ apiKey: string; baseUrl?: string }> {
+  const config = await prisma.integrationConfig.findUnique({ where: { chave: "LEMIT_CREDENCIAIS" } });
+  const valor = (config?.valor ?? {}) as { apiKey?: string; baseUrl?: string };
+  const apiKey = valor.apiKey || process.env.LIMIT_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "Credenciais da Lemit não configuradas (painel Integrações, ou LIMIT_API_KEY no .env como alternativa)"
+    );
+  }
+  return { apiKey, baseUrl: valor.baseUrl || process.env.LIMIT_API_BASE_URL || undefined };
 }
-const limitService = createLimitService({
-  baseUrl: process.env.LIMIT_API_BASE_URL, // vazio/ausente -> usa o default real da Lemit
-  apiKey: limitApiKey,
-});
-const whatsappApiKey = process.env.WHATSAPP_VALIDATION_API_KEY;
-if (!whatsappApiKey) {
-  throw new Error("WHATSAPP_VALIDATION_API_KEY não configurada (obrigatória — ver docs/integrations)");
+
+async function resolverCredenciaisWhatsapp(): Promise<{ apiKey: string; baseUrl: string }> {
+  const config = await prisma.integrationConfig.findUnique({ where: { chave: "WHATSAPP_VALIDACAO_CREDENCIAIS" } });
+  const valor = (config?.valor ?? {}) as { apiKey?: string; baseUrl?: string };
+  const apiKey = valor.apiKey || process.env.WHATSAPP_VALIDATION_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "Credenciais da CorbanTech (WhatsApp) não configuradas (painel Integrações, ou WHATSAPP_VALIDATION_API_KEY no .env como alternativa)"
+    );
+  }
+  return { apiKey, baseUrl: valor.baseUrl || process.env.WHATSAPP_VALIDATION_API_BASE_URL || "http://localhost:9902" };
 }
-const whatsappService = createWhatsAppValidationService({
-  baseUrl: process.env.WHATSAPP_VALIDATION_API_BASE_URL || "http://localhost:9902",
-  apiKey: whatsappApiKey,
-});
+
+const limitService = {
+  async lookupPhone(params: { documento: string }) {
+    const credenciais = await resolverCredenciaisLemit();
+    return createLimitService(credenciais).lookupPhone(params);
+  },
+};
+
+const whatsappService = {
+  async startCheck(params: Parameters<ReturnType<typeof createWhatsAppValidationService>["startCheck"]>[0]) {
+    const credenciais = await resolverCredenciaisWhatsapp();
+    return createWhatsAppValidationService(credenciais).startCheck(params);
+  },
+  async getCheckResult(requestId: string) {
+    const credenciais = await resolverCredenciaisWhatsapp();
+    return createWhatsAppValidationService(credenciais).getCheckResult(requestId);
+  },
+};
+
 const hyperflowService = createHyperflowService();
 
 function loop(name: string, intervalMs: number, run: () => Promise<number>): void {

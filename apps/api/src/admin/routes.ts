@@ -29,6 +29,28 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         return { ativo: updated.ativo };
       });
 
+      // Credenciais da Lemit e da CorbanTech (WhatsApp), editáveis aqui — os workers
+      // leem do banco a cada ciclo, então não precisa reiniciar nada no servidor.
+      instance.get("/integrations/credenciais", async () => adminRepo.getCredenciaisIntegracoes());
+
+      instance.post<{
+        Body: { integracao?: string; apiKey?: string; baseUrl?: string };
+      }>("/integrations/credenciais", async (request, reply) => {
+        const body = request.body ?? {};
+        const chaveMap: Record<string, "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS"> = {
+          lemit: "LEMIT_CREDENCIAIS",
+          whatsapp: "WHATSAPP_VALIDACAO_CREDENCIAIS",
+        };
+        const chave = body.integracao ? chaveMap[body.integracao] : undefined;
+        if (!chave) {
+          reply.code(400);
+          return { error: "integracao_invalida", validos: Object.keys(chaveMap) };
+        }
+        await adminRepo.salvarCredenciaisIntegracao(chave, { apiKey: body.apiKey, baseUrl: body.baseUrl });
+        const atualizado = await adminRepo.getCredenciaisIntegracoes();
+        return atualizado[body.integracao as "lemit" | "whatsapp"];
+      });
+
       instance.get("/webhooks", async () => adminRepo.listWebhooks());
 
       instance.post<{
