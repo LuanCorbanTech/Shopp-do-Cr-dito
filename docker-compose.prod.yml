@@ -1,0 +1,85 @@
+# Compose de PRODUÇÃO — usado no droplet, não no ambiente de desenvolvimento
+# (para dev local, use o docker-compose.yml da raiz + npm run dev:*).
+#
+# Uso no droplet:
+#   docker compose -f docker-compose.prod.yml --env-file .env build
+#   docker compose -f docker-compose.prod.yml --env-file .env run --rm api npm run prisma:migrate:deploy
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+#
+# O arquivo .env real (com secrets de verdade) vive só no droplet — nunca é
+# commitado. Use .env.production.example como ponto de partida.
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ofertas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ofertas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ofertas}
+      POSTGRES_DB: plataforma_ofertas
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ofertas -d plataforma_ofertas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: ofertas-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+    container_name: ofertas-api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  workers:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.workers
+    container_name: ofertas-workers
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  admin-panel:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.admin-panel
+    container_name: ofertas-admin-panel
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3001:3001"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:

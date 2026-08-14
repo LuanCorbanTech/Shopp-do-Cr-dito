@@ -15,6 +15,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "prisma:generate": "npm run generate --workspace=@plataforma-ofertas/database",
     "prisma:migrate": "npm run migrate:dev --workspace=@plataforma-ofertas/database",
+    "prisma:migrate:deploy": "npm run migrate:deploy --workspace=@plataforma-ofertas/database",
+    "prisma:seed": "npm run seed --workspace=@plataforma-ofertas/database",
     "dev:api": "npm run dev --workspace=@plataforma-ofertas/api",
     "dev:workers": "npm run dev --workspace=@plataforma-ofertas/workers"
   },
