@@ -83,8 +83,12 @@ export async function runWhatsappWorkerOnce(params: RunWhatsappWorkerOnceParams)
     }
 
     try {
-      const { requestId } = await whatsappService.startCheck({ phone: telefoneUsado });
-      await whatsappPort.markWhatsappCheckStarted(offer.id, { requestId, telefoneUsado });
+      const startResult = await whatsappService.startCheck({ phone: telefoneUsado });
+      await whatsappPort.markWhatsappCheckStarted(offer.id, {
+        requestId: startResult.requestId,
+        telefoneUsado,
+        respostaBruta: startResult,
+      });
       processadas += 1;
     } catch (error) {
       const outcome = decideWhatsappCheckFailureOutcome({
@@ -160,6 +164,7 @@ export async function runWhatsappWorkerOnce(params: RunWhatsappWorkerOnceParams)
           tentativa: outcome.tentativa,
           proximaTentativaEm: outcome.proximaTentativaEm,
           cancelar: outcome.cancelar,
+          respostaBruta: resultado,
         });
       }
       processadas += 1;

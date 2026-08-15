@@ -235,7 +235,7 @@ export class PrismaPipelineRepository
 
   async markWhatsappCheckStarted(
     offerId: string,
-    params: { requestId: string; telefoneUsado: string }
+    params: { requestId: string; telefoneUsado: string; respostaBruta?: unknown }
   ): Promise<void> {
     await this.prisma.$transaction([
       this.prisma.offer.update({
@@ -251,7 +251,7 @@ export class PrismaPipelineRepository
           offerId,
           etapa: "WHATSAPP",
           resultado: "CONSULTA_INICIADA",
-          response: { requestId: params.requestId },
+          response: toJsonInput(params.respostaBruta ?? { requestId: params.requestId }),
           tentativa: 1,
         },
       }),
@@ -315,7 +315,7 @@ export class PrismaPipelineRepository
 
   async markWhatsappFailed(
     offerId: string,
-    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean }
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean; respostaBruta?: unknown }
   ): Promise<void> {
     await this.prisma.$transaction([
       this.prisma.offer.update({
@@ -334,7 +334,7 @@ export class PrismaPipelineRepository
           offerId,
           etapa: "WHATSAPP",
           resultado: "FALHA",
-          response: { erro: params.erro },
+          response: toJsonInput(params.respostaBruta ?? { erro: params.erro }),
           tentativa: params.tentativa,
         },
       }),

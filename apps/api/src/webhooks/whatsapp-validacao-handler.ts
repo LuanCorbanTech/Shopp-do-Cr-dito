@@ -89,6 +89,7 @@ export async function handleWhatsappValidacaoWebhook(
       tentativa: outcome.tentativa,
       proximaTentativaEm: outcome.proximaTentativaEm,
       cancelar: outcome.cancelar,
+      respostaBruta: params.body,
     });
   } else {
     await port.markWhatsappValidated(offer.id, {

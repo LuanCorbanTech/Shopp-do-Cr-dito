@@ -88,7 +88,10 @@ export interface WhatsappValidationPort {
    */
   markWhatsappCheckStarted(
     offerId: string,
-    params: { requestId: string; telefoneUsado: string }
+    // respostaBruta: retorno completo da CorbanTech pro POST /check (inclui o
+    // telefone normalizado por eles, httpStatus, etc.) — guardado pra dar
+    // visibilidade total na tela de detalhe da oferta, além do requestId.
+    params: { requestId: string; telefoneUsado: string; respostaBruta?: unknown }
   ): Promise<void>;
   /** Usado pelo endpoint que recebe o webhook de callback, para achar a oferta pelo request_id. */
   findOfferByWhatsappRequestId(requestId: string): Promise<OfferSnapshot | null>;
@@ -109,7 +112,10 @@ export interface WhatsappValidationPort {
   ): Promise<void>;
   markWhatsappFailed(
     offerId: string,
-    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean }
+    // respostaBruta: corpo completo devolvido pela CorbanTech na consulta que
+    // falhou (quando disponível) — sem isso, só o texto de erro extraído ficava
+    // salvo, perdendo detalhes úteis pra investigar (httpStatus, request_id, etc.).
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean; respostaBruta?: unknown }
   ): Promise<void>;
 }
 

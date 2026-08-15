@@ -135,6 +135,26 @@ export default async function OfertaDetailPage({ params }: { params: { id: strin
               {detalheErro && (
                 <div style={{ color: "#c0392b", fontSize: 13, marginTop: 4 }}>Motivo: {String(detalheErro)}</div>
               )}
+              {event.response && (
+                <details style={{ marginTop: 4 }}>
+                  <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--text-muted)" }}>
+                    Ver resposta bruta
+                  </summary>
+                  <pre
+                    style={{
+                      background: "var(--surface-1)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      padding: 12,
+                      overflowX: "auto",
+                      fontSize: 12,
+                      marginTop: 4,
+                    }}
+                  >
+                    {JSON.stringify(event.response, null, 2)}
+                  </pre>
+                </details>
+              )}
             </li>
           );
         })}
