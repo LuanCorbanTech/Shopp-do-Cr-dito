@@ -7,13 +7,15 @@ interface OfferTimeline {
   offer: {
     id: string;
     externalId: string | null;
+    nome: string | null;
     cpf: string | null;
-    telefoneOriginal: string;
+    telefoneOriginal: string | null;
     telefoneAtualizado: string | null;
     telefoneValidado: string | null;
     bancoAutorizado: string | null;
     status: string;
     createdAt: string;
+    dadosPessoaLemit: Record<string, unknown> | null;
     webhook: { identificador: string; origem: string };
     endpoint: { nome: string } | null;
     routingRule: { nome: string } | null;
@@ -24,6 +26,7 @@ interface OfferTimeline {
     resultado: string;
     tentativa: number;
     createdAt: string;
+    response: { erro?: string; message?: string } | Record<string, unknown> | null;
   }>;
   dispatches: Array<{ id: string; status: string; httpStatus: number | null; createdAt: string }>;
 }
@@ -59,7 +62,19 @@ export default async function OfertaDetailPage({ params }: { params: { id: strin
       <div className="stat-grid">
         <div className="stat-tile">
           <div className="value" style={{ fontSize: 15 }}>
-            {offer.telefoneValidado ?? offer.telefoneAtualizado ?? offer.telefoneOriginal}
+            {offer.nome ?? "—"}
+          </div>
+          <div className="label">Nome</div>
+        </div>
+        <div className="stat-tile">
+          <div className="value" style={{ fontSize: 15 }}>
+            {offer.cpf ?? "—"}
+          </div>
+          <div className="label">CPF</div>
+        </div>
+        <div className="stat-tile">
+          <div className="value" style={{ fontSize: 15 }}>
+            {offer.telefoneValidado ?? offer.telefoneAtualizado ?? offer.telefoneOriginal ?? "—"}
           </div>
           <div className="label">Telefone usado</div>
         </div>
@@ -83,18 +98,46 @@ export default async function OfertaDetailPage({ params }: { params: { id: strin
         </div>
       </div>
 
+      {offer.dadosPessoaLemit && (
+        <>
+          <h2>Dados devolvidos pela Lemit</h2>
+          <pre
+            style={{
+              background: "var(--surface-1)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              padding: 16,
+              overflowX: "auto",
+              fontSize: 13,
+            }}
+          >
+            {JSON.stringify(offer.dadosPessoaLemit, null, 2)}
+          </pre>
+        </>
+      )}
+
       <h2>Timeline</h2>
       <ul className="timeline">
         <li>
           <span className="ts">{new Date(offer.createdAt).toLocaleString("pt-BR")}</span>
           Oferta recebida
         </li>
-        {processingEvents.map((event) => (
-          <li key={event.id}>
-            <span className="ts">{new Date(event.createdAt).toLocaleString("pt-BR")}</span>
-            {event.etapa} — {event.resultado} (tentativa {event.tentativa})
-          </li>
-        ))}
+        {processingEvents.map((event) => {
+          const detalheErro =
+            event.resultado === "FALHA" && event.response && typeof event.response === "object"
+              ? ((event.response as { erro?: string; message?: string }).erro ??
+                (event.response as { erro?: string; message?: string }).message)
+              : null;
+          return (
+            <li key={event.id}>
+              <span className="ts">{new Date(event.createdAt).toLocaleString("pt-BR")}</span>
+              {event.etapa} — {event.resultado} (tentativa {event.tentativa})
+              {detalheErro && (
+                <div style={{ color: "#c0392b", fontSize: 13, marginTop: 4 }}>Motivo: {String(detalheErro)}</div>
+              )}
+            </li>
+          );
+        })}
         {processingEvents.length === 0 && (
           <li className="empty-state">Nenhum evento de processamento registrado ainda.</li>
         )}
