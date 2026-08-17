@@ -15,8 +15,15 @@
 // independentes dos campos que o pipeline usa pra decidir o fluxo
 // (telefoneAtualizado/telefoneValidado/possuiWhatsapp, que continuam vindo de
 // escolherMelhorTelefoneLemit e da validação oficial do Worker 2).
+//
+// Exceção: "nome" é usado pra ATUALIZAR o nome da oferta (pedido explícito —
+// a Lemit costuma devolver o nome completo/correto, mais confiável que o que
+// o parceiro mandou na captação). A atualização só acontece quando a Lemit
+// devolve um nome de verdade — se vier null aqui, quem grava (markPhoneUpdated)
+// mantém o nome que já existia, nunca apaga um nome já preenchido.
 
 export interface InfoPessoaLemit {
+  nome: string | null;
   sexo: string | null;
   nomeMae: string | null;
   dataNascimento: Date | null;
@@ -65,6 +72,7 @@ export function extrairDataNascimentoLemit(dadosPessoa: Record<string, unknown> 
 
 export function extrairInfoPessoaLemit(dadosPessoa: Record<string, unknown> | null): InfoPessoaLemit {
   const vazio: InfoPessoaLemit = {
+    nome: null,
     sexo: null,
     nomeMae: null,
     dataNascimento: null,
@@ -106,6 +114,7 @@ export function extrairInfoPessoaLemit(dadosPessoa: Record<string, unknown> | nu
   }
 
   return {
+    nome: stringOuNull(dadosPessoa.nome),
     sexo: stringOuNull(dadosPessoa.sexo),
     nomeMae: stringOuNull(dadosPessoa.nome_mae),
     dataNascimento: extrairDataNascimentoLemit(dadosPessoa),

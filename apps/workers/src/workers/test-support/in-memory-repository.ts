@@ -183,6 +183,9 @@ export class InMemoryPipelineRepository
     offer.dadosPessoaLemit = params.dadosPessoa ?? null;
     offer.possuiWhatsappSegundoLemit = params.possuiWhatsappSegundoLemit ?? null;
     const info = params.infoPessoa;
+    // "nome" só é sobrescrito quando a Lemit devolve um valor de verdade —
+    // mesma regra do Prisma (mantém o nome existente se vier null).
+    if (info?.nome) offer.nome = info.nome;
     offer.dataNascimento = info?.dataNascimento ?? null;
     offer.sexo = info?.sexo ?? null;
     offer.nomeMae = info?.nomeMae ?? null;

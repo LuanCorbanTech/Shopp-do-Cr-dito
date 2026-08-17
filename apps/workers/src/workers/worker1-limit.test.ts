@@ -50,7 +50,7 @@ describe("runLimitWorkerOnce", () => {
   it("chama a Lemit por CPF e grava o telefone escolhido + os dados da pessoa quando ativada", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true);
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372", nome: "Pablo (nome do parceiro)" });
 
     let documentoRecebido: string | null = null;
     await runLimitWorkerOnce({
@@ -75,6 +75,31 @@ describe("runLimitWorkerOnce", () => {
     expect(updated?.telefoneAtualizado).toBe("5585992100340");
     expect(updated?.dadosPessoaLemit).toEqual({ nome: "PABLO HEIDY BEZERRA DA SILVA", cpf: "85868388372" });
     expect(updated?.possuiWhatsappSegundoLemit).toBe(true);
+    // Pedido explícito: o nome da Lemit atualiza o nome da oferta (mais
+    // confiável/completo que o que o parceiro mandou na captação).
+    expect(updated?.nome).toBe("PABLO HEIDY BEZERRA DA SILVA");
+  });
+
+  it("mantém o nome já existente quando a Lemit não devolve nenhum nome", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", true);
+    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372", nome: "Nome Original Do Parceiro" });
+
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: {
+        lookupPhone: async () => ({
+          telefoneAtualizado: "5585992100340",
+          possuiWhatsappSegundoLemit: true,
+          dadosPessoa: { cpf: "85868388372" }, // sem campo "nome" na resposta
+          respostaBruta: {},
+        }),
+      },
+    });
+
+    const updated = repo.offers.get(offer.id);
+    expect(updated?.nome).toBe("Nome Original Do Parceiro");
   });
 
   it("mantém o telefone original quando a Lemit não devolve nenhum celular usável", async () => {

@@ -174,6 +174,10 @@ export class PrismaPipelineRepository
           status: "TELEFONE_ATUALIZADO",
           telefoneAtualizado: params.telefoneAtualizado,
           dadosPessoaLemit: toJsonInput(params.dadosPessoa),
+          // "undefined" (não "null") quando a Lemit não devolve nome — assim o
+          // Prisma simplesmente NÃO toca nesse campo, mantendo o que já existia
+          // em vez de apagar (pedido explícito: só atualiza quando tem valor).
+          nome: info.nome ?? undefined,
           dataNascimento: info.dataNascimento,
           sexo: info.sexo,
           nomeMae: info.nomeMae,

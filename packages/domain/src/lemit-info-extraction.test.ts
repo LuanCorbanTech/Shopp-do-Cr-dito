@@ -63,6 +63,7 @@ describe("extrairInfoPessoaLemit", () => {
   it("extrai todos os campos corretamente do exemplo real de resposta da Lemit", () => {
     const info = extrairInfoPessoaLemit(RESPOSTA_REAL_LEMIT);
     expect(info).toEqual({
+      nome: "LUCAS MENDES BORGES",
       sexo: "M",
       nomeMae: "ORDALICE PIRES MENDES",
       dataNascimento: new Date("1990-02-03T02:00:00.000Z"),
