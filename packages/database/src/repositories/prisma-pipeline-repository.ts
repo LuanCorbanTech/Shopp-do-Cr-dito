@@ -12,6 +12,8 @@ import type {
   ReconciliationPort,
   StuckOfferSnapshot,
   OfferSnapshot,
+  DispatchPollPort,
+  InfoPessoaLemit,
 } from "@plataforma-ofertas/domain";
 
 // Implementação Prisma/PostgreSQL de todas as portas usadas pelos workers 1-6.
@@ -24,10 +26,13 @@ type OfferRow = {
   id: string;
   webhookId: string;
   externalId: string | null;
+  nome: string | null;
   cpf: string | null;
+  dataNascimento: Date | null;
   telefoneOriginal: string | null;
   telefoneAtualizado: string | null;
   telefoneValidado: string | null;
+  possuiWhatsapp: boolean | null;
   bancoAutorizado: string | null;
   produto: string | null;
   valor: Prisma.Decimal | number | null;
@@ -44,9 +49,11 @@ type OfferRow = {
 };
 
 const OFFER_COLUMNS_SQL = Prisma.sql`
-  id, webhook_id AS "webhookId", external_id AS "externalId", cpf,
+  id, webhook_id AS "webhookId", external_id AS "externalId", nome, cpf,
+  data_nascimento AS "dataNascimento",
   telefone_original AS "telefoneOriginal", telefone_atualizado AS "telefoneAtualizado",
-  telefone_validado AS "telefoneValidado", banco_autorizado AS "bancoAutorizado",
+  telefone_validado AS "telefoneValidado", possui_whatsapp AS "possuiWhatsapp",
+  banco_autorizado AS "bancoAutorizado",
   produto, valor, parcelas, status::text AS status,
   routing_rule_id AS "routingRuleId", endpoint_id AS "endpointId",
   tentativas_telefone AS "tentativasTelefone", tentativas_whatsapp AS "tentativasWhatsapp",
@@ -59,10 +66,13 @@ function mapRow(row: OfferRow): OfferSnapshot {
     id: row.id,
     webhookId: row.webhookId,
     externalId: row.externalId,
+    nome: row.nome,
     cpf: row.cpf,
+    dataNascimento: row.dataNascimento,
     telefoneOriginal: row.telefoneOriginal,
     telefoneAtualizado: row.telefoneAtualizado,
     telefoneValidado: row.telefoneValidado,
+    possuiWhatsapp: row.possuiWhatsapp,
     bancoAutorizado: row.bancoAutorizado,
     produto: row.produto,
     valor: row.valor === null ? null : Number(row.valor),
@@ -86,7 +96,8 @@ export class PrismaPipelineRepository
     RoutingPort,
     DispatchPort,
     RetryPort,
-    ReconciliationPort
+    ReconciliationPort,
+    DispatchPollPort
 {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -150,10 +161,12 @@ export class PrismaPipelineRepository
       telefoneAtualizado: string | null;
       respostaBruta: unknown;
       dadosPessoa: Record<string, unknown> | null;
+      infoPessoa: InfoPessoaLemit;
       possuiWhatsappSegundoLemit: boolean | null;
       tentativa: number;
     }
   ): Promise<void> {
+    const info = params.infoPessoa;
     await this.prisma.$transaction([
       this.prisma.offer.update({
         where: { id: offerId },
@@ -161,6 +174,20 @@ export class PrismaPipelineRepository
           status: "TELEFONE_ATUALIZADO",
           telefoneAtualizado: params.telefoneAtualizado,
           dadosPessoaLemit: toJsonInput(params.dadosPessoa),
+          dataNascimento: info.dataNascimento,
+          sexo: info.sexo,
+          nomeMae: info.nomeMae,
+          email: info.email,
+          telefoneLemit: info.telefone,
+          whatsappLemit: info.whatsapp,
+          endereco: info.endereco,
+          uf: info.uf,
+          cep: info.cep,
+          bairro: info.bairro,
+          cidade: info.cidade,
+          numero: info.numero,
+          logradouro: info.logradouro,
+          complemento: info.complemento,
           reservedAt: null,
         },
       }),
@@ -290,8 +317,11 @@ export class PrismaPipelineRepository
       this.prisma.offer.update({
         where: { id: offerId },
         data: {
-          status: params.possuiWhatsapp ? "AGUARDANDO_ROTEAMENTO" : "SEM_WHATSAPP",
+          // Novo modelo (17/08): sucesso vai direto pra AGUARDANDO_DISPARO — não
+          // existe mais motor de roteamento interno (ver DispatchPollPort).
+          status: params.possuiWhatsapp ? "AGUARDANDO_DISPARO" : "SEM_WHATSAPP",
           telefoneValidado: params.possuiWhatsapp ? params.telefoneUsado : null,
+          possuiWhatsapp: params.possuiWhatsapp,
           whatsappRequestId: null,
           whatsappCheckIniciadoEm: null,
           reservedAt: null,
@@ -584,6 +614,17 @@ export class PrismaPipelineRepository
       where: { id: offerId },
       data: { status: targetStatus as OfferStatus, reservedAt: null },
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Endpoint de disparo por polling externo — DispatchPollPort
+  // -------------------------------------------------------------------------
+
+  async claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]> {
+    // Mesmo padrão atômico de claimByStatus (UPDATE...RETURNING com FOR UPDATE
+    // SKIP LOCKED) — chamadas concorrentes ao endpoint nunca pegam a mesma
+    // oferta. DISPARO_CONSULTADO é terminal: a oferta nunca mais aparece aqui.
+    return this.claimByStatus(["AGUARDANDO_DISPARO"], "DISPARO_CONSULTADO", limit);
   }
 }
 

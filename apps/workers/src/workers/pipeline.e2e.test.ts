@@ -2,7 +2,6 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import IORedis from "ioredis";
 import { runLimitWorkerOnce } from "./worker1-limit";
 import { runWhatsappWorkerOnce } from "./worker2-whatsapp";
-import { runRoutingWorkerOnce } from "./worker3-routing";
 import { runDispatchWorkerOnce } from "./worker4-dispatch";
 import { runRetryWorkerOnce } from "./worker5-retry";
 import { runReconciliationWorkerOnce } from "./worker6-reconciliation";
@@ -25,26 +24,10 @@ afterAll(async () => {
   await redis.quit();
 });
 
-describe("pipeline completo (RECEBIDO -> ENVIADO)", () => {
+describe("pipeline completo (RECEBIDO -> AGUARDANDO_DISPARO)", () => {
   it("com Limit ativado e WhatsApp encontrado", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true);
-    repo.addEndpoint({
-      id: "endpoint-c6",
-      nome: "C6",
-      url: "https://example.com/c6",
-      metodoHttp: "POST",
-      headers: null,
-      authType: "NONE",
-      credenciaisRef: null,
-      capacidadeMinuto: null,
-      capacidadeHora: 1000,
-      capacidadeDia: null,
-      timeoutMs: 5000,
-      maxTentativas: 3,
-      ativo: true,
-    });
-    repo.addRule({ id: "rule-c6", condicoes: { bancoAutorizado: "C6" }, endpointId: "endpoint-c6", prioridade: 10 });
 
     const offer = repo.addOffer({
       telefoneOriginal: "62999999999",
@@ -60,12 +43,14 @@ describe("pipeline completo (RECEBIDO -> ENVIADO)", () => {
         lookupPhone: async () => ({
           telefoneAtualizado: "5562999999999",
           possuiWhatsappSegundoLemit: true,
-          dadosPessoa: null,
+          dadosPessoa: { data_nascimento: "1990-02-03T00:00:00-02:00" },
           respostaBruta: {},
         }),
       },
     });
     expect(repo.offers.get(offer.id)?.status).toBe("TELEFONE_ATUALIZADO");
+    // A data de nascimento vem da Lemit e já fica salva na oferta desde essa etapa.
+    expect(repo.offers.get(offer.id)?.dataNascimento?.toISOString()).toBe("1990-02-03T02:00:00.000Z");
 
     // A validação de WhatsApp é assíncrona (ver worker2-whatsapp.ts): a 1ª chamada só
     // inicia a consulta (request_id); a 2ª (fallback do fluxo, aqui simulando o
@@ -90,40 +75,19 @@ describe("pipeline completo (RECEBIDO -> ENVIADO)", () => {
       awaitingResultTimeoutMs: 0,
       now: new Date(Date.now() + 1000),
     });
-    expect(repo.offers.get(offer.id)?.status).toBe("AGUARDANDO_ROTEAMENTO");
-
-    await runRoutingWorkerOnce({ routingPort: repo });
-    expect(repo.offers.get(offer.id)?.status).toBe("AGUARDANDO_ENVIO");
-    expect(repo.offers.get(offer.id)?.endpointId).toBe("endpoint-c6");
-
-    await runDispatchWorkerOnce({
-      dispatchPort: repo,
-      hyperflowService: { dispatch: async () => ({ sucesso: true, httpStatus: 200, request: {}, respostaBruta: {} }) },
-      redis,
-    });
-
-    expect(repo.offers.get(offer.id)?.status).toBe("ENVIADO");
+    // Novo modelo (17/08): sucesso na validação vai direto pra AGUARDANDO_DISPARO —
+    // não existe mais motor de roteamento interno (Regras de Roteamento/Endpoints/
+    // Worker de Disparo). Um sistema externo consulta essas ofertas via
+    // GET /api/v1/leads/aguardando-disparo (ver dispatch-poll-routes.ts na API).
+    const final = repo.offers.get(offer.id);
+    expect(final?.status).toBe("AGUARDANDO_DISPARO");
+    expect(final?.possuiWhatsapp).toBe(true);
+    expect(final?.telefoneValidado).toBe("5562999999999");
   });
 
   it("com Limit desativado, telefone original é usado do início ao fim", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", false);
-    repo.addEndpoint({
-      id: "endpoint-bmg",
-      nome: "BMG",
-      url: "https://example.com/bmg",
-      metodoHttp: "POST",
-      headers: null,
-      authType: "NONE",
-      credenciaisRef: null,
-      capacidadeMinuto: null,
-      capacidadeHora: 1000,
-      capacidadeDia: null,
-      timeoutMs: 5000,
-      maxTentativas: 3,
-      ativo: true,
-    });
-    repo.addRule({ id: "rule-bmg", condicoes: { bancoAutorizado: "BMG" }, endpointId: "endpoint-bmg", prioridade: 10 });
 
     const offer = repo.addOffer({ telefoneOriginal: "62988887777", bancoAutorizado: "BMG", status: "RECEBIDO" });
 
@@ -151,19 +115,17 @@ describe("pipeline completo (RECEBIDO -> ENVIADO)", () => {
       awaitingResultTimeoutMs: 0,
       now: new Date(Date.now() + 1000),
     });
-    await runRoutingWorkerOnce({ routingPort: repo });
-    await runDispatchWorkerOnce({
-      dispatchPort: repo,
-      hyperflowService: { dispatch: async () => ({ sucesso: true, httpStatus: 200, request: {}, respostaBruta: {} }) },
-      redis,
-    });
 
     const final = repo.offers.get(offer.id);
-    expect(final?.status).toBe("ENVIADO");
+    expect(final?.status).toBe("AGUARDANDO_DISPARO");
     expect(final?.telefoneAtualizado).toBeNull();
     expect(final?.telefoneValidado).toBe("62988887777");
   });
 
+  // As duas próximas continuam testando worker3/4/5/6 isoladamente (código que
+  // ainda existe no repositório, mas que nenhuma oferta real alcança mais desde
+  // que o roteamento/disparo interno foi substituído pelo endpoint de polling
+  // externo) — cobertura mantida caso esse código volte a ser usado.
   it("falha no disparo -> retry -> sucesso na segunda tentativa", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.addEndpoint({

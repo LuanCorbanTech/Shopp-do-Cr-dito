@@ -11,6 +11,7 @@ import type {
   ReconciliationPort,
   StuckOfferSnapshot,
   OfferSnapshot,
+  InfoPessoaLemit,
 } from "@plataforma-ofertas/domain";
 
 // Réplica em memória de todas as portas dos workers 1-6, no mesmo espírito do
@@ -25,6 +26,21 @@ export interface MutableOffer extends OfferSnapshot {
   // ler de volta) — ficam aqui só pra dar visibilidade nos testes.
   dadosPessoaLemit?: Record<string, unknown> | null;
   possuiWhatsappSegundoLemit?: boolean | null;
+  // "Retrato" da Lemit (ver extrairInfoPessoaLemit) — igual acima, só pra
+  // visibilidade em teste; dataNascimento já está em OfferSnapshot.
+  sexo?: string | null;
+  nomeMae?: string | null;
+  email?: string | null;
+  telefoneLemit?: string | null;
+  whatsappLemit?: boolean | null;
+  endereco?: string | null;
+  uf?: string | null;
+  cep?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  numero?: string | null;
+  logradouro?: string | null;
+  complemento?: string | null;
 }
 
 const IN_FLIGHT_STATUSES = [
@@ -60,10 +76,13 @@ export class InMemoryPipelineRepository
       id: partial.id ?? `offer-${this.idCounter}`,
       webhookId: partial.webhookId ?? "webhook-1",
       externalId: partial.externalId ?? null,
+      nome: partial.nome ?? null,
       cpf: partial.cpf ?? null,
+      dataNascimento: partial.dataNascimento ?? null,
       telefoneOriginal: partial.telefoneOriginal,
       telefoneAtualizado: partial.telefoneAtualizado ?? null,
       telefoneValidado: partial.telefoneValidado ?? null,
+      possuiWhatsapp: partial.possuiWhatsapp ?? null,
       bancoAutorizado: partial.bancoAutorizado ?? null,
       produto: partial.produto ?? null,
       valor: partial.valor ?? null,
@@ -154,6 +173,7 @@ export class InMemoryPipelineRepository
     params: {
       telefoneAtualizado: string | null;
       dadosPessoa?: Record<string, unknown> | null;
+      infoPessoa?: InfoPessoaLemit;
       possuiWhatsappSegundoLemit?: boolean | null;
     }
   ): Promise<void> {
@@ -162,6 +182,21 @@ export class InMemoryPipelineRepository
     offer.telefoneAtualizado = params.telefoneAtualizado;
     offer.dadosPessoaLemit = params.dadosPessoa ?? null;
     offer.possuiWhatsappSegundoLemit = params.possuiWhatsappSegundoLemit ?? null;
+    const info = params.infoPessoa;
+    offer.dataNascimento = info?.dataNascimento ?? null;
+    offer.sexo = info?.sexo ?? null;
+    offer.nomeMae = info?.nomeMae ?? null;
+    offer.email = info?.email ?? null;
+    offer.telefoneLemit = info?.telefone ?? null;
+    offer.whatsappLemit = info?.whatsapp ?? null;
+    offer.endereco = info?.endereco ?? null;
+    offer.uf = info?.uf ?? null;
+    offer.cep = info?.cep ?? null;
+    offer.bairro = info?.bairro ?? null;
+    offer.cidade = info?.cidade ?? null;
+    offer.numero = info?.numero ?? null;
+    offer.logradouro = info?.logradouro ?? null;
+    offer.complemento = info?.complemento ?? null;
     offer.reservedAt = null;
     this.processingLog.push({ offerId, etapa: "LIMIT", resultado: "SUCESSO" });
   }
@@ -226,8 +261,11 @@ export class InMemoryPipelineRepository
     params: { possuiWhatsapp: boolean; telefoneUsado: string }
   ): Promise<void> {
     const offer = this.require(offerId);
-    offer.status = params.possuiWhatsapp ? "AGUARDANDO_ROTEAMENTO" : "SEM_WHATSAPP";
+    // Novo modelo (17/08): sucesso vai direto pra AGUARDANDO_DISPARO, não mais
+    // AGUARDANDO_ROTEAMENTO — não existe mais motor de roteamento interno.
+    offer.status = params.possuiWhatsapp ? "AGUARDANDO_DISPARO" : "SEM_WHATSAPP";
     offer.telefoneValidado = params.possuiWhatsapp ? params.telefoneUsado : null;
+    offer.possuiWhatsapp = params.possuiWhatsapp;
     offer.whatsappRequestId = null;
     offer.whatsappCheckIniciadoEm = null;
     offer.reservedAt = null;

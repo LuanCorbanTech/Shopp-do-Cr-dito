@@ -1,14 +1,35 @@
 import { adminApiFetch } from "@/lib/api";
 import { StatusBadge } from "@/components/status-badge";
+import { OfferModalButton } from "./OfferModal";
 
 export const dynamic = "force-dynamic";
 
 interface Offer {
   id: string;
   externalId: string | null;
+  nome: string | null;
   cpf: string | null;
+  sexo: string | null;
+  nomeMae: string | null;
+  dataNascimento: string | null;
+  email: string | null;
   telefoneOriginal: string;
+  telefoneLemit: string | null;
+  telefoneValidado: string | null;
+  whatsappLemit: boolean | null;
+  possuiWhatsapp: boolean | null;
+  endereco: string | null;
+  uf: string | null;
+  cep: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  numero: string | null;
+  logradouro: string | null;
+  complemento: string | null;
   bancoAutorizado: string | null;
+  produto: string | null;
+  valor: number | null;
+  parcelas: number | null;
   status: string;
   createdAt: string;
 }
@@ -16,6 +37,12 @@ interface Offer {
 interface OffersResponse {
   items: Offer[];
   total: number;
+}
+
+// Telefone mostrado na coluna "WhatsApp": o validado de verdade (Worker 2/
+// CorbanTech) se existir; senão o que a Lemit indicou; senão nenhum ainda.
+function telefoneWhatsapp(offer: Offer): string | null {
+  return offer.telefoneValidado ?? offer.telefoneLemit ?? null;
 }
 
 export default async function OfertasPage({ searchParams }: { searchParams: { status?: string } }) {
@@ -47,27 +74,44 @@ export default async function OfertasPage({ searchParams }: { searchParams: { st
       <table>
         <thead>
           <tr>
-            <th>Recebida em</th>
-            <th>ID externo</th>
-            <th>Telefone</th>
-            <th>Banco</th>
+            <th>Nome</th>
+            <th>CPF</th>
+            <th>WhatsApp</th>
             <th>Status</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
-          {data?.items.map((offer) => (
-            <tr key={offer.id}>
-              <td>{new Date(offer.createdAt).toLocaleString("pt-BR")}</td>
-              <td>{offer.externalId ?? "—"}</td>
-              <td>{offer.telefoneOriginal}</td>
-              <td>{offer.bancoAutorizado ?? "—"}</td>
-              <td>
-                <a href={`/ofertas/${offer.id}`}>
-                  <StatusBadge status={offer.status} />
-                </a>
-              </td>
-            </tr>
-          ))}
+          {data?.items.map((offer) => {
+            const telefone = telefoneWhatsapp(offer);
+            return (
+              <tr key={offer.id}>
+                <td>{offer.nome ?? "—"}</td>
+                <td>{offer.cpf ?? "—"}</td>
+                <td>
+                  {telefone ?? "—"}
+                  {offer.possuiWhatsapp === true && (
+                    <span className="badge good" style={{ marginLeft: 8 }}>
+                      ✓
+                    </span>
+                  )}
+                  {offer.possuiWhatsapp === false && (
+                    <span className="badge" style={{ marginLeft: 8 }}>
+                      sem WhatsApp
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <a href={`/ofertas/${offer.id}`}>
+                    <StatusBadge status={offer.status} />
+                  </a>
+                </td>
+                <td>
+                  <OfferModalButton offer={offer} />
+                </td>
+              </tr>
+            );
+          })}
           {data && data.items.length === 0 && (
             <tr>
               <td colSpan={5} className="empty-state">

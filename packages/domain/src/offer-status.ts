@@ -17,6 +17,10 @@ export const OFFER_STATUS = {
   ERRO_ENVIO: "ERRO_ENVIO",
   CANCELADO: "CANCELADO",
   EXPIRADO: "EXPIRADO",
+  // Novo modelo de disparo (17/08) — substitui o motor de roteamento interno.
+  // Ver comentário no schema.prisma / migration 20260817190000.
+  AGUARDANDO_DISPARO: "AGUARDANDO_DISPARO",
+  DISPARO_CONSULTADO: "DISPARO_CONSULTADO",
 } as const;
 
 export type OfferStatus = (typeof OFFER_STATUS)[keyof typeof OFFER_STATUS];
@@ -27,4 +31,5 @@ export const TERMINAL_STATUSES: OfferStatus[] = [
   OFFER_STATUS.SEM_WHATSAPP,
   OFFER_STATUS.CANCELADO,
   OFFER_STATUS.EXPIRADO,
+  OFFER_STATUS.DISPARO_CONSULTADO,
 ];

@@ -2,6 +2,7 @@ import { logger, maskPhone } from "@plataforma-ofertas/shared";
 import {
   nextAttemptDate,
   hasExceededMaxAttempts,
+  extrairInfoPessoaLemit,
   DEFAULT_BACKOFF_SCHEDULE_SECONDS,
   DEFAULT_MAX_TENTATIVAS,
   type PhoneProcessingPort,
@@ -71,6 +72,7 @@ export async function runLimitWorkerOnce(params: RunLimitWorkerOnceParams): Prom
         telefoneAtualizado: result.telefoneAtualizado ?? offer.telefoneOriginal,
         respostaBruta: result.respostaBruta,
         dadosPessoa: result.dadosPessoa,
+        infoPessoa: extrairInfoPessoaLemit(result.dadosPessoa),
         possuiWhatsappSegundoLemit: result.possuiWhatsappSegundoLemit,
         tentativa,
       });

@@ -3,14 +3,23 @@
 // @plataforma-ofertas/database. Mantém os workers testáveis com fakes em memória,
 // nos mesmos moldes do OffersPort da Fase 1.
 
+import type { InfoPessoaLemit } from "../lemit-info-extraction";
+
 export interface OfferSnapshot {
   id: string;
   webhookId: string;
   externalId: string | null;
+  nome: string | null;
   cpf: string | null;
+  // Extraído de dadosPessoaLemit.data_nascimento pelo Worker 1 (ver comentário
+  // em markPhoneUpdated) — usado no novo endpoint de disparo por polling.
+  dataNascimento: Date | null;
   telefoneOriginal: string | null;
   telefoneAtualizado: string | null;
   telefoneValidado: string | null;
+  // Coluna própria (além do status) — setada junto com telefoneValidado no
+  // Worker 2, ver markWhatsappValidated.
+  possuiWhatsapp: boolean | null;
   bancoAutorizado: string | null;
   produto: string | null;
   valor: number | null;
@@ -61,6 +70,13 @@ export interface PhoneProcessingPort {
       respostaBruta: unknown;
       /** Objeto "pessoa" completo devolvido pela Lemit — salvo direto no registro do lead. */
       dadosPessoa: Record<string, unknown> | null;
+      /**
+       * "Retrato" completo da Lemit (sexo, nome_mae, data_nascimento, email,
+       * telefone, whatsapp, endereço) já extraído — ver extrairInfoPessoaLemit.
+       * Promovido pra colunas próprias (pedido explícito) pro painel admin
+       * mostrar sem precisar abrir o JSON bruto.
+       */
+      infoPessoa: InfoPessoaLemit;
       /** Segundo a própria Lemit (informativo) — não substitui a validação oficial do Worker 2. */
       possuiWhatsappSegundoLemit: boolean | null;
       tentativa: number;
@@ -105,7 +121,12 @@ export interface WhatsappValidationPort {
     limit: number;
     now?: Date;
   }): Promise<OfferSnapshot[]>;
-  /** possuiWhatsapp=true avança para AGUARDANDO_ROTEAMENTO; false encerra em SEM_WHATSAPP. */
+  /**
+   * possuiWhatsapp=true avança para AGUARDANDO_DISPARO (novo modelo — substitui
+   * o antigo AGUARDANDO_ROTEAMENTO/motor de roteamento interno); false encerra
+   * em SEM_WHATSAPP. Em ambos os casos, a coluna própria possuiWhatsapp também
+   * é setada (ver OfferSnapshot).
+   */
   markWhatsappValidated(
     offerId: string,
     params: { possuiWhatsapp: boolean; respostaBruta: unknown; telefoneUsado: string }
@@ -211,4 +232,24 @@ export interface ReconciliationPort {
   /** Ofertas em estado transitório (EM_PROCESSAMENTO_*) travadas há mais que o SLA. */
   findStuckOffers(olderThanMs: number, limit: number): Promise<StuckOfferSnapshot[]>;
   releaseStuckOffer(offerId: string, targetStatus: string): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint de disparo por polling externo (17/08) — substitui o motor de
+// roteamento interno (Regras de Roteamento + Endpoints + Worker de Disparo).
+// Um sistema externo (o disparador de WhatsApp) chama GET
+// /api/v1/leads/aguardando-disparo pra buscar ofertas prontas; a leitura já
+// marca a oferta como consultada (atômico, via UPDATE...RETURNING com SKIP
+// LOCKED), pra nunca devolver a mesma oferta duas vezes mesmo com chamadas
+// concorrentes.
+// ---------------------------------------------------------------------------
+
+export interface DispatchPollPort {
+  /**
+   * Reserva e marca como DISPARO_CONSULTADO até `limit` ofertas em
+   * AGUARDANDO_DISPARO (mais antigas primeiro), devolvendo os dados delas.
+   * Operação atômica de "ler e consumir" — chamadas concorrentes nunca pegam
+   * a mesma oferta.
+   */
+  claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]>;
 }

@@ -15,10 +15,13 @@ class FakeWhatsappPort implements Pick<WhatsappValidationPort, "findOfferByWhats
     this.offers.set(offer.id, {
       webhookId: "webhook-1",
       externalId: null,
+      nome: null,
       cpf: null,
+      dataNascimento: null,
       telefoneOriginal: "62999999999",
       telefoneAtualizado: null,
       telefoneValidado: null,
+      possuiWhatsapp: null,
       bancoAutorizado: null,
       produto: null,
       valor: null,

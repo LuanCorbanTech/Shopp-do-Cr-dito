@@ -32,6 +32,14 @@ enum OfferStatus {
   ERRO_ENVIO
   CANCELADO
   EXPIRADO
+  // Novo modelo de disparo (substitui o motor de roteamento interno): ao
+  // validar o WhatsApp com sucesso, a oferta vai direto pra cá — nenhuma
+  // Regra de Roteamento é mais consultada. Um sistema externo (o disparador de
+  // WhatsApp) consulta um endpoint próprio (GET /api/v1/leads/aguardando-disparo)
+  // pra pegar essas ofertas; ao ser lida por esse endpoint, a oferta passa
+  // automaticamente pra DISPARO_CONSULTADO (nunca mais aparece nessa consulta).
+  AGUARDANDO_DISPARO
+  DISPARO_CONSULTADO
 }
 
 enum DispatchQueueStatus {
@@ -115,9 +123,40 @@ model Offer {
 
   nome             String?
   cpf              String?
+  // Extraído de dadosPessoaLemit.data_nascimento (Lemit devolve ISO com timezone,
+  // ex.: "1990-02-03T00:00:00-02:00") no momento em que o Worker 1 salva o
+  // enriquecimento — promovido pra coluna própria pra dar pra consultar/exportar
+  // sem precisar abrir o JSON bruto.
+  dataNascimento   DateTime?   @map("data_nascimento")
+  // Os campos abaixo (sexo até complemento) são um "retrato" da resposta da
+  // Lemit no momento do enriquecimento — pra exibição/registro no painel
+  // (pedido explícito: nome, cpf, sexo, nome_mae, data_nascimento, email,
+  // telefone, whatsapp, endereço completo). Sempre a entrada de melhor ranking
+  // quando o campo original da Lemit é uma lista (emails/celulares/enderecos).
+  // Ver extrairInfoPessoaLemit em @plataforma-ofertas/domain. São independentes
+  // dos campos que o pipeline usa pra decidir o fluxo (telefoneAtualizado/
+  // telefoneValidado/possuiWhatsapp, abaixo).
+  sexo             String?
+  nomeMae          String?     @map("nome_mae")
+  email            String?
+  telefoneLemit    String?     @map("telefone_lemit")
+  whatsappLemit    Boolean?    @map("whatsapp_lemit")
+  endereco         String?
+  uf               String?
+  cep              String?
+  bairro           String?
+  cidade           String?
+  numero           String?
+  logradouro       String?
+  complemento      String?
   telefoneOriginal String?     @map("telefone_original")
   telefoneAtualizado String?   @map("telefone_atualizado")
   telefoneValidado String?     @map("telefone_validado")
+  // Coluna própria (além do status) pra saber se o número validou WhatsApp —
+  // setada junto com telefoneValidado no Worker 2. Existe separado do status
+  // pra ficar fácil de filtrar/exportar sem depender de qual dos vários status
+  // "de sucesso" a oferta está.
+  possuiWhatsapp   Boolean?    @map("possui_whatsapp")
 
   bancoAutorizado  String?     @map("banco_autorizado")
   produto          String?

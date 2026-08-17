@@ -9,7 +9,7 @@ import { InMemoryPipelineRepository } from "./test-support/in-memory-repository"
 // fallback manual (fase 2) já encontrando o resultado disponível.
 
 describe("runWhatsappWorkerOnce", () => {
-  it("inicia a consulta e avança para AGUARDANDO_ROTEAMENTO quando o resultado (buscado depois) possui WhatsApp", async () => {
+  it("inicia a consulta e avança para AGUARDANDO_DISPARO quando o resultado (buscado depois) possui WhatsApp", async () => {
     const repo = new InMemoryPipelineRepository();
     const offer = repo.addOffer({
       telefoneOriginal: "62999999999",
@@ -42,7 +42,7 @@ describe("runWhatsappWorkerOnce", () => {
     });
 
     updated = repo.offers.get(offer.id);
-    expect(updated?.status).toBe("AGUARDANDO_ROTEAMENTO");
+    expect(updated?.status).toBe("AGUARDANDO_DISPARO");
     expect(updated?.telefoneValidado).toBe("5562999999999");
     expect(updated?.whatsappRequestId).toBeNull();
   });
