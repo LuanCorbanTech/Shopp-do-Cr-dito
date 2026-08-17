@@ -6,7 +6,6 @@ import { createWhatsAppValidationService } from "@plataforma-ofertas/integration
 import { createHyperflowService } from "@plataforma-ofertas/integration-hyperflow";
 import { runLimitWorkerOnce } from "./workers/worker1-limit";
 import { runWhatsappWorkerOnce } from "./workers/worker2-whatsapp";
-import { runRoutingWorkerOnce } from "./workers/worker3-routing";
 import { runDispatchWorkerOnce } from "./workers/worker4-dispatch";
 import { runRetryWorkerOnce } from "./workers/worker5-retry";
 import { runReconciliationWorkerOnce } from "./workers/worker6-reconciliation";
@@ -96,9 +95,15 @@ loop("worker2-whatsapp", Number(process.env.WORKER2_INTERVAL_MS ?? 5000), () =>
   runWhatsappWorkerOnce({ whatsappPort: repo, configPort: repo, whatsappService })
 );
 
-loop("worker3-routing", Number(process.env.WORKER3_INTERVAL_MS ?? 5000), () =>
-  runRoutingWorkerOnce({ routingPort: repo })
-);
+// worker3-routing (motor de roteamento interno) parado (17/08) — substituído pelo
+// endpoint de disparo por polling externo (GET /api/v1/leads/aguardando-disparo,
+// ver apps/api/src/leads/aguardando-disparo-routes.ts). O código do worker
+// continua existindo (não foi removido, só desligado aqui), caso um dia volte a
+// ser necessário.
+//
+// loop("worker3-routing", Number(process.env.WORKER3_INTERVAL_MS ?? 5000), () =>
+//   runRoutingWorkerOnce({ routingPort: repo })
+// );
 
 loop("worker4-dispatch", Number(process.env.WORKER4_INTERVAL_MS ?? 5000), () =>
   runDispatchWorkerOnce({ dispatchPort: repo, hyperflowService, redis })

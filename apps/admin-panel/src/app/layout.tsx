@@ -11,7 +11,6 @@ const NAV = [
   { href: "/webhooks", label: "Webhooks" },
   { href: "/integracoes", label: "Integrações" },
   { href: "/endpoints", label: "Endpoints" },
-  { href: "/regras", label: "Regras de roteamento" },
   { href: "/ofertas", label: "Ofertas" },
 ];
 
