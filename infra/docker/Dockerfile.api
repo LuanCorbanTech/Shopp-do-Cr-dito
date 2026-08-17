@@ -10,21 +10,45 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json tsconfig.base.json ./
-COPY packages ./packages
-COPY apps ./apps
+COPY apps/api/package.json apps/api/package.json
+COPY apps/admin-panel/package.json apps/admin-panel/package.json
+COPY apps/workers/package.json apps/workers/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/domain/package.json packages/domain/package.json
+COPY packages/database/package.json packages/database/package.json
+COPY packages/queue/package.json packages/queue/package.json
+COPY packages/integrations/hyperflow/package.json packages/integrations/hyperflow/package.json
+COPY packages/integrations/limit/package.json packages/integrations/limit/package.json
+COPY packages/integrations/whatsapp/package.json packages/integrations/whatsapp/package.json
 
+# npm ci só reinstala quando um desses package.json ou o lockfile mudam — como
+# essa camada vem ANTES de copiar o código-fonte, ela fica em cache do Docker
+# entre deploys que só mudam código (a maioria). Antes, "COPY packages"/"COPY
+# apps" vinha antes do npm ci, então qualquer mudança de código invalidava o
+# cache e forçava reinstalar tudo (~220 pacotes da internet) do zero em todo
+# deploy — essa era a causa principal do build demorar tanto.
 RUN npm ci
 
-# Build em ordem de dependência (workspaces não garantem ordem topológica
-# automática em "npm run build --workspaces").
+# Cópia POR PACOTE — ver explicação completa em Dockerfile.workers (mesma
+# lógica: cada COPY vira sua própria camada de cache, então mudar 1 arquivo em
+# 1 app não invalida mais o cache de tudo que veio antes dele).
+#
+# A API só depende de database/domain/shared (confirmado em
+# apps/api/package.json) — diferente do worker, não usa packages/queue nem as
+# integrações (Lemit/CorbanTech/Hyperflow são só consumidas pelos workers em
+# segundo plano), então nem copia/builda esses aqui — menos trabalho, build
+# mais rápido.
+COPY packages/shared ./packages/shared
 RUN npm run build --workspace=@plataforma-ofertas/shared
+
+COPY packages/domain ./packages/domain
 RUN npm run build --workspace=@plataforma-ofertas/domain
-RUN npm run build --workspace=@plataforma-ofertas/queue
-RUN npm run build --workspace=@plataforma-ofertas/integration-limit
-RUN npm run build --workspace=@plataforma-ofertas/integration-whatsapp
-RUN npm run build --workspace=@plataforma-ofertas/integration-hyperflow
+
+COPY packages/database ./packages/database
 RUN npm run generate --workspace=@plataforma-ofertas/database
 RUN npm run build --workspace=@plataforma-ofertas/database
+
+COPY apps/api ./apps/api
 RUN npm run build --workspace=@plataforma-ofertas/api
 
 FROM node:20-slim AS runner

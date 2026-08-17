@@ -8,10 +8,28 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json tsconfig.base.json ./
-COPY packages ./packages
-COPY apps ./apps
+COPY apps/api/package.json apps/api/package.json
+COPY apps/admin-panel/package.json apps/admin-panel/package.json
+COPY apps/workers/package.json apps/workers/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/domain/package.json packages/domain/package.json
+COPY packages/database/package.json packages/database/package.json
+COPY packages/queue/package.json packages/queue/package.json
+COPY packages/integrations/hyperflow/package.json packages/integrations/hyperflow/package.json
+COPY packages/integrations/limit/package.json packages/integrations/limit/package.json
+COPY packages/integrations/whatsapp/package.json packages/integrations/whatsapp/package.json
 
+# npm ci só reinstala quando um desses package.json ou o lockfile mudam — ver
+# explicação completa em Dockerfile.api.
 RUN npm ci
+
+# admin-panel não importa nada de packages/domain, packages/database, etc. (só
+# fala com a API via HTTP) — então nem precisa copiar o código-fonte deles
+# aqui, só o próprio app. Isso faz o cache dessa imagem depender só de
+# mudanças dentro de apps/admin-panel — mudar qualquer outra coisa no
+# monorepo (api, workers, packages) não invalida mais o build do painel.
+COPY apps/admin-panel ./apps/admin-panel
+
 RUN npm run build --workspace=@plataforma-ofertas/admin-panel
 
 FROM node:20-alpine AS runner

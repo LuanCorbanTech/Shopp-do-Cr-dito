@@ -8,19 +8,53 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json tsconfig.base.json ./
-COPY packages ./packages
-COPY apps ./apps
+COPY apps/api/package.json apps/api/package.json
+COPY apps/admin-panel/package.json apps/admin-panel/package.json
+COPY apps/workers/package.json apps/workers/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/domain/package.json packages/domain/package.json
+COPY packages/database/package.json packages/database/package.json
+COPY packages/queue/package.json packages/queue/package.json
+COPY packages/integrations/hyperflow/package.json packages/integrations/hyperflow/package.json
+COPY packages/integrations/limit/package.json packages/integrations/limit/package.json
+COPY packages/integrations/whatsapp/package.json packages/integrations/whatsapp/package.json
 
+# npm ci só reinstala quando um desses package.json ou o lockfile mudam — ver
+# explicação completa em Dockerfile.api.
 RUN npm ci
 
+# Cópia POR PACOTE (não "COPY packages ./packages" de uma vez só) — cada COPY é
+# sua própria camada de cache do Docker. Assim, mudar um arquivo em
+# apps/workers, por exemplo, só invalida a camada de apps/workers pra baixo;
+# shared/domain/queue/integrações/database continuam vindo do cache (não
+# recompilam do zero) sempre que não mudaram. Antes, "COPY packages ./packages"
+# + "COPY apps ./apps" de uma vez invalidava TUDO a cada deploy, mesmo mudando
+# 1 linha em 1 arquivo — essa era a segunda maior causa do build demorar tanto
+# (a primeira, já corrigida antes, era o npm ci rodando depois do COPY do
+# código-fonte).
+COPY packages/shared ./packages/shared
 RUN npm run build --workspace=@plataforma-ofertas/shared
+
+COPY packages/domain ./packages/domain
 RUN npm run build --workspace=@plataforma-ofertas/domain
+
+COPY packages/queue ./packages/queue
 RUN npm run build --workspace=@plataforma-ofertas/queue
+
+COPY packages/integrations/limit ./packages/integrations/limit
 RUN npm run build --workspace=@plataforma-ofertas/integration-limit
+
+COPY packages/integrations/whatsapp ./packages/integrations/whatsapp
 RUN npm run build --workspace=@plataforma-ofertas/integration-whatsapp
+
+COPY packages/integrations/hyperflow ./packages/integrations/hyperflow
 RUN npm run build --workspace=@plataforma-ofertas/integration-hyperflow
+
+COPY packages/database ./packages/database
 RUN npm run generate --workspace=@plataforma-ofertas/database
 RUN npm run build --workspace=@plataforma-ofertas/database
+
+COPY apps/workers ./apps/workers
 RUN npm run build --workspace=@plataforma-ofertas/workers
 
 FROM node:20-slim AS runner
