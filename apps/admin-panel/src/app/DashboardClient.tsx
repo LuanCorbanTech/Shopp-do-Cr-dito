@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FunnelChart } from "@/components/charts/FunnelChart";
+import { TimeSeriesChart } from "@/components/charts/TimeSeriesChart";
+import { DonutChart } from "@/components/charts/DonutChart";
 
 interface KpiData {
   totalRecebidas: number;
@@ -14,6 +17,12 @@ interface KpiData {
 interface StatusSummary {
   total: number;
   porStatus: Record<string, number>;
+}
+
+interface PontoSerie {
+  dia: string;
+  recebidas: number;
+  processadas: number;
 }
 
 const REFRESH_SECONDS = 30;
@@ -154,6 +163,7 @@ export function DashboardClient() {
 
   const [kpis, setKpis] = useState<KpiData | null>(null);
   const [statusSummary, setStatusSummary] = useState<StatusSummary | null>(null);
+  const [serie, setSerie] = useState<PontoSerie[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [contagem, setContagem] = useState(REFRESH_SECONDS);
@@ -167,14 +177,17 @@ export function DashboardClient() {
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
 
-      const [kpisResp, statusResp] = await Promise.all([
+      const [kpisResp, statusResp, serieResp] = await Promise.all([
         fetch(`/api/dashboard-kpis?${qs.toString()}`, { cache: "no-store" }),
         fetch(`/api/dashboard-summary`, { cache: "no-store" }),
+        fetch(`/api/dashboard-timeseries?${qs.toString()}`, { cache: "no-store" }),
       ]);
       const kpisData: KpiData = await kpisResp.json();
       const statusData: StatusSummary = await statusResp.json();
+      const serieData: PontoSerie[] = await serieResp.json();
       setKpis(kpisData);
       setStatusSummary(statusData);
+      setSerie(Array.isArray(serieData) ? serieData : []);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -250,6 +263,50 @@ export function DashboardClient() {
         <KpiCard icon={<IconShield />} value={kpis?.limiteValidado ?? null} label="Com limite validado (Lemit)" loading={carregando && !kpis} />
         <KpiCard icon={<IconWhatsapp />} value={kpis?.whatsappValidado ?? null} label="Com WhatsApp validado" loading={carregando && !kpis} />
         <KpiCard icon={<IconSend />} value={kpis?.disparoConsultado ?? null} label="Com disparo consultado" loading={carregando && !kpis} />
+      </div>
+
+      <div className="chart-grid">
+        <div className="chart-card">
+          <h2 style={{ margin: "0 0 16px" }}>Funil de conversão</h2>
+          {kpis ? (
+            <FunnelChart
+              etapas={[
+                { label: "Recebidas", value: kpis.totalRecebidas },
+                { label: "Limite validado", value: kpis.limiteValidado },
+                { label: "WhatsApp validado", value: kpis.whatsappValidado },
+                { label: "Disparo consultado", value: kpis.disparoConsultado },
+              ]}
+            />
+          ) : (
+            <p className="empty-state">Carregando…</p>
+          )}
+        </div>
+
+        <div className="chart-card">
+          <h2 style={{ margin: "0 0 16px" }}>Distribuição de erros/descarte</h2>
+          {statusSummary ? (
+            <DonutChart
+              segmentos={[
+                { label: "Sem WhatsApp", value: statusSummary.porStatus["SEM_WHATSAPP"] ?? 0, color: "var(--status-warning)" },
+                { label: "Erro no telefone", value: statusSummary.porStatus["ERRO_TELEFONE"] ?? 0, color: "var(--status-serious)" },
+                { label: "Erro na validação de WhatsApp", value: statusSummary.porStatus["ERRO_VALIDACAO_WHATSAPP"] ?? 0, color: "var(--status-critical)" },
+                { label: "Cancelado", value: statusSummary.porStatus["CANCELADO"] ?? 0, color: "var(--text-muted)" },
+                { label: "Expirado", value: statusSummary.porStatus["EXPIRADO"] ?? 0, color: "var(--text-secondary)" },
+              ]}
+            />
+          ) : (
+            <p className="empty-state">Carregando…</p>
+          )}
+        </div>
+
+        <div className="chart-card chart-card-wide">
+          <h2 style={{ margin: "0 0 16px" }}>Volume recebido × processado por dia</h2>
+          <TimeSeriesChart dados={serie} />
+          <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--text-secondary)", marginTop: 8 }}>
+            <span><span style={{ display: "inline-block", width: 10, height: 2, background: "var(--series-1)", marginRight: 6 }} />Recebidas</span>
+            <span><span style={{ display: "inline-block", width: 10, height: 2, background: "var(--status-good)", marginRight: 6 }} />Processadas</span>
+          </div>
+        </div>
       </div>
 
       {statusSelecionados.length > 0 && statusSummary && (

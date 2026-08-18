@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 // Nunca devolve a credencial em texto puro pro painel — só se está configurada e os
 // últimos 4 caracteres, pra confirmar visualmente que é a chave certa sem expor o resto.
@@ -69,6 +70,36 @@ export class AdminRepository {
       disparoConsultado,
       atualizadoEm: new Date().toISOString(),
     };
+  }
+
+  // Série temporal (gráfico de linha do dashboard novo) — volume recebido vs.
+  // "processado" (chegou a algum resultado, bom ou ruim — não está mais nas
+  // etapas iniciais) por dia, dentro do período filtrado. Sempre agrupa por
+  // dia (não por hora) para manter simples independente do período escolhido.
+  async dashboardTimeseries(params: { from?: Date; to?: Date }) {
+    const from = params.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const to = params.to ?? new Date();
+
+    const rows = await this.prisma.$queryRaw<{ dia: Date; recebidas: bigint; processadas: bigint }[]>(
+      Prisma.sql`
+        SELECT
+          date_trunc('day', created_at) AS dia,
+          count(*) AS recebidas,
+          count(*) FILTER (
+            WHERE status NOT IN ('RECEBIDO', 'PROCESSANDO_TELEFONE', 'TELEFONE_ATUALIZADO', 'VALIDANDO_WHATSAPP')
+          ) AS processadas
+        FROM offers
+        WHERE created_at >= ${from} AND created_at <= ${to}
+        GROUP BY dia
+        ORDER BY dia ASC
+      `
+    );
+
+    return rows.map((r) => ({
+      dia: r.dia.toISOString().slice(0, 10),
+      recebidas: Number(r.recebidas),
+      processadas: Number(r.processadas),
+    }));
   }
 
   async dashboardPorWebhook() {

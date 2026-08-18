@@ -23,6 +23,14 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           to: to && !Number.isNaN(to.getTime()) ? to : undefined,
         });
       });
+      instance.get<{ Querystring: { from?: string; to?: string } }>("/dashboard/timeseries", async (request) => {
+        const from = request.query.from ? new Date(request.query.from) : undefined;
+        const to = request.query.to ? new Date(request.query.to) : undefined;
+        return adminRepo.dashboardTimeseries({
+          from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+          to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+        });
+      });
       instance.get("/dashboard/webhooks", async () => adminRepo.dashboardPorWebhook());
       instance.get("/dashboard/bancos", async () => adminRepo.dashboardPorBanco());
       instance.get("/dashboard/endpoints", async () => adminRepo.dashboardPorEndpoint());

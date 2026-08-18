@@ -1,32 +1,17 @@
 import type { ReactNode } from "react";
 import "./globals.css";
+import { AppShell } from "./AppShell";
 
 export const metadata = {
   title: "Plataforma de Ofertas — Painel",
-  description: "Gestão, validação, roteamento e disparo de ofertas",
+  description: "Gestão, validação e disparo de ofertas",
 };
-
-const NAV = [
-  { href: "/", label: "Dashboard" },
-  { href: "/webhooks", label: "Webhooks" },
-  { href: "/integracoes", label: "Integrações" },
-  { href: "/endpoints", label: "Endpoints" },
-  { href: "/ofertas", label: "Ofertas" },
-];
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="pt-BR">
       <body>
-        <nav className="top-nav">
-          <span className="brand">Plataforma de Ofertas</span>
-          {NAV.map((item) => (
-            <a key={item.href} href={item.href}>
-              {item.label}
-            </a>
-          ))}
-        </nav>
-        <main className="shell">{children}</main>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
