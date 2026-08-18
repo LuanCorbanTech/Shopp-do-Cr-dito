@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FunnelChart } from "@/components/charts/FunnelChart";
 import { TimeSeriesChart } from "@/components/charts/TimeSeriesChart";
 import { DonutChart } from "@/components/charts/DonutChart";
+import { StatusMultiSelect } from "@/components/StatusMultiSelect";
+import { calcularIntervalo, type Periodo } from "@/lib/periodo";
 
 interface KpiData {
   totalRecebidas: number;
@@ -27,45 +29,6 @@ interface PontoSerie {
 }
 
 const REFRESH_SECONDS = 30;
-
-const TODOS_STATUS = [
-  "RECEBIDO",
-  "PROCESSANDO_TELEFONE",
-  "TELEFONE_ATUALIZADO",
-  "VALIDANDO_WHATSAPP",
-  "WHATSAPP_VALIDADO",
-  "AGUARDANDO_DISPARO",
-  "DISPARO_CONSULTADO",
-  "SEM_WHATSAPP",
-  "ERRO_TELEFONE",
-  "ERRO_VALIDACAO_WHATSAPP",
-  "CANCELADO",
-  "EXPIRADO",
-];
-
-type Periodo = "hoje" | "7dias" | "mes" | "personalizado";
-
-function calcularIntervalo(periodo: Periodo, customFrom: string, customTo: string): { from?: string; to?: string } {
-  const agora = new Date();
-  if (periodo === "hoje") {
-    const inicio = new Date(agora);
-    inicio.setHours(0, 0, 0, 0);
-    return { from: inicio.toISOString(), to: agora.toISOString() };
-  }
-  if (periodo === "7dias") {
-    const inicio = new Date(agora.getTime() - 7 * 24 * 60 * 60 * 1000);
-    return { from: inicio.toISOString(), to: agora.toISOString() };
-  }
-  if (periodo === "mes") {
-    const inicio = new Date(agora.getFullYear(), agora.getMonth(), 1);
-    return { from: inicio.toISOString(), to: agora.toISOString() };
-  }
-  // personalizado
-  return {
-    from: customFrom ? new Date(customFrom + "T00:00:00").toISOString() : undefined,
-    to: customTo ? new Date(customTo + "T23:59:59").toISOString() : undefined,
-  };
-}
 
 // Ícones simples embutidos (sem dependência externa) — um por KPI.
 function IconInbox() {
@@ -126,42 +89,6 @@ function KpiCard({ icon, value, label, loading }: { icon: React.ReactNode; value
   );
 }
 
-function StatusMultiSelect({ selected, onChange }: { selected: string[]; onChange: (v: string[]) => void }) {
-  const [aberto, setAberto] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function onClickFora(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setAberto(false);
-    }
-    document.addEventListener("mousedown", onClickFora);
-    return () => document.removeEventListener("mousedown", onClickFora);
-  }, []);
-
-  function toggle(status: string) {
-    onChange(selected.includes(status) ? selected.filter((s) => s !== status) : [...selected, status]);
-  }
-
-  const label = selected.length === 0 ? "Todos os status" : `${selected.length} status selecionado(s)`;
-
-  return (
-    <div className="multiselect" ref={ref}>
-      <button type="button" className="multiselect-btn" onClick={() => setAberto((v) => !v)}>
-        {label} <span style={{ fontSize: 10 }}>▾</span>
-      </button>
-      {aberto && (
-        <div className="multiselect-panel">
-          {TODOS_STATUS.map((status) => (
-            <label key={status}>
-              <input type="checkbox" checked={selected.includes(status)} onChange={() => toggle(status)} />
-              {status}
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function DashboardClient() {
   const [periodo, setPeriodo] = useState<Periodo>("mes");
