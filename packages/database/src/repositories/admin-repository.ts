@@ -33,6 +33,44 @@ export class AdminRepository {
     return { total, porStatus };
   }
 
+  // Cartões de KPI do topo do dashboard novo — 5 contagens específicas, com
+  // filtro de período opcional (from/to, por created_at). "Limite validado"
+  // usa o nome legado "Limit" = Lemit (ver worker1-limit.ts): consideramos
+  // validado quando a Lemit devolveu algum dado de enriquecimento de verdade
+  // (data de nascimento ou telefone próprio dela), não só quando a etapa foi
+  // apenas pulada (Lemit desativada/sem CPF).
+  async dashboardKpis(params: { from?: Date; to?: Date }) {
+    const createdAt =
+      params.from || params.to
+        ? { createdAt: { ...(params.from ? { gte: params.from } : {}), ...(params.to ? { lte: params.to } : {}) } }
+        : {};
+
+    const [totalRecebidas, aguardandoProcessamento, limiteValidado, whatsappValidado, disparoConsultado] =
+      await Promise.all([
+        this.prisma.offer.count({ where: { ...createdAt } }),
+        this.prisma.offer.count({
+          where: {
+            ...createdAt,
+            status: { in: ["RECEBIDO", "PROCESSANDO_TELEFONE", "TELEFONE_ATUALIZADO", "VALIDANDO_WHATSAPP"] },
+          },
+        }),
+        this.prisma.offer.count({
+          where: { ...createdAt, OR: [{ dataNascimento: { not: null } }, { telefoneLemit: { not: null } }] },
+        }),
+        this.prisma.offer.count({ where: { ...createdAt, possuiWhatsapp: true } }),
+        this.prisma.offer.count({ where: { ...createdAt, status: "DISPARO_CONSULTADO" } }),
+      ]);
+
+    return {
+      totalRecebidas,
+      aguardandoProcessamento,
+      limiteValidado,
+      whatsappValidado,
+      disparoConsultado,
+      atualizadoEm: new Date().toISOString(),
+    };
+  }
+
   async dashboardPorWebhook() {
     const webhooks = await this.prisma.webhook.findMany();
     const results = [];
@@ -199,8 +237,14 @@ export class AdminRepository {
 
   // -- Ofertas / timeline (item 38) -------------------------------------------------
 
-  async listOffers(params: { status?: string; limit: number; offset: number }) {
-    const where = params.status ? { status: params.status as never } : {};
+  async listOffers(params: { status?: string; cpf?: string; limit: number; offset: number }) {
+    // Busca por CPF: parcial (contains), ignorando pontuação que o usuário
+    // possa ter digitado (a coluna cpf é salva só com dígitos).
+    const cpfDigits = params.cpf ? params.cpf.replace(/\D/g, "") : "";
+    const where = {
+      ...(params.status ? { status: params.status as never } : {}),
+      ...(cpfDigits ? { cpf: { contains: cpfDigits } } : {}),
+    };
     const [items, total] = await Promise.all([
       this.prisma.offer.findMany({
         where,

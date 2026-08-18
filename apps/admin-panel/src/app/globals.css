@@ -247,3 +247,247 @@ input, select {
   width: auto;
   margin-top: 3px;
 }
+
+/* ============================================================
+   Dashboard (redesenho) — cards de KPI, barra de filtros, indicador
+   de sincronização, e página de Ofertas (busca/paginação).
+   ============================================================ */
+
+.dash-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.dash-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.dash-filters select,
+.dash-filters input[type="date"] {
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+
+/* multi-select de status: botão que abre um painel com checkboxes */
+.multiselect {
+  position: relative;
+}
+.multiselect-btn {
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.multiselect-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px -12px rgba(11, 11, 11, 0.25);
+  padding: 10px;
+  min-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.multiselect-panel label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.multiselect-panel label:hover {
+  background: var(--page-plane);
+}
+.multiselect-panel input[type="checkbox"] {
+  width: auto;
+}
+
+/* indicador de sincronização */
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-good);
+  flex-shrink: 0;
+  animation: sync-pulse 2s ease-in-out infinite;
+}
+@keyframes sync-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* cards de KPI com elevação */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.kpi-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 4px 16px -8px rgba(11, 11, 11, 0.12);
+  transition: box-shadow 0.2s, transform 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.kpi-card:hover {
+  box-shadow: 0 10px 28px -10px rgba(11, 11, 11, 0.2);
+  transform: translateY(-2px);
+}
+.kpi-card .kpi-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--neutral-badge-bg);
+  color: var(--neutral-badge-text);
+}
+.kpi-card .kpi-value {
+  font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.kpi-card .kpi-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.kpi-card.skeleton .kpi-value {
+  background: var(--gridline);
+  color: transparent;
+  border-radius: 6px;
+  width: 60%;
+}
+.kpi-card.skeleton {
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* barra de ações da página de Ofertas */
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 20px;
+}
+.action-bar input[type="text"] {
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--page-plane);
+  color: var(--text-primary);
+  min-width: 200px;
+  flex: 1;
+}
+
+/* tabela responsiva: rolagem horizontal suave no mobile */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+.table-scroll table {
+  min-width: 640px;
+  border: none;
+}
+.table-scroll tbody tr {
+  transition: background 0.15s;
+}
+.table-scroll tbody tr:hover {
+  background: var(--page-plane);
+}
+
+/* paginação */
+.pagination-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pagination-controls button {
+  font: inherit;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.pagination-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pagination-controls select {
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+
+@media (max-width: 640px) {
+  .dash-header { flex-direction: column; align-items: stretch; }
+  .dash-filters { flex-direction: column; align-items: stretch; }
+  .dash-filters select, .dash-filters input[type="date"], .multiselect-btn { width: 100%; }
+  .action-bar { flex-direction: column; align-items: stretch; }
+  .action-bar input[type="text"] { min-width: 0; }
+  .kpi-grid { grid-template-columns: 1fr 1fr; }
+  .pagination-bar { flex-direction: column; align-items: stretch; }
+}
+

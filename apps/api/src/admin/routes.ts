@@ -15,6 +15,14 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       instance.addHook("onRequest", requireAdminAuth);
 
       instance.get("/dashboard", async () => adminRepo.dashboardSummary());
+      instance.get<{ Querystring: { from?: string; to?: string } }>("/dashboard/kpis", async (request) => {
+        const from = request.query.from ? new Date(request.query.from) : undefined;
+        const to = request.query.to ? new Date(request.query.to) : undefined;
+        return adminRepo.dashboardKpis({
+          from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+          to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+        });
+      });
       instance.get("/dashboard/webhooks", async () => adminRepo.dashboardPorWebhook());
       instance.get("/dashboard/bancos", async () => adminRepo.dashboardPorBanco());
       instance.get("/dashboard/endpoints", async () => adminRepo.dashboardPorEndpoint());
@@ -175,12 +183,12 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         async (request) => adminRepo.updateRoutingRule(request.params.id, request.body as never)
       );
 
-      instance.get<{ Querystring: { status?: string; limit?: string; offset?: string } }>(
+      instance.get<{ Querystring: { status?: string; cpf?: string; limit?: string; offset?: string } }>(
         "/offers",
         async (request) => {
           const limit = Math.min(Number(request.query.limit ?? 50) || 50, 200);
           const offset = Math.max(Number(request.query.offset ?? 0) || 0, 0);
-          return adminRepo.listOffers({ status: request.query.status, limit, offset });
+          return adminRepo.listOffers({ status: request.query.status, cpf: request.query.cpf, limit, offset });
         }
       );
 
