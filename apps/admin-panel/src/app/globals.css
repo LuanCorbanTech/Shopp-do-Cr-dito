@@ -1,6 +1,8 @@
-/* Paleta baseada na referência validada da skill de dataviz (light mode apenas —
-   simplificação deliberada para este painel interno; ver README). Cores de status
-   (good/warning/critical) são reservadas e sempre acompanhadas de texto, nunca só cor. */
+/* Paleta baseada na referência validada da skill de dataviz. Suporta os dois
+   temas via atributo data-theme na tag <html> — light é o padrão (mantém a
+   aparência que já existia), dark é opt-in (toggle na sidebar, com
+   preferência salva no localStorage). Cores de status (good/warning/critical)
+   são reservadas e sempre acompanhadas de texto, nunca só cor. */
 :root {
   --page-plane: #f9f9f7;
   --surface-1: #fcfcfb;
@@ -20,6 +22,25 @@
   --series-1: #2a78d6;
 }
 
+[data-theme="dark"] {
+  --page-plane: #0e1013;
+  --surface-1: #1a1d23;
+  --text-primary: #f2f2f0;
+  --text-secondary: #bcbab5;
+  --text-muted: #8f8d87;
+  --border: rgba(255, 255, 255, 0.14);
+  --gridline: #2d3038;
+
+  --status-good: #34c759;
+  --status-warning: #ffcc4d;
+  --status-serious: #ff9770;
+  --status-critical: #ff6b6b;
+  --neutral-badge-bg: #1b2c42;
+  --neutral-badge-text: #8ec1ff;
+
+  --series-1: #5aa2f5;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -29,6 +50,7 @@ body {
   background: var(--page-plane);
   color: var(--text-primary);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 a {
@@ -650,6 +672,12 @@ input, select {
 .sidebar-perfil-role {
   font-size: 11px;
   color: var(--text-muted);
+}
+.sidebar-credito {
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.7;
+  margin-top: 2px;
 }
 .sidebar-perfil-sair {
   border: none;

@@ -10,10 +10,12 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const from = searchParams.get("from");
   const to = searchParams.get("to");
+  const status = searchParams.get("status");
 
   const query = new URLSearchParams();
   if (from) query.set("from", from);
   if (to) query.set("to", to);
+  if (status) query.set("status", status);
   const qs = query.toString();
 
   try {

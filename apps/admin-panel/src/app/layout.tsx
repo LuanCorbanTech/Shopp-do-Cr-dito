@@ -19,6 +19,17 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
 
   return (
     <html lang="pt-BR">
+      <head>
+        {/* Aplica o tema salvo ANTES da página pintar na tela — sem isso, toda
+            vez que alguém com tema escuro salvo recarregasse a página, veria um
+            "flash" de tela clara por uma fração de segundo antes do React
+            hidratar e corrigir. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('admin-theme');if(t==='dark'){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body>
         <AppShell usuario={usuario}>{children}</AppShell>
       </body>

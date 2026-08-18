@@ -14,21 +14,28 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
     async (instance) => {
       instance.addHook("onRequest", requireAdminAuth);
 
-      instance.get("/dashboard", async () => adminRepo.dashboardSummary());
-      instance.get<{ Querystring: { from?: string; to?: string } }>("/dashboard/kpis", async (request) => {
+      instance.get<{ Querystring: { status?: string } }>("/dashboard", async (request) => {
+        const statuses = request.query.status ? request.query.status.split(",").filter(Boolean) : undefined;
+        return adminRepo.dashboardSummary({ statuses });
+      });
+      instance.get<{ Querystring: { from?: string; to?: string; status?: string } }>("/dashboard/kpis", async (request) => {
         const from = request.query.from ? new Date(request.query.from) : undefined;
         const to = request.query.to ? new Date(request.query.to) : undefined;
+        const statuses = request.query.status ? request.query.status.split(",").filter(Boolean) : undefined;
         return adminRepo.dashboardKpis({
           from: from && !Number.isNaN(from.getTime()) ? from : undefined,
           to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+          statuses,
         });
       });
-      instance.get<{ Querystring: { from?: string; to?: string } }>("/dashboard/timeseries", async (request) => {
+      instance.get<{ Querystring: { from?: string; to?: string; status?: string } }>("/dashboard/timeseries", async (request) => {
         const from = request.query.from ? new Date(request.query.from) : undefined;
         const to = request.query.to ? new Date(request.query.to) : undefined;
+        const statuses = request.query.status ? request.query.status.split(",").filter(Boolean) : undefined;
         return adminRepo.dashboardTimeseries({
           from: from && !Number.isNaN(from.getTime()) ? from : undefined,
           to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+          statuses,
         });
       });
       instance.get("/dashboard/webhooks", async () => adminRepo.dashboardPorWebhook());

@@ -45,6 +45,32 @@ export async function toggleWebhook(id: string, ativo: boolean): Promise<void> {
   revalidatePath("/webhooks");
 }
 
+// Variantes que devolvem um resultado em vez de confiar em redirect/revalidatePath
+// — usadas pelo WebhooksClient.tsx (modal), que precisa saber na hora se deu
+// certo pra atualizar a lista sem recarregar a página inteira.
+export async function toggleWebhookAction(id: string, ativo: boolean): Promise<{ ok: boolean; mensagem?: string }> {
+  try {
+    await adminApiFetch(`/admin/webhooks/${id}`, { method: "PATCH", body: JSON.stringify({ ativo }) });
+    return { ok: true };
+  } catch (e) {
+    const mensagem = e instanceof AdminApiError ? e.friendlyMessage ?? e.message : "Não foi possível atualizar.";
+    return { ok: false, mensagem };
+  }
+}
+
+export async function deleteWebhookAction(id: string): Promise<{ ok: boolean; mensagem?: string }> {
+  try {
+    await adminApiFetch(`/admin/webhooks/${id}`, { method: "DELETE" });
+    return { ok: true };
+  } catch (e) {
+    const mensagem =
+      e instanceof AdminApiError && e.status === 409
+        ? "Esse parceiro já recebeu leads e não pode ser excluído. Use \"Desativar\" em vez disso."
+        : "Não foi possível excluir.";
+    return { ok: false, mensagem };
+  }
+}
+
 // Só exclui de fato se o parceiro nunca recebeu nenhum lead (a API bloqueia com
 // 409 caso contrário). Quando bloqueado, redireciona de volta pra página com uma
 // mensagem de erro em vez de deixar o Next.js quebrar com uma tela de erro genérica.

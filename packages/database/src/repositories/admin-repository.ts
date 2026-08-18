@@ -25,8 +25,9 @@ function mascararCredencial(valor: unknown): {
 export class AdminRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async dashboardSummary() {
-    const rows = await this.prisma.offer.groupBy({ by: ["status"], _count: { _all: true } });
+  async dashboardSummary(params: { statuses?: string[] } = {}) {
+    const where = params.statuses && params.statuses.length > 0 ? { status: { in: params.statuses as never[] } } : {};
+    const rows = await this.prisma.offer.groupBy({ by: ["status"], where, _count: { _all: true } });
     const porStatus: Record<string, number> = {};
     for (const row of rows) {
       porStatus[row.status] = row._count._all;
@@ -35,39 +36,65 @@ export class AdminRepository {
     return { total, porStatus };
   }
 
-  // Cartões de KPI do topo do dashboard novo — 5 contagens específicas, com
-  // filtro de período opcional (from/to, por created_at). "Limite validado"
-  // usa o nome legado "Limit" = Lemit (ver worker1-limit.ts): consideramos
-  // validado quando a Lemit devolveu algum dado de enriquecimento de verdade
-  // (data de nascimento ou telefone próprio dela), não só quando a etapa foi
-  // apenas pulada (Lemit desativada/sem CPF).
-  async dashboardKpis(params: { from?: Date; to?: Date }) {
+  // Cartões de KPI do topo do dashboard novo — 6 contagens específicas, com
+  // filtro de período opcional (from/to, por created_at) e filtro opcional de
+  // status (multi-seleção do dashboard — quando ativo, re-filtra TODOS os
+  // cards, não só uma tabela auxiliar). "Limite validado" usa o nome legado
+  // "Limit" = Lemit (ver worker1-limit.ts): consideramos validado quando a
+  // Lemit devolveu algum dado de enriquecimento de verdade (data de
+  // nascimento ou telefone próprio dela), não só quando a etapa foi apenas
+  // pulada (Lemit desativada/sem CPF).
+  //
+  // Quando o filtro de status está ativo, cada card que já é baseado em
+  // status específico (aguardandoProcessamento, aguardandoConsultaDisparo,
+  // disparoConsultado) faz a INTERSEÇÃO entre seus status "naturais" e os
+  // selecionados pelo usuário — ex.: se o usuário desmarcar
+  // AGUARDANDO_DISPARO no filtro, esse card correspondente zera. Os cards que
+  // não são baseados em status (totalRecebidas, limiteValidado,
+  // whatsappValidado) só recebem o filtro como uma condição A MAIS (E lógico).
+  async dashboardKpis(params: { from?: Date; to?: Date; statuses?: string[] }) {
     const createdAt =
       params.from || params.to
         ? { createdAt: { ...(params.from ? { gte: params.from } : {}), ...(params.to ? { lte: params.to } : {}) } }
         : {};
+    const filtroAtivo = params.statuses && params.statuses.length > 0 ? params.statuses : null;
 
-    const [totalRecebidas, aguardandoProcessamento, limiteValidado, whatsappValidado, disparoConsultado] =
-      await Promise.all([
-        this.prisma.offer.count({ where: { ...createdAt } }),
-        this.prisma.offer.count({
-          where: {
-            ...createdAt,
-            status: { in: ["RECEBIDO", "PROCESSANDO_TELEFONE", "TELEFONE_ATUALIZADO", "VALIDANDO_WHATSAPP"] },
-          },
-        }),
-        this.prisma.offer.count({
-          where: { ...createdAt, OR: [{ dataNascimento: { not: null } }, { telefoneLemit: { not: null } }] },
-        }),
-        this.prisma.offer.count({ where: { ...createdAt, possuiWhatsapp: true } }),
-        this.prisma.offer.count({ where: { ...createdAt, status: "DISPARO_CONSULTADO" } }),
-      ]);
+    function intersecta(candidatos: string[]): string[] {
+      if (!filtroAtivo) return candidatos;
+      return candidatos.filter((c) => filtroAtivo!.includes(c));
+    }
+
+    const STATUS_PROCESSAMENTO = ["RECEBIDO", "PROCESSANDO_TELEFONE", "TELEFONE_ATUALIZADO", "VALIDANDO_WHATSAPP"];
+    const filtroExtra = filtroAtivo ? { status: { in: filtroAtivo as never[] } } : {};
+
+    const [
+      totalRecebidas,
+      aguardandoProcessamento,
+      limiteValidado,
+      whatsappValidado,
+      aguardandoConsultaDisparo,
+      disparoConsultado,
+    ] = await Promise.all([
+      this.prisma.offer.count({ where: { ...createdAt, ...filtroExtra } }),
+      this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(STATUS_PROCESSAMENTO) as never[] } } }),
+      this.prisma.offer.count({
+        where: {
+          ...createdAt,
+          OR: [{ dataNascimento: { not: null } }, { telefoneLemit: { not: null } }],
+          ...filtroExtra,
+        },
+      }),
+      this.prisma.offer.count({ where: { ...createdAt, possuiWhatsapp: true, ...filtroExtra } }),
+      this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["AGUARDANDO_DISPARO"]) as never[] } } }),
+      this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["DISPARO_CONSULTADO"]) as never[] } } }),
+    ]);
 
     return {
       totalRecebidas,
       aguardandoProcessamento,
       limiteValidado,
       whatsappValidado,
+      aguardandoConsultaDisparo,
       disparoConsultado,
       atualizadoEm: new Date().toISOString(),
     };
@@ -77,9 +104,15 @@ export class AdminRepository {
   // "processado" (chegou a algum resultado, bom ou ruim — não está mais nas
   // etapas iniciais) por dia, dentro do período filtrado. Sempre agrupa por
   // dia (não por hora) para manter simples independente do período escolhido.
-  async dashboardTimeseries(params: { from?: Date; to?: Date }) {
+  // statuses (opcional): mesmo filtro multi-seleção do dashboard — quando
+  // ativo, só conta ofertas cujo status está na lista selecionada.
+  async dashboardTimeseries(params: { from?: Date; to?: Date; statuses?: string[] }) {
     const from = params.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const to = params.to ?? new Date();
+    const filtroStatus =
+      params.statuses && params.statuses.length > 0
+        ? Prisma.sql`AND status IN (${Prisma.join(params.statuses)})`
+        : Prisma.empty;
 
     const rows = await this.prisma.$queryRaw<{ dia: Date; recebidas: bigint; processadas: bigint }[]>(
       Prisma.sql`
@@ -90,7 +123,7 @@ export class AdminRepository {
             WHERE status NOT IN ('RECEBIDO', 'PROCESSANDO_TELEFONE', 'TELEFONE_ATUALIZADO', 'VALIDANDO_WHATSAPP')
           ) AS processadas
         FROM offers
-        WHERE created_at >= ${from} AND created_at <= ${to}
+        WHERE created_at >= ${from} AND created_at <= ${to} ${filtroStatus}
         GROUP BY dia
         ORDER BY dia ASC
       `

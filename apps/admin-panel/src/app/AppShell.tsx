@@ -51,14 +51,6 @@ function IconPlug() {
     </svg>
   );
 }
-function IconServer() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="7" rx="1.5" /><rect x="3" y="13" width="18" height="7" rx="1.5" />
-      <path d="M7 7.5h.01M7 16.5h.01" />
-    </svg>
-  );
-}
 function IconUsers() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -76,7 +68,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/webhooks", label: "Webhooks", icon: <IconWebhook /> },
       { href: "/integracoes", label: "Integrações", icon: <IconPlug /> },
-      { href: "/endpoints", label: "Endpoints", icon: <IconServer /> },
+      // "Endpoints" escondido de propósito (pedido explícito) — a tela
+      // continua existindo e acessível por URL direta, só não aparece no
+      // menu por não ter uso ativo no momento.
     ],
   },
   { titulo: "Administração", items: [{ href: "/usuarios", label: "Usuários", icon: <IconUsers /> }] },
@@ -94,6 +88,7 @@ function tituloDaPagina(pathname: string): string {
 export function AppShell({ children, usuario }: { children: ReactNode; usuario: SessaoUsuario | null }) {
   const [colapsada, setColapsada] = useState(false);
   const [drawerAberto, setDrawerAberto] = useState(false);
+  const [temaEscuro, setTemaEscuro] = useState(false);
   const pathname = usePathname();
 
   // Lembra a preferência de expandido/recolhido entre sessões.
@@ -104,6 +99,24 @@ export function AppShell({ children, usuario }: { children: ReactNode; usuario: 
   useEffect(() => {
     window.localStorage.setItem("sidebar-colapsada", colapsada ? "1" : "0");
   }, [colapsada]);
+
+  // Sincroniza o estado do botão com o que o script anti-flash (ver
+  // layout.tsx) já aplicou no <html> antes da hidratação.
+  useEffect(() => {
+    setTemaEscuro(document.documentElement.getAttribute("data-theme") === "dark");
+  }, []);
+
+  function alternarTema() {
+    const novoEscuro = !temaEscuro;
+    setTemaEscuro(novoEscuro);
+    if (novoEscuro) {
+      document.documentElement.setAttribute("data-theme", "dark");
+      window.localStorage.setItem("admin-theme", "dark");
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+      window.localStorage.setItem("admin-theme", "light");
+    }
+  }
 
   // Fecha o drawer mobile automaticamente ao navegar.
   useEffect(() => {
@@ -151,6 +164,7 @@ export function AppShell({ children, usuario }: { children: ReactNode; usuario: 
             <div className="sidebar-perfil-info">
               <div className="sidebar-perfil-nome">{usuario.nome}</div>
               <div className="sidebar-perfil-role">{ROLE_LABEL[usuario.role]}</div>
+              <div className="sidebar-credito">Desenvolvido por CorbanTech</div>
             </div>
             <form action={logoutAction}>
               <button type="submit" className="sidebar-perfil-sair" title="Sair" aria-label="Sair">
@@ -161,6 +175,15 @@ export function AppShell({ children, usuario }: { children: ReactNode; usuario: 
             </form>
           </div>
         )}
+
+        <button type="button" className="sidebar-toggle" onClick={alternarTema} aria-label={temaEscuro ? "Ativar tema claro" : "Ativar tema escuro"}>
+          {temaEscuro ? (
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
+          )}
+          <span className="sidebar-label">{temaEscuro ? "Tema claro" : "Tema escuro"}</span>
+        </button>
 
         <button
           type="button"

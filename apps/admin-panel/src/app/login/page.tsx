@@ -28,7 +28,7 @@ export default function LoginPage({ searchParams }: { searchParams: { erro?: str
         </p>
 
         {searchParams.erro && (
-          <p className="empty-state" style={{ borderColor: "#c0392b", color: "#c0392b", marginBottom: 16 }}>
+          <p className="empty-state" style={{ borderColor: "var(--status-critical)", color: "var(--status-critical)", marginBottom: 16 }}>
             {searchParams.erro}
           </p>
         )}

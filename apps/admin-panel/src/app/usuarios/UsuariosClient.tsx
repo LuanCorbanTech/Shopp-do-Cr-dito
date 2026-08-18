@@ -48,7 +48,7 @@ function NovoUsuarioModal({ onFechar, onCriado }: { onFechar: () => void; onCria
         <h2 style={{ marginTop: 0 }}>Novo usuário</h2>
 
         {erro && (
-          <p className="empty-state" style={{ borderColor: "#c0392b", color: "#c0392b" }}>
+          <p className="empty-state" style={{ borderColor: "var(--status-critical)", color: "var(--status-critical)" }}>
             {erro}
           </p>
         )}
@@ -125,7 +125,7 @@ function EditarUsuarioModal({
         <h2 style={{ marginTop: 0 }}>Editar usuário</h2>
 
         {erro && (
-          <p className="empty-state" style={{ borderColor: "#c0392b", color: "#c0392b" }}>
+          <p className="empty-state" style={{ borderColor: "var(--status-critical)", color: "var(--status-critical)" }}>
             {erro}
           </p>
         )}

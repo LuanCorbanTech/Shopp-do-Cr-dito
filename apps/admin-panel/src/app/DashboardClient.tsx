@@ -10,6 +10,7 @@ interface KpiData {
   aguardandoProcessamento: number;
   limiteValidado: number;
   whatsappValidado: number;
+  aguardandoConsultaDisparo: number;
   disparoConsultado: number;
   atualizadoEm: string;
 }
@@ -107,6 +108,13 @@ function IconSend() {
     </svg>
   );
 }
+function IconHourglass() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 2h12M6 22h12" /><path d="M6 2c0 6 6 7 6 10s-6 4-6 10M18 2c0 6-6 7-6 10s6 4 6 10" />
+    </svg>
+  );
+}
 
 function KpiCard({ icon, value, label, loading }: { icon: React.ReactNode; value: number | null; label: string; loading: boolean }) {
   return (
@@ -176,10 +184,14 @@ export function DashboardClient() {
       const qs = new URLSearchParams();
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
+      // Pedido explícito: o filtro de status precisa afetar o Dashboard
+      // inteiro (cards + gráficos), não só uma tabela auxiliar — por isso
+      // vai junto em TODAS as 3 chamadas abaixo.
+      if (statusSelecionados.length > 0) qs.set("status", statusSelecionados.join(","));
 
       const [kpisResp, statusResp, serieResp] = await Promise.all([
         fetch(`/api/dashboard-kpis?${qs.toString()}`, { cache: "no-store" }),
-        fetch(`/api/dashboard-summary`, { cache: "no-store" }),
+        fetch(`/api/dashboard-summary?${qs.toString()}`, { cache: "no-store" }),
         fetch(`/api/dashboard-timeseries?${qs.toString()}`, { cache: "no-store" }),
       ]);
       const kpisData: KpiData = await kpisResp.json();
@@ -194,7 +206,7 @@ export function DashboardClient() {
       setCarregando(false);
       setContagem(REFRESH_SECONDS);
     }
-  }, [periodo, customFrom, customTo]);
+  }, [periodo, customFrom, customTo, statusSelecionados]);
 
   // Carrega de novo sempre que o período (ou datas personalizadas) mudar.
   useEffect(() => {
@@ -262,6 +274,7 @@ export function DashboardClient() {
         <KpiCard icon={<IconClock />} value={kpis?.aguardandoProcessamento ?? null} label="Aguardando processamento" loading={carregando && !kpis} />
         <KpiCard icon={<IconShield />} value={kpis?.limiteValidado ?? null} label="Com limite validado (Lemit)" loading={carregando && !kpis} />
         <KpiCard icon={<IconWhatsapp />} value={kpis?.whatsappValidado ?? null} label="Com WhatsApp validado" loading={carregando && !kpis} />
+        <KpiCard icon={<IconHourglass />} value={kpis?.aguardandoConsultaDisparo ?? null} label="Aguardando consulta de disparo" loading={carregando && !kpis} />
         <KpiCard icon={<IconSend />} value={kpis?.disparoConsultado ?? null} label="Com disparo consultado" loading={carregando && !kpis} />
       </div>
 

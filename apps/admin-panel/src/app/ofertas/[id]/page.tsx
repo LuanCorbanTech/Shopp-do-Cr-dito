@@ -133,7 +133,7 @@ export default async function OfertaDetailPage({ params }: { params: { id: strin
               <span className="ts">{new Date(event.createdAt).toLocaleString("pt-BR")}</span>
               {event.etapa} — {event.resultado} (tentativa {event.tentativa})
               {detalheErro && (
-                <div style={{ color: "#c0392b", fontSize: 13, marginTop: 4 }}>Motivo: {String(detalheErro)}</div>
+                <div style={{ color: "var(--status-critical)", fontSize: 13, marginTop: 4 }}>Motivo: {String(detalheErro)}</div>
               )}
               {event.response && (
                 <details style={{ marginTop: 4 }}>
