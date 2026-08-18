@@ -28,7 +28,7 @@ export default async function EndpointsPage() {
     <div>
       <h1>Endpoints de disparo</h1>
       <p className="subtitle">
-        Cada endpoint representa um destino técnico com capacidade própria (item 18 do escopo).
+        Cada endpoint representa um destino técnico com capacidade própria.
       </p>
 
       {error && <p className="empty-state">Não foi possível carregar: {error}</p>}

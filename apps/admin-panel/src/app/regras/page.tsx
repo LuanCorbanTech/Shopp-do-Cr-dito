@@ -35,7 +35,7 @@ export default async function RegrasPage() {
       <h1>Regras de roteamento</h1>
       <p className="subtitle">
         A regra mais específica (menor número de prioridade) que casar com a oferta vence
-        (itens 15-17 do escopo). Ofertas sem regra compatível ficam em SEM_ROTA_CONFIGURADA e
+        (Regras de Roteamento). Ofertas sem regra compatível ficam em SEM_ROTA_CONFIGURADA e
         voltam ao fluxo automaticamente quando uma regra for cadastrada.
       </p>
 

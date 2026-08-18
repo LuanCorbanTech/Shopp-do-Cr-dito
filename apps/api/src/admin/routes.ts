@@ -57,7 +57,7 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       instance.get("/integrations/credenciais", async () => adminRepo.getCredenciaisIntegracoes());
 
       instance.post<{
-        Body: { integracao?: string; apiKey?: string; baseUrl?: string };
+        Body: { integracao?: string; apiKey?: string; baseUrl?: string; intervaloSegundos?: number };
       }>("/integrations/credenciais", async (request, reply) => {
         const body = request.body ?? {};
         const chaveMap: Record<string, "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS"> = {
@@ -69,7 +69,11 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           reply.code(400);
           return { error: "integracao_invalida", validos: Object.keys(chaveMap) };
         }
-        await adminRepo.salvarCredenciaisIntegracao(chave, { apiKey: body.apiKey, baseUrl: body.baseUrl });
+        await adminRepo.salvarCredenciaisIntegracao(chave, {
+          apiKey: body.apiKey,
+          baseUrl: body.baseUrl,
+          intervaloSegundos: body.intervaloSegundos,
+        });
         const atualizado = await adminRepo.getCredenciaisIntegracoes();
         return atualizado[body.integracao as "lemit" | "whatsapp"];
       });
@@ -204,6 +208,23 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           const limit = Math.min(Number(request.query.limit ?? 50) || 50, 200);
           const offset = Math.max(Number(request.query.offset ?? 0) || 0, 0);
           return adminRepo.listOffers({ status: request.query.status, cpf: request.query.cpf, limit, offset });
+        }
+      );
+
+      // Sem paginação — pro módulo de Relatórios (baixa tudo que bate com o
+      // filtro de uma vez, pra virar planilha). Aceita múltiplos status
+      // separados por vírgula, diferente de /offers acima (que só aceita 1).
+      instance.get<{ Querystring: { status?: string; from?: string; to?: string } }>(
+        "/offers/export",
+        async (request) => {
+          const statuses = request.query.status ? request.query.status.split(",").filter(Boolean) : undefined;
+          const from = request.query.from ? new Date(request.query.from) : undefined;
+          const to = request.query.to ? new Date(request.query.to) : undefined;
+          return adminRepo.listOffersParaRelatorio({
+            statuses,
+            from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+            to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+          });
         }
       );
 

@@ -68,31 +68,83 @@ const whatsappService = {
   },
 };
 
-const hyperflowService = createHyperflowService();
-
-function loop(name: string, intervalMs: number, run: () => Promise<number>): void {
-  let running = false;
-  setInterval(() => {
-    if (running) return; // evita empilhar execuções se uma rodada demorar mais que o intervalo
-    running = true;
-    run()
-      .then((count) => {
-        if (count > 0) logger.info({ worker: name, processadas: count }, "Ciclo do worker concluído");
-      })
-      .catch((error) => logger.error({ worker: name, error }, "Erro não tratado no ciclo do worker"))
-      .finally(() => {
-        running = false;
-      });
-  }, intervalMs);
-  logger.info({ worker: name, intervalMs }, "Worker iniciado");
+// Intervalo em segundos configurável no painel ("Integrações"), salvo junto
+// com a credencial de cada serviço (mesmo card, mesmo JSON em
+// integration_configs) — lido do banco A CADA CICLO, igual as credenciais.
+// Fallback pro valor do .env (WORKER1_INTERVAL_MS/WORKER2_INTERVAL_MS) se
+// ainda não foi configurado no painel, ou se a leitura falhar por algum
+// motivo (nunca deixa o worker travado por causa disso).
+async function resolverIntervaloMs(
+  chave: "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS",
+  envDefaultMs: number
+): Promise<number> {
+  try {
+    const config = await prisma.integrationConfig.findUnique({ where: { chave } });
+    const valor = (config?.valor ?? {}) as { intervaloSegundos?: number };
+    if (typeof valor.intervaloSegundos === "number" && valor.intervaloSegundos > 0) {
+      return valor.intervaloSegundos * 1000;
+    }
+  } catch (error) {
+    logger.warn({ chave, error }, "Falha ao ler intervalo configurado no painel — usando o padrão do .env");
+  }
+  return envDefaultMs;
 }
 
-loop("worker1-limit", Number(process.env.WORKER1_INTERVAL_MS ?? 5000), () =>
-  runLimitWorkerOnce({ phonePort: repo, configPort: repo, limitService })
+const hyperflowService = createHyperflowService();
+
+// "resolverIntervalo" (opcional): quando informado, o próximo ciclo é
+// agendado com o valor que ele devolver (consultado de novo a cada ciclo) —
+// em vez de setInterval (que fixa o intervalo uma vez só no arranque e não
+// dá pra mudar depois sem reiniciar o processo), usa setTimeout recursivo:
+// só agenda o próximo ciclo depois que o atual termina, e pode reconsultar o
+// intervalo desejado a cada vez.
+function loop(
+  name: string,
+  intervalMsPadrao: number,
+  run: () => Promise<number>,
+  resolverIntervalo?: () => Promise<number>
+): void {
+  let running = false;
+
+  async function tick() {
+    if (running) {
+      // Ciclo anterior ainda rodando (raro) — tenta de novo em breve, sem
+      // empilhar execuções concorrentes.
+      setTimeout(tick, intervalMsPadrao);
+      return;
+    }
+    running = true;
+    try {
+      const count = await run();
+      if (count > 0) logger.info({ worker: name, processadas: count }, "Ciclo do worker concluído");
+    } catch (error) {
+      logger.error({ worker: name, error }, "Erro não tratado no ciclo do worker");
+    } finally {
+      running = false;
+      const proximoIntervalo = resolverIntervalo ? await resolverIntervalo().catch(() => intervalMsPadrao) : intervalMsPadrao;
+      setTimeout(tick, proximoIntervalo);
+    }
+  }
+
+  logger.info({ worker: name, intervalMsPadrao }, "Worker iniciado");
+  setTimeout(tick, intervalMsPadrao);
+}
+
+const WORKER1_INTERVAL_MS_PADRAO = Number(process.env.WORKER1_INTERVAL_MS ?? 5000);
+const WORKER2_INTERVAL_MS_PADRAO = Number(process.env.WORKER2_INTERVAL_MS ?? 5000);
+
+loop(
+  "worker1-limit",
+  WORKER1_INTERVAL_MS_PADRAO,
+  () => runLimitWorkerOnce({ phonePort: repo, configPort: repo, limitService }),
+  () => resolverIntervaloMs("LEMIT_CREDENCIAIS", WORKER1_INTERVAL_MS_PADRAO)
 );
 
-loop("worker2-whatsapp", Number(process.env.WORKER2_INTERVAL_MS ?? 5000), () =>
-  runWhatsappWorkerOnce({ whatsappPort: repo, configPort: repo, whatsappService })
+loop(
+  "worker2-whatsapp",
+  WORKER2_INTERVAL_MS_PADRAO,
+  () => runWhatsappWorkerOnce({ whatsappPort: repo, configPort: repo, whatsappService }),
+  () => resolverIntervaloMs("WHATSAPP_VALIDACAO_CREDENCIAIS", WORKER2_INTERVAL_MS_PADRAO)
 );
 
 // worker3-routing (motor de roteamento interno) parado (17/08) — substituído pelo

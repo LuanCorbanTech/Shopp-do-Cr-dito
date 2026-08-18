@@ -14,6 +14,7 @@ interface CredencialStatus {
   apiKeyConfigurada: boolean;
   apiKeyMascarada: string | null;
   baseUrl: string | null;
+  intervaloSegundos: number | null;
 }
 
 interface CredenciaisIntegracoes {
@@ -42,7 +43,7 @@ export default async function IntegracoesPage() {
     <div>
       <h1>Integrações / Validação de telefone</h1>
       <p className="subtitle">
-        Controle da consulta à API Limit (itens 5-11 do escopo). Quando desativada, o telefone
+        Controle da consulta à API Limit (Lemit). Quando desativada, o telefone
         original é usado sem nenhuma chamada externa — as ofertas nunca ficam presas.
       </p>
 
@@ -97,12 +98,16 @@ export default async function IntegracoesPage() {
             integracao="lemit"
             status={credenciais.lemit}
             baseUrlPlaceholder="https://api.lemit.com.br (padrão, deixe em branco)"
+            labelIntervalo="Frequência da CRON de Consulta Lemit (em segundos)"
+            intervaloPadrao={5}
           />
           <CredencialForm
             titulo="CorbanTech (validação de WhatsApp)"
             integracao="whatsapp"
             status={credenciais.whatsapp}
             baseUrlPlaceholder="https://SEU-DOMINIO (raiz da API da CorbanTech)"
+            labelIntervalo="Frequência da CRON de Validação de WhatsApp (em segundos)"
+            intervaloPadrao={5}
           />
         </div>
       )}
@@ -115,11 +120,15 @@ function CredencialForm({
   integracao,
   status,
   baseUrlPlaceholder,
+  labelIntervalo,
+  intervaloPadrao,
 }: {
   titulo: string;
   integracao: "lemit" | "whatsapp";
   status: CredencialStatus;
   baseUrlPlaceholder: string;
+  labelIntervalo: string;
+  intervaloPadrao: number;
 }) {
   return (
     <div className="card">
@@ -160,6 +169,23 @@ function CredencialForm({
             placeholder={baseUrlPlaceholder}
             style={{ width: "100%" }}
           />
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <label htmlFor={`${integracao}-intervaloSegundos`} style={{ display: "block", marginBottom: 4 }}>
+            {labelIntervalo}
+          </label>
+          <input
+            id={`${integracao}-intervaloSegundos`}
+            name="intervaloSegundos"
+            type="number"
+            min={1}
+            step={1}
+            defaultValue={status.intervaloSegundos ?? intervaloPadrao}
+            style={{ width: "100%" }}
+          />
+          <p className="field-help" style={{ marginTop: 4 }}>
+            Vale a partir do próximo ciclo — não precisa reiniciar nada no servidor.
+          </p>
         </div>
         <button type="submit">Salvar</button>
       </form>
