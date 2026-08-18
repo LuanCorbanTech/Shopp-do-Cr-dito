@@ -308,7 +308,7 @@ export class AdminRepository {
   // Sessão por token opaco em vez de JWT — mais simples de revogar (só apagar a
   // linha), adequado pro volume baixo de um painel interno.
 
-  private semSenha(user: { senhaHash: string } & Record<string, unknown>) {
+  private semSenha<T extends { senhaHash: string }>(user: T): Omit<T, "senhaHash"> {
     const { senhaHash: _senhaHash, ...resto } = user;
     return resto;
   }
