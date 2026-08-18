@@ -130,6 +130,7 @@ export function OfertasClient() {
             <tr>
               <th>Nome</th>
               <th>CPF</th>
+              <th>Banco</th>
               <th>WhatsApp</th>
               <th>Status</th>
               <th></th>
@@ -138,7 +139,7 @@ export function OfertasClient() {
           <tbody>
             {carregando && !data && (
               <tr>
-                <td colSpan={5} className="empty-state">
+                <td colSpan={6} className="empty-state">
                   Carregando…
                 </td>
               </tr>
@@ -149,6 +150,7 @@ export function OfertasClient() {
                 <tr key={offer.id}>
                   <td>{offer.nome ?? "—"}</td>
                   <td>{offer.cpf ?? "—"}</td>
+                  <td>{offer.bancoAutorizado ?? ""}</td>
                   <td>
                     {telefone ?? "—"}
                     {offer.possuiWhatsapp === true && (
@@ -175,7 +177,7 @@ export function OfertasClient() {
             })}
             {data && data.items.length === 0 && (
               <tr>
-                <td colSpan={5} className="empty-state">
+                <td colSpan={6} className="empty-state">
                   Nenhuma oferta encontrada.
                 </td>
               </tr>
