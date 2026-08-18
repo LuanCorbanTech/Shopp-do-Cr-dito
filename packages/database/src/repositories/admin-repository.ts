@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
+import { hashSenha, verificarSenha, gerarSenhaTemporaria, gerarTokenSessao } from "@plataforma-ofertas/shared";
 
 // Nunca devolve a credencial em texto puro pro painel — só se está configurada e os
 // últimos 4 caracteres, pra confirmar visualmente que é a chave certa sem expor o resto.
@@ -300,5 +301,104 @@ export class AdminRepository {
       this.prisma.phoneValidation.findMany({ where: { offerId }, orderBy: { createdAt: "asc" } }),
     ]);
     return { offer, processingEvents, dispatches, phoneValidations };
+  }
+
+  // -- Usuários do painel / autenticação -------------------------------------------
+  // Login individual (antes só existia o token compartilhado ADMIN_API_TOKEN).
+  // Sessão por token opaco em vez de JWT — mais simples de revogar (só apagar a
+  // linha), adequado pro volume baixo de um painel interno.
+
+  private semSenha(user: { senhaHash: string } & Record<string, unknown>) {
+    const { senhaHash: _senhaHash, ...resto } = user;
+    return resto;
+  }
+
+  async listarUsuarios() {
+    const usuarios = await this.prisma.adminUser.findMany({ orderBy: { createdAt: "asc" } });
+    return usuarios.map((u) => this.semSenha(u));
+  }
+
+  async criarUsuario(params: { nome: string; email: string; senha: string; role: "ADMINISTRADOR" | "OPERADOR" | "VISUALIZADOR" }) {
+    const senhaHash = await hashSenha(params.senha);
+    const usuario = await this.prisma.adminUser.create({
+      data: { nome: params.nome, email: params.email.toLowerCase().trim(), senhaHash, role: params.role },
+    });
+    return this.semSenha(usuario);
+  }
+
+  async atualizarUsuario(
+    id: string,
+    params: { nome?: string; email?: string; role?: "ADMINISTRADOR" | "OPERADOR" | "VISUALIZADOR"; ativo?: boolean }
+  ) {
+    const usuario = await this.prisma.adminUser.update({
+      where: { id },
+      data: {
+        ...(params.nome !== undefined ? { nome: params.nome } : {}),
+        ...(params.email !== undefined ? { email: params.email.toLowerCase().trim() } : {}),
+        ...(params.role !== undefined ? { role: params.role } : {}),
+        ...(params.ativo !== undefined ? { ativo: params.ativo } : {}),
+      },
+    });
+    // Desativou o usuário? Derruba as sessões ativas dele na hora, em vez de
+    // esperar expirar sozinha.
+    if (params.ativo === false) {
+      await this.prisma.adminSession.deleteMany({ where: { userId: id } });
+    }
+    return this.semSenha(usuario);
+  }
+
+  // Gera uma senha temporária nova e devolve em texto puro (só nesse momento —
+  // nunca mais fica recuperável depois, só o hash fica salvo). Usado pelo botão
+  // "Gerar senha nova" no painel.
+  async gerarNovaSenhaUsuario(id: string): Promise<string> {
+    const senhaTemporaria = gerarSenhaTemporaria();
+    const senhaHash = await hashSenha(senhaTemporaria);
+    await this.prisma.adminUser.update({ where: { id }, data: { senhaHash } });
+    // Qualquer sessão ativa continua valendo (trocar senha não derruba sessão
+    // já aberta) — só a próxima tentativa de login usa a senha nova.
+    return senhaTemporaria;
+  }
+
+  async verificarLogin(email: string, senha: string) {
+    const usuario = await this.prisma.adminUser.findUnique({ where: { email: email.toLowerCase().trim() } });
+    if (!usuario || !usuario.ativo) return null;
+    const senhaCorreta = await verificarSenha(senha, usuario.senhaHash);
+    if (!senhaCorreta) return null;
+    await this.prisma.adminUser.update({ where: { id: usuario.id }, data: { ultimoAcesso: new Date() } });
+    return this.semSenha(usuario);
+  }
+
+  async criarSessao(userId: string, duracaoMs = 12 * 60 * 60 * 1000): Promise<string> {
+    const token = gerarTokenSessao();
+    await this.prisma.adminSession.create({
+      data: { token, userId, expiresAt: new Date(Date.now() + duracaoMs) },
+    });
+    return token;
+  }
+
+  async validarSessao(token: string) {
+    const sessao = await this.prisma.adminSession.findUnique({ where: { token }, include: { user: true } });
+    if (!sessao) return null;
+    if (sessao.expiresAt.getTime() < Date.now()) {
+      await this.prisma.adminSession.delete({ where: { id: sessao.id } }).catch(() => {});
+      return null;
+    }
+    if (!sessao.user.ativo) return null;
+    return this.semSenha(sessao.user);
+  }
+
+  async encerrarSessao(token: string): Promise<void> {
+    await this.prisma.adminSession.deleteMany({ where: { token } });
+  }
+
+  // Chamado uma vez na inicialização do servidor: se ainda não existe nenhum
+  // usuário, cria o primeiro admin a partir de variáveis de ambiente — sem
+  // isso, ninguém conseguiria logar num sistema novo (é o único jeito de
+  // "plantar a primeira semente" de um sistema que agora exige login).
+  async garantirAdminInicial(params: { nome: string; email: string; senha: string }): Promise<boolean> {
+    const existeAlguem = (await this.prisma.adminUser.count()) > 0;
+    if (existeAlguem) return false;
+    await this.criarUsuario({ nome: params.nome, email: params.email, senha: params.senha, role: "ADMINISTRADOR" });
+    return true;
   }
 }

@@ -437,3 +437,47 @@ model LogEntry {
   @@index([createdAt], map: "idx_logs_created_at")
   @@map("logs")
 }
+
+// ---------------------------------------------------------------------------
+// Usuários do painel administrativo (login individual + níveis de acesso)
+// ---------------------------------------------------------------------------
+
+enum AdminRole {
+  ADMINISTRADOR
+  OPERADOR
+  VISUALIZADOR
+}
+
+model AdminUser {
+  id           String    @id @default(uuid())
+  nome         String
+  email        String    @unique
+  // Hash + salt gerados com scrypt (módulo nativo "crypto" do Node — sem
+  // dependência externa tipo bcrypt). Formato salvo: "salt:hash", ambos em hex.
+  senhaHash    String    @map("senha_hash")
+  role         AdminRole @default(OPERADOR)
+  ativo        Boolean   @default(true)
+  ultimoAcesso DateTime? @map("ultimo_acesso")
+
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  sessions     AdminSession[]
+
+  @@map("admin_users")
+}
+
+// Sessão simples por token opaque (não JWT) — mais fácil de revogar na hora
+// (só apagar a linha), já que é um painel interno de baixo volume.
+model AdminSession {
+  id        String    @id @default(uuid())
+  token     String    @unique
+  userId    String    @map("user_id")
+  user      AdminUser @relation(fields: [userId], references: [id])
+  expiresAt DateTime  @map("expires_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([token], map: "idx_admin_sessions_token")
+  @@index([userId], map: "idx_admin_sessions_user_id")
+  @@map("admin_sessions")
+}

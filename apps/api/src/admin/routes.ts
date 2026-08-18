@@ -208,6 +208,90 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         }
         return result;
       });
+
+      // -- Login individual / usuários do painel ---------------------------
+      // Ainda protegidas pelo mesmo requireAdminAuth (token estático) do resto
+      // do /admin — só o servidor Next.js (que já tem esse token) chama essas
+      // rotas; o login "de verdade" (sessão por token de usuário individual)
+      // é uma camada por cima disso, específica pra saber QUAL humano está no
+      // navegador. Ver comentário completo em admin-repository.ts.
+
+      instance.post<{ Body: { email?: string; senha?: string } }>("/auth/login", async (request, reply) => {
+        const { email, senha } = request.body ?? {};
+        if (!email || !senha) {
+          reply.code(400);
+          return { error: "campos_obrigatorios", mensagem: "E-mail e senha são obrigatórios." };
+        }
+        const usuario = await adminRepo.verificarLogin(email, senha);
+        if (!usuario) {
+          reply.code(401);
+          return { error: "credenciais_invalidas", mensagem: "E-mail ou senha incorretos." };
+        }
+        const token = await adminRepo.criarSessao(usuario.id);
+        return { token, usuario };
+      });
+
+      instance.get<{ Querystring: { token?: string } }>("/auth/me", async (request, reply) => {
+        const token = request.query.token;
+        if (!token) {
+          reply.code(401);
+          return { error: "sem_token" };
+        }
+        const usuario = await adminRepo.validarSessao(token);
+        if (!usuario) {
+          reply.code(401);
+          return { error: "sessao_invalida" };
+        }
+        return usuario;
+      });
+
+      instance.post<{ Body: { token?: string } }>("/auth/logout", async (request) => {
+        if (request.body?.token) await adminRepo.encerrarSessao(request.body.token);
+        return { ok: true };
+      });
+
+      instance.get("/users", async () => adminRepo.listarUsuarios());
+
+      instance.post<{
+        Body: { nome?: string; email?: string; senha?: string; role?: "ADMINISTRADOR" | "OPERADOR" | "VISUALIZADOR" };
+      }>("/users", async (request, reply) => {
+        const { nome, email, senha, role } = request.body ?? {};
+        if (!nome || !email || !senha) {
+          reply.code(400);
+          return { error: "campos_obrigatorios", mensagem: "Nome, e-mail e senha são obrigatórios." };
+        }
+        try {
+          const usuario = await adminRepo.criarUsuario({ nome, email, senha, role: role ?? "OPERADOR" });
+          reply.code(201);
+          return usuario;
+        } catch (error) {
+          if (isPrismaUniqueConstraintError(error)) {
+            reply.code(409);
+            return { error: "email_ja_existe", mensagem: "Já existe um usuário com esse e-mail." };
+          }
+          throw error;
+        }
+      });
+
+      instance.patch<{
+        Params: { id: string };
+        Body: { nome?: string; email?: string; role?: "ADMINISTRADOR" | "OPERADOR" | "VISUALIZADOR"; ativo?: boolean };
+      }>("/users/:id", async (request, reply) => {
+        try {
+          return await adminRepo.atualizarUsuario(request.params.id, request.body ?? {});
+        } catch (error) {
+          if (isPrismaUniqueConstraintError(error)) {
+            reply.code(409);
+            return { error: "email_ja_existe", mensagem: "Já existe um usuário com esse e-mail." };
+          }
+          throw error;
+        }
+      });
+
+      instance.post<{ Params: { id: string } }>("/users/:id/gerar-senha", async (request) => {
+        const senhaTemporaria = await adminRepo.gerarNovaSenhaUsuario(request.params.id);
+        return { senhaTemporaria };
+      });
     },
     { prefix: "/admin" }
   );

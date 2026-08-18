@@ -17,7 +17,8 @@
   },
   "dependencies": {
     "@prisma/client": "^5.18.0",
-    "@plataforma-ofertas/domain": "*"
+    "@plataforma-ofertas/domain": "*",
+    "@plataforma-ofertas/shared": "*"
   },
   "devDependencies": {
     "prisma": "^5.18.0",

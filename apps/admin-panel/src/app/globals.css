@@ -628,6 +628,50 @@ input, select {
   display: flex;
 }
 
+.sidebar-perfil {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+.sidebar-perfil-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.sidebar-perfil-nome {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-perfil-role {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.sidebar-perfil-sair {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.sidebar-perfil-sair:hover {
+  background: var(--page-plane);
+  color: var(--status-critical);
+}
+.sidebar-colapsada .sidebar-perfil-info {
+  display: none;
+}
+@media (max-width: 900px) {
+  .sidebar-colapsada .sidebar-perfil-info {
+    display: block;
+  }
+}
 .sidebar-toggle {
   display: flex;
   align-items: center;

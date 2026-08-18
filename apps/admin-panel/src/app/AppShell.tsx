@@ -2,6 +2,14 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
+import type { SessaoUsuario } from "@/lib/auth";
+import { logoutAction } from "./logout-action";
+
+const ROLE_LABEL: Record<SessaoUsuario["role"], string> = {
+  ADMINISTRADOR: "Administrador",
+  OPERADOR: "Operador",
+  VISUALIZADOR: "Visualizador",
+};
 
 interface NavItem {
   href: string;
@@ -51,6 +59,14 @@ function IconServer() {
     </svg>
   );
 }
+function IconUsers() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
 
 const NAV_GROUPS: NavGroup[] = [
   { titulo: "Visão geral", items: [{ href: "/", label: "Dashboard", icon: <IconGrid /> }] },
@@ -63,6 +79,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/endpoints", label: "Endpoints", icon: <IconServer /> },
     ],
   },
+  { titulo: "Administração", items: [{ href: "/usuarios", label: "Usuários", icon: <IconUsers /> }] },
 ];
 
 function tituloDaPagina(pathname: string): string {
@@ -74,7 +91,7 @@ function tituloDaPagina(pathname: string): string {
   return "Plataforma de Ofertas";
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, usuario }: { children: ReactNode; usuario: SessaoUsuario | null }) {
   const [colapsada, setColapsada] = useState(false);
   const [drawerAberto, setDrawerAberto] = useState(false);
   const pathname = usePathname();
@@ -93,6 +110,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     setDrawerAberto(false);
   }, [pathname]);
 
+  // Página de login não tem sidebar/cabeçalho — é uma tela cheia própria.
+  if (pathname === "/login") {
+    return <>{children}</>;
+  }
+
   return (
     <div className={`app-shell${colapsada ? " sidebar-colapsada" : ""}${drawerAberto ? " drawer-aberto" : ""}`}>
       <aside className="sidebar">
@@ -104,21 +126,41 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="sidebar-nav">
-          {NAV_GROUPS.map((grupo) => (
-            <div className="sidebar-grupo" key={grupo.titulo}>
-              <div className="sidebar-grupo-titulo">{grupo.titulo}</div>
-              {grupo.items.map((item) => {
-                const ativo = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-                return (
-                  <a key={item.href} href={item.href} className={`sidebar-link${ativo ? " ativo" : ""}`} title={item.label}>
-                    <span className="sidebar-icon">{item.icon}</span>
-                    <span className="sidebar-label">{item.label}</span>
-                  </a>
-                );
-              })}
-            </div>
-          ))}
+          {NAV_GROUPS.map((grupo) => {
+            // "Administração" (Usuários) só aparece pra quem é ADMINISTRADOR.
+            if (grupo.titulo === "Administração" && usuario?.role !== "ADMINISTRADOR") return null;
+            return (
+              <div className="sidebar-grupo" key={grupo.titulo}>
+                <div className="sidebar-grupo-titulo">{grupo.titulo}</div>
+                {grupo.items.map((item) => {
+                  const ativo = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+                  return (
+                    <a key={item.href} href={item.href} className={`sidebar-link${ativo ? " ativo" : ""}`} title={item.label}>
+                      <span className="sidebar-icon">{item.icon}</span>
+                      <span className="sidebar-label">{item.label}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            );
+          })}
         </nav>
+
+        {usuario && (
+          <div className="sidebar-perfil">
+            <div className="sidebar-perfil-info">
+              <div className="sidebar-perfil-nome">{usuario.nome}</div>
+              <div className="sidebar-perfil-role">{ROLE_LABEL[usuario.role]}</div>
+            </div>
+            <form action={logoutAction}>
+              <button type="submit" className="sidebar-perfil-sair" title="Sair" aria-label="Sair">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5M21 12H9" />
+                </svg>
+              </button>
+            </form>
+          </div>
+        )}
 
         <button
           type="button"

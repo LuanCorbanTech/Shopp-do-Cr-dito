@@ -39,6 +39,30 @@ registerWhatsappValidacaoWebhookRoutes(app, pipelineRepo, pipelineRepo, whatsapp
 registerAdminRoutes(app, adminRepo);
 registerAguardandoDisparoRoutes(app, pipelineRepo, dispatchApiToken);
 
+// Cria o primeiro usuário admin (se ainda não existir nenhum) a partir de
+// variáveis de ambiente — sem isso, ninguém conseguiria logar num sistema que
+// agora exige login individual. NÃO derruba o servidor se as variáveis não
+// estiverem definidas (deploy incremental num sistema já rodando não pode
+// crashar por causa de uma feature nova) — só fica sem criar ninguém, e loga
+// um aviso; o painel de usuários continua vazio até alguém configurar isso e
+// reiniciar, ou até o primeiro admin ser criado manualmente no banco.
+const initialAdminNome = process.env.INITIAL_ADMIN_NOME;
+const initialAdminEmail = process.env.INITIAL_ADMIN_EMAIL;
+const initialAdminSenha = process.env.INITIAL_ADMIN_SENHA;
+if (initialAdminNome && initialAdminEmail && initialAdminSenha) {
+  adminRepo
+    .garantirAdminInicial({ nome: initialAdminNome, email: initialAdminEmail, senha: initialAdminSenha })
+    .then((criou: boolean) => {
+      if (criou) logger.info({ email: initialAdminEmail }, "Primeiro usuário admin criado a partir do .env");
+    })
+    .catch((err: unknown) => logger.error(err, "Falha ao tentar criar o primeiro usuário admin"));
+} else {
+  logger.warn(
+    "INITIAL_ADMIN_NOME/EMAIL/SENHA não configuradas — nenhum usuário será criado automaticamente. " +
+      "Configure essas 3 variáveis e reinicie se ainda não existir nenhum usuário no painel."
+  );
+}
+
 app.get("/health", async () => ({ status: "ok" }));
 
 app.get("/metrics", async (_request, reply) => {
