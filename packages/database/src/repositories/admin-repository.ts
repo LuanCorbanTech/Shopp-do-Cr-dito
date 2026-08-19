@@ -8,13 +8,15 @@ function mascararCredencial(valor: unknown): {
   apiKeyConfigurada: boolean;
   apiKeyMascarada: string | null;
   baseUrl: string | null;
+  intervaloSegundos: number | null;
 } {
-  const v = (valor ?? {}) as { apiKey?: string; baseUrl?: string };
+  const v = (valor ?? {}) as { apiKey?: string; baseUrl?: string; intervaloSegundos?: number };
   const apiKey = v.apiKey ?? null;
   return {
     apiKeyConfigurada: Boolean(apiKey),
     apiKeyMascarada: apiKey ? `${"•".repeat(Math.max(apiKey.length - 4, 0))}${apiKey.slice(-4)}` : null,
     baseUrl: v.baseUrl ?? null,
+    intervaloSegundos: typeof v.intervaloSegundos === "number" && v.intervaloSegundos > 0 ? v.intervaloSegundos : null,
   };
 }
 
@@ -232,15 +234,21 @@ export class AdminRepository {
 
   async salvarCredenciaisIntegracao(
     chave: "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS",
-    dados: { apiKey?: string; baseUrl?: string }
+    dados: { apiKey?: string; baseUrl?: string; intervaloSegundos?: number }
   ) {
     const atual = await this.prisma.integrationConfig.findUnique({ where: { chave } });
-    const valorAtual = (atual?.valor ?? {}) as { apiKey?: string; baseUrl?: string };
+    const valorAtual = (atual?.valor ?? {}) as { apiKey?: string; baseUrl?: string; intervaloSegundos?: number };
     const apiKey =
       dados.apiKey !== undefined && dados.apiKey.trim() !== "" ? dados.apiKey.trim() : valorAtual.apiKey ?? null;
     const baseUrl =
       dados.baseUrl !== undefined ? (dados.baseUrl.trim() === "" ? null : dados.baseUrl.trim()) : valorAtual.baseUrl ?? null;
-    const novoValor = { apiKey, baseUrl };
+    // Só troca o intervalo se vier um número válido e positivo — mesma lógica
+    // "em branco = mantém o que já estava" das outras credenciais.
+    const intervaloSegundos =
+      dados.intervaloSegundos !== undefined && Number.isFinite(dados.intervaloSegundos) && dados.intervaloSegundos > 0
+        ? Math.floor(dados.intervaloSegundos)
+        : valorAtual.intervaloSegundos ?? null;
+    const novoValor = { apiKey, baseUrl, intervaloSegundos };
     return this.prisma.integrationConfig.upsert({
       where: { chave },
       update: { valor: novoValor },
