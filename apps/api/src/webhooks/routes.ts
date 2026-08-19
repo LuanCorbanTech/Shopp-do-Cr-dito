@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { OffersPort } from "@plataforma-ofertas/domain";
+import { logger, maskCpf } from "@plataforma-ofertas/shared";
 import { handleWebhookRequest, type RawWebhookPayload, type WebhookItemOutcome } from "./handler";
 import { webhookBodySchema, webhookParamsSchema } from "./schema";
 
@@ -8,10 +9,44 @@ export function registerWebhookRoutes(
   port: OffersPort,
   toleranceSeconds: number
 ): void {
+  // Log próprio (não o do Fastify, que fica com logger:false em server.ts) —
+  // só pros casos de ERRO (404/401/400), pra dar pra investigar sem precisar
+  // ficar pedindo pro parceiro mandar o corpo da resposta dele. Resume o
+  // payload em vez de logar bruto: nunca solta CPF/telefone completos (usa
+  // maskCpf), só o suficiente pra saber "veio como número? faltou o campo?".
+  function logFalhaWebhook(identificador: string, motivo: string, body: unknown) {
+    const resumoBody = (() => {
+      if (Array.isArray(body)) {
+        return { tipo: "array", tamanho: body.length, primeiroItem: resumoItem(body[0]) };
+      }
+      return resumoItem(body);
+    })();
+    logger.warn({ identificador, motivo, body: resumoBody }, "Webhook de ofertas rejeitado");
+  }
+  function resumoItem(item: unknown) {
+    if (!item || typeof item !== "object") return { tipoRecebido: typeof item };
+    const obj = item as Record<string, unknown>;
+    return {
+      camposPresentes: Object.keys(obj),
+      cpfTipo: typeof obj.cpf,
+      cpfMascarado: typeof obj.cpf === "string" ? maskCpf(obj.cpf) : undefined,
+    };
+  }
+
   app.post<{ Params: { identificador: string }; Body: RawWebhookPayload | RawWebhookPayload[] }>(
     "/webhooks/ofertas/:identificador",
-    { schema: { params: webhookParamsSchema, body: webhookBodySchema } },
+    // attachValidation (em vez de deixar o Fastify rejeitar sozinho): assim dá
+    // pra LOGAR erro de schema também (ex.: cpf mandado como número em vez de
+    // texto) — sem isso, essa rejeição acontecia antes até de chegar aqui, e
+    // ficava impossível de investigar depois (foi exatamente o que aconteceu
+    // com o teste da Odysseia).
+    { schema: { params: webhookParamsSchema, body: webhookBodySchema }, attachValidation: true },
     async (request, reply) => {
+      if (request.validationError) {
+        logFalhaWebhook(request.params.identificador, `schema_invalido:${request.validationError.message}`, request.body);
+        return reply.code(400).send({ error: "payload_invalido", motivo: request.validationError.message });
+      }
+
       const outcome = await handleWebhookRequest(port, {
         identificador: request.params.identificador,
         rawBody: request.rawBody ?? JSON.stringify(request.body),
@@ -22,10 +57,15 @@ export function registerWebhookRoutes(
 
       switch (outcome.kind) {
         case "webhook_not_found":
+          logFalhaWebhook(request.params.identificador, "webhook_nao_encontrado", request.body);
           return reply.code(404).send({ error: "webhook_nao_encontrado" });
         case "invalid_signature":
+          logFalhaWebhook(request.params.identificador, `assinatura_invalida:${outcome.reason}`, request.body);
           return reply.code(401).send({ error: "assinatura_invalida", motivo: outcome.reason });
         case "single":
+          if (outcome.resultado.kind === "invalid_payload") {
+            logFalhaWebhook(request.params.identificador, `payload_invalido:${outcome.resultado.reason}`, request.body);
+          }
           return sendItemResult(reply, outcome.resultado);
         case "batch": {
           // A requisição em si foi aceita e processada (2xx) mesmo que itens
