@@ -14,6 +14,8 @@ interface KpiData {
   whatsappValidado: number;
   aguardandoConsultaDisparo: number;
   disparoConsultado: number;
+  disparoEnviado: number;
+  disparoRespondido: number;
   atualizadoEm: string;
 }
 
@@ -75,6 +77,22 @@ function IconHourglass() {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M6 2h12M6 22h12" /><path d="M6 2c0 6 6 7 6 10s-6 4-6 10M18 2c0 6-6 7-6 10s6 4 6 10" />
+    </svg>
+  );
+}
+function IconMailCheck() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.2 8.4c.1.5.1 1 .1 1.6v6a2 2 0 0 1-2 2H4.7a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h9.6" />
+      <path d="m2.9 7 8.1 6 2-1.5" />
+      <path d="m16 6 2 2 4-4" />
+    </svg>
+  );
+}
+function IconCheckCheck() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 6 7 17l-5-5" /><path d="m22 10-7.5 7.5L13 16" />
     </svg>
   );
 }
@@ -203,6 +221,8 @@ export function DashboardClient() {
         <KpiCard icon={<IconWhatsapp />} value={kpis?.whatsappValidado ?? null} label="Com WhatsApp validado" loading={carregando && !kpis} />
         <KpiCard icon={<IconHourglass />} value={kpis?.aguardandoConsultaDisparo ?? null} label="Aguardando consulta de disparo" loading={carregando && !kpis} />
         <KpiCard icon={<IconSend />} value={kpis?.disparoConsultado ?? null} label="Com disparo consultado" loading={carregando && !kpis} />
+        <KpiCard icon={<IconMailCheck />} value={kpis?.disparoEnviado ?? null} label="Disparo enviado" loading={carregando && !kpis} />
+        <KpiCard icon={<IconCheckCheck />} value={kpis?.disparoRespondido ?? null} label="Disparo respondido" loading={carregando && !kpis} />
       </div>
 
       <div className="chart-grid">

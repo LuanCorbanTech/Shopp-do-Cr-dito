@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import { OfferModalButton, type OfferFullInfo } from "./OfferModal";
+import { TODOS_STATUS } from "@/lib/periodo";
 
 interface Offer extends OfferFullInfo {
   createdAt: string;
@@ -12,21 +13,6 @@ interface OffersResponse {
   items: Offer[];
   total: number;
 }
-
-const STATUS_OPTIONS = [
-  "RECEBIDO",
-  "PROCESSANDO_TELEFONE",
-  "TELEFONE_ATUALIZADO",
-  "VALIDANDO_WHATSAPP",
-  "WHATSAPP_VALIDADO",
-  "AGUARDANDO_DISPARO",
-  "DISPARO_CONSULTADO",
-  "SEM_WHATSAPP",
-  "ERRO_TELEFONE",
-  "ERRO_VALIDACAO_WHATSAPP",
-  "CANCELADO",
-  "EXPIRADO",
-];
 
 const TAMANHOS_PAGINA = [20, 50, 100];
 
@@ -111,7 +97,7 @@ export function OfertasClient() {
         />
         <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value)}>
           <option value="">Todos os status</option>
-          {STATUS_OPTIONS.map((s) => (
+          {TODOS_STATUS.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>

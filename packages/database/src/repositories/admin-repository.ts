@@ -76,6 +76,8 @@ export class AdminRepository {
       whatsappValidado,
       aguardandoConsultaDisparo,
       disparoConsultado,
+      disparoEnviado,
+      disparoRespondido,
     ] = await Promise.all([
       this.prisma.offer.count({ where: { ...createdAt, ...filtroExtra } }),
       this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(STATUS_PROCESSAMENTO) as never[] } } }),
@@ -89,6 +91,8 @@ export class AdminRepository {
       this.prisma.offer.count({ where: { ...createdAt, possuiWhatsapp: true, ...filtroExtra } }),
       this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["AGUARDANDO_DISPARO"]) as never[] } } }),
       this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["DISPARO_CONSULTADO"]) as never[] } } }),
+      this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["DISPARO_ENVIADO"]) as never[] } } }),
+      this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["DISPARO_RESPONDIDO"]) as never[] } } }),
     ]);
 
     return {
@@ -98,6 +102,8 @@ export class AdminRepository {
       whatsappValidado,
       aguardandoConsultaDisparo,
       disparoConsultado,
+      disparoEnviado,
+      disparoRespondido,
       atualizadoEm: new Date().toISOString(),
     };
   }
