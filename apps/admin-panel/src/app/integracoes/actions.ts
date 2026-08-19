@@ -13,7 +13,7 @@ export async function setLimitEnabled(ativo: boolean): Promise<void> {
 
 // Salva a credencial da Lemit ou da CorbanTech (WhatsApp), o intervalo do
 // CRON em segundos, o limite de requisições por ciclo (rate limit), e — só
-// pra WhatsApp — os 3 parâmetros do lote de validação (checknumber.ai).
+// pra WhatsApp — os 3 parâmetros do lote de validação.
 // Campos vazios no formulário = "não trocar o que já estava" (evita apagar
 // a credencial/intervalo/limite por engano ao só atualizar outro campo).
 export async function salvarCredenciais(integracao: "lemit" | "whatsapp", formData: FormData): Promise<void> {

@@ -195,6 +195,12 @@ function CredencialForm({
             Vale a partir do próximo ciclo — não precisa reiniciar nada no servidor.
           </p>
         </div>
+
+        {integracao === "whatsapp" && (
+          <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--text-secondary)", margin: "18px 0 8px" }}>
+            Validação unitária
+          </h3>
+        )}
         <div style={{ marginBottom: 10 }}>
           <label htmlFor={`${integracao}-limiteRequisicoesPorCiclo`} style={{ display: "block", marginBottom: 4 }}>
             Limite de requisições por ciclo (rate limit)
@@ -216,6 +222,9 @@ function CredencialForm({
 
         {integracao === "whatsapp" && (
           <>
+            <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--text-secondary)", margin: "18px 0 8px" }}>
+              Validação em lote
+            </h3>
             <div style={{ marginBottom: 10 }}>
               <label htmlFor={`${integracao}-loteMinimo`} style={{ display: "block", marginBottom: 4 }}>
                 Mínimo de números para disparar um lote de validação
@@ -230,8 +239,8 @@ function CredencialForm({
                 style={{ width: "100%" }}
               />
               <p className="field-help" style={{ marginTop: 4 }}>
-                A checknumber.ai exige pelo menos 500 números por lote — não reduza abaixo disso
-                a menos que o fornecedor mude essa regra.
+                Esse é o mínimo exigido pra validação em lote — não reduza abaixo disso a menos
+                que o fornecedor mude essa regra.
               </p>
             </div>
             <div style={{ marginBottom: 10 }}>
