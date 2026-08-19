@@ -30,6 +30,21 @@ const leadSchema = {
   additionalProperties: true,
 } as const;
 
+// Formato "envelope" — não é um lead nem um array de leads direto, é um objeto
+// com um campo "leads" (array) dentro, e opcionalmente "teste" (usado por
+// fornecedores como a Odysseia pra mandar um payload de verificação antes de
+// trocar a URL de destino — só precisa responder 2xx, não processa lead
+// nenhum de verdade quando teste=true; ver handler.ts).
+const envelopeSchema = {
+  type: "object",
+  required: ["leads"],
+  properties: {
+    teste: { type: "boolean" },
+    leads: { type: "array", items: leadSchema },
+  },
+  additionalProperties: true,
+} as const;
+
 export const webhookParamsSchema = {
   type: "object",
   required: ["identificador"],
@@ -39,5 +54,5 @@ export const webhookParamsSchema = {
 } as const;
 
 export const webhookBodySchema = {
-  oneOf: [leadSchema, { type: "array", items: leadSchema, minItems: 1 }],
+  oneOf: [leadSchema, { type: "array", items: leadSchema, minItems: 1 }, envelopeSchema],
 } as const;

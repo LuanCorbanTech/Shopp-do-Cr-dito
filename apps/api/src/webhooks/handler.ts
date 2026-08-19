@@ -32,10 +32,16 @@ export interface RawWebhookPayload {
   [key: string]: unknown;
 }
 
+// Formato "envelope" de alguns fornecedores (ex.: Odysseia) — ver schema.ts.
+export interface EnvelopeWebhookPayload {
+  teste?: boolean;
+  leads: RawWebhookPayload[];
+}
+
 export interface HandleWebhookRequestParams {
   identificador: string;
   rawBody: string;
-  body: RawWebhookPayload | RawWebhookPayload[];
+  body: RawWebhookPayload | RawWebhookPayload[] | EnvelopeWebhookPayload;
   /** Headers da requisição, já em minúsculo (é como o Fastify entrega). */
   headers: Record<string, string | undefined>;
   toleranceSeconds: number;
@@ -51,7 +57,12 @@ export type HandleWebhookRequestOutcome =
   | { kind: "webhook_not_found" }
   | { kind: "invalid_signature"; reason: SignatureInvalidReason }
   | { kind: "single"; resultado: WebhookItemOutcome }
-  | { kind: "batch"; resultados: WebhookItemOutcome[] };
+  | { kind: "batch"; resultados: WebhookItemOutcome[] }
+  | { kind: "test_ping" };
+
+function isEnvelope(body: unknown): body is EnvelopeWebhookPayload {
+  return typeof body === "object" && body !== null && !Array.isArray(body) && Array.isArray((body as { leads?: unknown }).leads);
+}
 
 export async function handleWebhookRequest(
   port: OffersPort,
@@ -74,6 +85,21 @@ export async function handleWebhookRequest(
   });
   if (!signatureCheck.valid) {
     return { kind: "invalid_signature", reason: signatureCheck.reason };
+  }
+
+  // Formato "envelope" (ex.: Odysseia): { teste?, leads: [...] }. Quando
+  // teste=true, é só um "ping" de verificação antes de trocar a URL de
+  // destino no painel deles — não deve gravar oferta nenhuma, só confirmar
+  // que o endpoint responde 2xx e valida a assinatura corretamente.
+  if (isEnvelope(params.body)) {
+    if (params.body.teste === true) {
+      return { kind: "test_ping" };
+    }
+    const resultados: WebhookItemOutcome[] = [];
+    for (const item of params.body.leads) {
+      resultados.push(await processOfferItem(port, webhook, item));
+    }
+    return { kind: "batch", resultados };
   }
 
   if (Array.isArray(params.body)) {

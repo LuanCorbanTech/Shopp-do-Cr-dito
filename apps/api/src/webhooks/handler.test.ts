@@ -279,3 +279,81 @@ describe("handleWebhookRequest — lote (array de leads)", () => {
     expect(offersByKey.size).toBe(0);
   });
 });
+
+describe("handleWebhookRequest — formato envelope (ex.: Odysseia manda { teste, leads: [...] })", () => {
+  it("payload de teste (teste=true) responde ok sem gravar nenhuma oferta", async () => {
+    const { port, offersByKey } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = { teste: true, leads: [] as RawWebhookPayload[] };
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: odysseiaHeaders(rawBody),
+      toleranceSeconds: 300,
+    });
+
+    expect(outcome.kind).toBe("test_ping");
+    expect(offersByKey.size).toBe(0);
+  });
+
+  it("payload de teste com leads de exemplo dentro também não grava nada (teste=true manda, mesmo com leads preenchido)", async () => {
+    const { port, offersByKey } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = { teste: true, leads: [{ cpf: "11111111111", nome: "Lead de exemplo" }] };
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: odysseiaHeaders(rawBody),
+      toleranceSeconds: 300,
+    });
+
+    expect(outcome.kind).toBe("test_ping");
+    expect(offersByKey.size).toBe(0);
+  });
+
+  it("envelope sem teste (ou teste=false) processa os leads de dentro normalmente, como um lote", async () => {
+    const { port, offersByKey } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = {
+      leads: [
+        { cpf: "22222222222", nome: "Lead Um" },
+        { cpf: "33333333333", nome: "Lead Dois" },
+      ],
+    };
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: odysseiaHeaders(rawBody),
+      toleranceSeconds: 300,
+    });
+
+    expect(outcome.kind).toBe("batch");
+    if (outcome.kind === "batch") {
+      expect(outcome.resultados.map((r) => r.kind)).toEqual(["created", "created"]);
+    }
+    expect(offersByKey.size).toBe(2);
+  });
+
+  it("envelope com assinatura inválida é rejeitado antes de olhar teste/leads", async () => {
+    const { port, offersByKey } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = { teste: true, leads: [] as RawWebhookPayload[] };
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: { "x-odysseia-signature": "assinatura-forjada" },
+      toleranceSeconds: 300,
+    });
+
+    expect(outcome.kind).toBe("invalid_signature");
+    expect(offersByKey.size).toBe(0);
+  });
+});

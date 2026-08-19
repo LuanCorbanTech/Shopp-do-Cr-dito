@@ -62,6 +62,11 @@ export function registerWebhookRoutes(
         case "invalid_signature":
           logFalhaWebhook(request.params.identificador, `assinatura_invalida:${outcome.reason}`, request.body);
           return reply.code(401).send({ error: "assinatura_invalida", motivo: outcome.reason });
+        case "test_ping":
+          // Payload de verificação (ex.: Odysseia, antes de trocar a URL de
+          // destino) — só confirma que chegou e a assinatura bateu, não grava
+          // nada.
+          return reply.code(200).send({ status: "teste_ok" });
         case "single":
           if (outcome.resultado.kind === "invalid_payload") {
             logFalhaWebhook(request.params.identificador, `payload_invalido:${outcome.resultado.reason}`, request.body);
