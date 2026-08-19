@@ -156,4 +156,76 @@ describe("runLimitWorkerOnce", () => {
     expect(failed?.status).toBe("CANCELADO");
     expect(failed?.proximaTentativaEm).toBeNull();
   });
+
+  it("guarda o corpo real da resposta de erro da Lemit (não só a mensagem curta) — pra dar pra investigar depois", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", true, { maxTentativas: 3 });
+    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+
+    // Simula exatamente o formato do LimitServiceError (packages/integrations/limit) —
+    // sem importar a classe real, só duck-typing as propriedades. Usa 500 (erro
+    // transitório de verdade) — 404 tem caminho próprio, testado separadamente abaixo.
+    const erroComRespostaBruta = Object.assign(new Error("API Lemit respondeu 500"), {
+      httpStatus: 500,
+      respostaBruta: { erro: "instabilidade temporária" },
+    });
+
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: {
+        lookupPhone: async () => {
+          throw erroComRespostaBruta;
+        },
+      },
+    });
+
+    const registro = repo.processingLog.find((p) => p.offerId === offer.id && p.etapa === "LIMIT" && p.resultado === "FALHA");
+    expect(registro?.respostaBruta).toEqual({ erro: "instabilidade temporária" });
+  });
+
+  it("CPF com dígito verificador válido, mas que a Lemit responde 404 (não encontrado) — marca CPF_INVALIDO, terminal, sem agendar retry", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", true, { maxTentativas: 3 });
+    // CPF real, com dígitos verificadores corretos (confirmado à parte) — o
+    // ponto aqui é que a LEMIT não tem registro dele, não que o CPF em si
+    // seja mal formatado.
+    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "33522334388" });
+
+    const erro404 = Object.assign(new Error("API Lemit respondeu 404"), {
+      httpStatus: 404,
+      respostaBruta: { erro: "CPF não encontrado" },
+    });
+
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: { lookupPhone: async () => { throw erro404; } },
+    });
+
+    const offerAtualizada = repo.offers.get(offer.id);
+    expect(offerAtualizada?.status).toBe("CPF_INVALIDO");
+    // Terminal — nunca agenda uma próxima tentativa, mesmo com tentativas
+    // sobrando no orçamento (maxTentativas: 3).
+    expect(offerAtualizada?.proximaTentativaEm).toBeNull();
+
+    const registro = repo.processingLog.find((p) => p.offerId === offer.id && p.etapa === "LIMIT" && p.resultado === "CPF_INVALIDO");
+    expect(registro).toBeDefined();
+    expect(registro?.respostaBruta).toEqual({ erro: "CPF não encontrado" });
+  });
+
+  it("não quebra quando o erro NÃO tem respostaBruta (ex.: timeout de rede, sem corpo de resposta nenhum)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", true, { maxTentativas: 3 });
+    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: { lookupPhone: async () => { throw new Error("timeout de rede"); } },
+    });
+
+    const registro = repo.processingLog.find((p) => p.offerId === offer.id && p.etapa === "LIMIT" && p.resultado === "FALHA");
+    expect(registro?.respostaBruta).toBeUndefined();
+  });
 });

@@ -2,7 +2,7 @@
 // texto — nunca só a cor carrega o significado (ver skill de dataviz, seção de
 // acessibilidade). Estados "em progresso" usam um badge neutro (identidade, não status).
 const GOOD = new Set(["ENVIADO", "DISPARO_ENVIADO", "DISPARO_RESPONDIDO"]);
-const CRITICAL = new Set(["ERRO_TELEFONE", "ERRO_VALIDACAO_WHATSAPP", "ERRO_ENVIO", "CANCELADO", "EXPIRADO"]);
+const CRITICAL = new Set(["ERRO_TELEFONE", "ERRO_VALIDACAO_WHATSAPP", "ERRO_ENVIO", "CANCELADO", "EXPIRADO", "CPF_INVALIDO"]);
 const WARNING = new Set(["SEM_WHATSAPP", "SEM_ROTA_CONFIGURADA"]);
 
 type Variant = "good" | "warning" | "critical" | "neutral";

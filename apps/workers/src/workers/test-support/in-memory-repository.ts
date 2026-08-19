@@ -67,7 +67,7 @@ export class InMemoryPipelineRepository
   readonly configs = new Map<string, IntegrationConfigSnapshot>();
   readonly rules: RoutingRuleSnapshot[] = [];
   readonly endpoints = new Map<string, EndpointSnapshot>();
-  readonly processingLog: Array<{ offerId: string; etapa: string; resultado: string }> = [];
+  readonly processingLog: Array<{ offerId: string; etapa: string; resultado: string; respostaBruta?: unknown }> = [];
   private idCounter = 0;
 
   addOffer(partial: Partial<MutableOffer> & { telefoneOriginal: string | null }): MutableOffer {
@@ -206,14 +206,23 @@ export class InMemoryPipelineRepository
 
   async markPhoneFailed(
     offerId: string,
-    params: { proximaTentativaEm: Date | null; cancelar: boolean }
+    params: { proximaTentativaEm: Date | null; cancelar: boolean; respostaBruta?: unknown }
   ): Promise<void> {
     const offer = this.require(offerId);
     offer.status = params.cancelar ? "CANCELADO" : "ERRO_TELEFONE";
     offer.reservedAt = null;
     offer.tentativasTelefone += 1;
     offer.proximaTentativaEm = params.proximaTentativaEm;
-    this.processingLog.push({ offerId, etapa: "LIMIT", resultado: "FALHA" });
+    this.processingLog.push({ offerId, etapa: "LIMIT", resultado: "FALHA", respostaBruta: params.respostaBruta });
+  }
+
+  async markPhoneCpfInvalido(offerId: string, respostaBruta?: unknown): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "CPF_INVALIDO";
+    offer.reservedAt = null;
+    offer.tentativasTelefone += 1;
+    offer.proximaTentativaEm = null;
+    this.processingLog.push({ offerId, etapa: "LIMIT", resultado: "CPF_INVALIDO", respostaBruta });
   }
 
   // ---------------------------------------------------------------------------

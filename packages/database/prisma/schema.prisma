@@ -28,6 +28,12 @@ enum OfferStatus {
   SEM_WHATSAPP
   SEM_ROTA_CONFIGURADA
   ERRO_TELEFONE
+  // CPF que passa na validação de dígito verificador, mas a Lemit não tem
+  // nenhum registro pra ele (responde 404) — não é erro transitório, então
+  // NÃO entra na fila de retry como ERRO_TELEFONE (tentar de novo nunca vai
+  // "achar" o CPF). Fica terminal direto, sem reservar créditos de tentativa
+  // à toa.
+  CPF_INVALIDO
   ERRO_VALIDACAO_WHATSAPP
   ERRO_ENVIO
   CANCELADO

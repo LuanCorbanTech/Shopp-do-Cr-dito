@@ -77,12 +77,35 @@ export async function runLimitWorkerOnce(params: RunLimitWorkerOnceParams): Prom
         tentativa,
       });
     } catch (error) {
+      // Duck-typing de propósito (não importa LimitServiceError direto aqui,
+      // mantém esse worker desacoplado do pacote de integração concreto,
+      // testável com fakes) — LimitServiceError sempre tem essas propriedades.
+      const respostaBruta =
+        error && typeof error === "object" && "respostaBruta" in error
+          ? (error as { respostaBruta: unknown }).respostaBruta
+          : undefined;
+      const httpStatus =
+        error && typeof error === "object" && "httpStatus" in error ? (error as { httpStatus: unknown }).httpStatus : undefined;
+
+      // 404 = a Lemit não tem registro pra esse CPF (diferente de erro
+      // transitório) — terminal direto, sem entrar na fila de retry (ver
+      // markPhoneCpfInvalido).
+      if (httpStatus === 404) {
+        await phonePort.markPhoneCpfInvalido(offer.id, respostaBruta);
+        logger.warn(
+          { offerId: offer.id, telefone: maskPhone(offer.telefoneOriginal) },
+          "Lemit não encontrou registro pra esse CPF (404) — marcado como CPF inválido, sem retry."
+        );
+        continue;
+      }
+
       const cancelar = hasExceededMaxAttempts(tentativa, maxTentativas);
       await phonePort.markPhoneFailed(offer.id, {
         erro: error instanceof Error ? error.message : String(error),
         tentativa,
         proximaTentativaEm: cancelar ? null : nextAttemptDate(tentativa, now, schedule),
         cancelar,
+        respostaBruta,
       });
       logger.warn(
         { offerId: offer.id, telefone: maskPhone(offer.telefoneOriginal), tentativa, cancelar },

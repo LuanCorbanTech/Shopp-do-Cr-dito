@@ -85,8 +85,23 @@ export interface PhoneProcessingPort {
   /** Lemit falhou — agenda retry ou cancela se esgotou tentativas. */
   markPhoneFailed(
     offerId: string,
-    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean }
+    params: {
+      erro: string;
+      tentativa: number;
+      proximaTentativaEm: Date | null;
+      cancelar: boolean;
+      /** Corpo bruto da resposta de erro da Lemit (quando disponível) — pra
+       *  conseguir ver o motivo real depois (ex.: "CPF não encontrado"),
+       *  não só o "API Lemit respondeu 404" genérico. */
+      respostaBruta?: unknown;
+    }
   ): Promise<void>;
+  /**
+   * CPF passa no dígito verificador, mas a Lemit responde 404 (não tem
+   * registro pra ele) — terminal direto, SEM entrar na fila de retry (tentar
+   * de novo nunca "acha" um CPF que não existe na base da Lemit).
+   */
+  markPhoneCpfInvalido(offerId: string, respostaBruta?: unknown): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

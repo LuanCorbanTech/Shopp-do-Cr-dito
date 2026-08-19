@@ -232,7 +232,7 @@ export class PrismaPipelineRepository
 
   async markPhoneFailed(
     offerId: string,
-    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean }
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean; respostaBruta?: unknown }
   ): Promise<void> {
     await this.prisma.$transaction([
       this.prisma.offer.update({
@@ -249,8 +249,34 @@ export class PrismaPipelineRepository
           offerId,
           etapa: "LIMIT",
           resultado: "FALHA",
-          response: { erro: params.erro },
+          response: params.respostaBruta != null ? { erro: params.erro, respostaBruta: toJsonInput(params.respostaBruta) } : { erro: params.erro },
           tentativa: params.tentativa,
+        },
+      }),
+    ]);
+  }
+
+  async markPhoneCpfInvalido(offerId: string, respostaBruta?: unknown): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.offer.update({
+        where: { id: offerId },
+        data: {
+          status: "CPF_INVALIDO",
+          reservedAt: null,
+          tentativasTelefone: { increment: 1 },
+          proximaTentativaEm: null, // terminal — nunca reagenda
+        },
+      }),
+      this.prisma.offerProcessing.create({
+        data: {
+          offerId,
+          etapa: "LIMIT",
+          resultado: "CPF_INVALIDO",
+          response:
+            respostaBruta != null
+              ? { erro: "CPF não encontrado na base da Lemit (404)", respostaBruta: toJsonInput(respostaBruta) }
+              : { erro: "CPF não encontrado na base da Lemit (404)" },
+          tentativa: 1,
         },
       }),
     ]);
