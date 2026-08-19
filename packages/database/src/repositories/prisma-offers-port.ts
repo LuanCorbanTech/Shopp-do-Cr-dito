@@ -53,6 +53,7 @@ export class PrismaOffersPort implements OffersPort {
         reserved_at = NULL, tentativas_telefone = 0, tentativas_whatsapp = 0,
         tentativas_envio = 0, proxima_tentativa_em = NULL,
         whatsapp_request_id = NULL, whatsapp_check_iniciado_em = NULL,
+        disparo_enviado_em = NULL, disparo_respondido_em = NULL,
         updated_at = now()
       WHERE webhook_id = ${input.webhookId} AND regexp_replace(cpf, '\\D', '', 'g') = regexp_replace(${input.cpf}, '\\D', '', 'g')
       RETURNING id, webhook_id AS "webhookId", idempotency_key AS "idempotencyKey", status, created_at AS "createdAt"

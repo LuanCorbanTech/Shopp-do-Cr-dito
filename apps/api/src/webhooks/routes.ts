@@ -77,12 +77,14 @@ export function registerWebhookRoutes(
           // individuais do lote tenham falhado na validação — só um problema de
           // assinatura/webhook faz o lote inteiro voltar pra fila do parceiro.
           const criados = outcome.resultados.filter((r) => r.kind === "created").length;
+          const resetados = outcome.resultados.filter((r) => r.kind === "reset").length;
           const duplicados = outcome.resultados.filter((r) => r.kind === "duplicate").length;
           const invalidos = outcome.resultados.filter((r) => r.kind === "invalid_payload").length;
           return reply.code(200).send({
             status: "processado",
             total: outcome.resultados.length,
             criados,
+            resetados,
             duplicados,
             invalidos,
             resultados: outcome.resultados,
@@ -99,6 +101,11 @@ function sendItemResult(reply: FastifyReply, resultado: WebhookItemOutcome) {
   switch (resultado.kind) {
     case "created":
       return reply.code(201).send({ status: "recebido", offerId: resultado.offerId });
+    case "reset":
+      // Mesmo fornecedor mandou o mesmo CPF de novo — reaproveita a oferta
+      // existente, reiniciando o fluxo do zero (pedido explícito: nunca
+      // duplica pro mesmo fornecedor).
+      return reply.code(200).send({ status: "reprocessado", offerId: resultado.offerId });
     case "duplicate":
       return reply.code(200).send({ status: "ja_recebido", offerId: resultado.offerId });
     case "invalid_payload":

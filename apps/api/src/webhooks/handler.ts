@@ -50,6 +50,7 @@ export interface HandleWebhookRequestParams {
 
 export type WebhookItemOutcome =
   | { kind: "created"; offerId: string }
+  | { kind: "reset"; offerId: string }
   | { kind: "duplicate"; offerId: string }
   | { kind: "invalid_payload"; reason: string };
 
@@ -144,7 +145,7 @@ async function processOfferItem(
   };
 
   const result = await port.createOfferIdempotent(input);
-  return result.created
-    ? { kind: "created", offerId: result.offer.id }
-    : { kind: "duplicate", offerId: result.offer.id };
+  if (result.kind === "reset") return { kind: "reset", offerId: result.offer.id };
+  if (result.kind === "duplicate") return { kind: "duplicate", offerId: result.offer.id };
+  return { kind: "created", offerId: result.offer.id };
 }

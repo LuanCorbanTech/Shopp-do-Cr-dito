@@ -47,8 +47,20 @@ export interface CreateOfferInput {
 
 export interface CreateOfferResult {
   offer: OfferRecord;
-  /** false quando a oferta já existia (idempotência) — nenhum registro novo foi criado. */
-  created: boolean;
+  /**
+   * "created": CPF novo pra esse webhook, oferta criada do zero.
+   * "reset": já existia uma oferta com esse CPF NESSE MESMO webhook — em vez
+   * de duplicar, ela foi reaproveitada: dados atualizados com o que chegou
+   * agora, e todo o progresso (status, telefone validado, tentativas, etc.)
+   * voltou pro início do fluxo, como se fosse processada pela primeira vez.
+   * Pedido explícito: mesmo fornecedor + mesmo CPF nunca duplica, sempre
+   * reseta — mesmo se a oferta anterior já tinha dado certo.
+   * "duplicate": caso raríssimo de corrida (duas requisições simultâneas
+   * exatamente idênticas, mesma idempotencyKey, chegando entre o
+   * SELECT e o INSERT) — devolve a que já foi criada pela outra, sem
+   * duplicar nem resetar de novo.
+   */
+  kind: "created" | "reset" | "duplicate";
 }
 
 export interface OffersPort {
