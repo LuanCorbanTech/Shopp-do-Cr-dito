@@ -15,8 +15,17 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 //                            X-Odysseia-Signature) — ver docs/integrations se/quando
 //                            eles formalizarem isso em documentação; por enquanto é
 //                            a leitura mais comum desse tipo de header único.
+//   "token_simples"       -> sem HMAC nenhum: o parceiro manda o segredo em texto
+//                            puro, direto no header, e a gente só compara igualdade
+//                            (em tempo constante). Existe pra fornecedores cujo
+//                            sistema não consegue calcular hash nenhum do lado deles
+//                            — só sabe colar um valor fixo num header. Mais fraco que
+//                            os outros dois (o "segredo" literalmente trafega em todo
+//                            request, então se vazar de algum log/proxy no meio do
+//                            caminho, dá pra reusar direto) — só usar quando as outras
+//                            opções genuinamente não forem viáveis pro parceiro.
 
-export type WebhookSignatureScheme = "ofertas_v1" | "hmac_sha256_simple";
+export type WebhookSignatureScheme = "ofertas_v1" | "hmac_sha256_simple" | "token_simples";
 
 export interface VerifySignatureParams {
   scheme: WebhookSignatureScheme;
@@ -54,6 +63,16 @@ export function computeSimpleHmac(secret: string, rawBody: string): string {
 
 export function verifyWebhookSignature(params: VerifySignatureParams): VerifySignatureResult {
   const signatureHeader = params.headers[params.headerAssinatura.toLowerCase()];
+
+  if (params.scheme === "token_simples") {
+    if (!signatureHeader) {
+      return { valid: false, reason: "missing_signature" };
+    }
+    if (!safeCompareString(params.secret, signatureHeader)) {
+      return { valid: false, reason: "signature_mismatch" };
+    }
+    return { valid: true };
+  }
 
   if (params.scheme === "hmac_sha256_simple") {
     if (!signatureHeader) {
@@ -101,6 +120,22 @@ function safeCompareHex(expectedHex: string, providedHex: string): boolean {
   } catch {
     return false;
   }
+  if (expectedBuf.length !== providedBuf.length) {
+    return false;
+  }
+  return timingSafeEqual(expectedBuf, providedBuf);
+}
+
+// Igual a safeCompareHex, mas pra string comum (não hex) — usado só no esquema
+// "token_simples", onde o valor comparado é o segredo em texto puro, não um
+// hash. timingSafeEqual exige os dois buffers do mesmo tamanho; como aqui os
+// tamanhos podem legitimamente diferir (segredo errado, tamanho diferente),
+// primeiro checa o tamanho (isso já vaza um pouquinho de informação por
+// timing, mas é inevitável sem normalizar tamanho — impacto baixo pra esse
+// esquema, que já é o mais fraco dos três por design).
+function safeCompareString(expected: string, provided: string): boolean {
+  const expectedBuf = Buffer.from(expected, "utf8");
+  const providedBuf = Buffer.from(provided, "utf8");
   if (expectedBuf.length !== providedBuf.length) {
     return false;
   }

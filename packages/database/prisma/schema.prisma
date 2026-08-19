@@ -100,6 +100,10 @@ model Webhook {
   //                            tolerância contra replay.
   //   "hmac_sha256_simple"  -> um único header, HMAC-SHA256(secret, corpo) em hex, sem
   //                            timestamp/replay (ex.: fornecedor "Odysseia").
+  //   "token_simples"       -> sem hash nenhum: o parceiro manda o segredo em texto
+  //                            puro direto no header (comparação de igualdade em tempo
+  //                            constante). Pra parceiros que não conseguem calcular
+  //                            HMAC do lado deles — mais fraco, usar só como último caso.
   esquemaAssinatura String  @default("ofertas_v1") @map("esquema_assinatura")
   headerAssinatura  String  @default("x-ofertas-signature") @map("header_assinatura")
   headerTimestamp   String? @default("x-ofertas-timestamp") @map("header_timestamp")

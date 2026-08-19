@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { AdminRepository } from "@plataforma-ofertas/database";
 import { requireAdminAuth } from "./auth";
 
-const ESQUEMAS_ASSINATURA_VALIDOS = ["ofertas_v1", "hmac_sha256_simple"];
+const ESQUEMAS_ASSINATURA_VALIDOS = ["ofertas_v1", "hmac_sha256_simple", "token_simples"];
 
 // API do painel administrativo (seção 8 do doc de arquitetura / itens 31-38 do
 // escopo original): dashboard, toggle do Limit, CRUD de endpoints e regras de
@@ -57,7 +57,7 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       instance.get("/integrations/credenciais", async () => adminRepo.getCredenciaisIntegracoes());
 
       instance.post<{
-        Body: { integracao?: string; apiKey?: string; baseUrl?: string };
+        Body: { integracao?: string; apiKey?: string; baseUrl?: string; intervaloSegundos?: number };
       }>("/integrations/credenciais", async (request, reply) => {
         const body = request.body ?? {};
         const chaveMap: Record<string, "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS"> = {
@@ -69,7 +69,11 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           reply.code(400);
           return { error: "integracao_invalida", validos: Object.keys(chaveMap) };
         }
-        await adminRepo.salvarCredenciaisIntegracao(chave, { apiKey: body.apiKey, baseUrl: body.baseUrl });
+        await adminRepo.salvarCredenciaisIntegracao(chave, {
+          apiKey: body.apiKey,
+          baseUrl: body.baseUrl,
+          intervaloSegundos: body.intervaloSegundos,
+        });
         const atualizado = await adminRepo.getCredenciaisIntegracoes();
         return atualizado[body.integracao as "lemit" | "whatsapp"];
       });

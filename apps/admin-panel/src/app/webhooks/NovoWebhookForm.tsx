@@ -8,7 +8,7 @@ import { createWebhook } from "./actions";
 // entender de HMAC, headers HTTP, etc. de antemão.
 export function NovoWebhookForm({ publicApiBaseUrl }: { publicApiBaseUrl: string }) {
   const [identificador, setIdentificador] = useState("");
-  const [esquema, setEsquema] = useState<"ofertas_v1" | "hmac_sha256_simple">("ofertas_v1");
+  const [esquema, setEsquema] = useState<"ofertas_v1" | "hmac_sha256_simple" | "token_simples">("ofertas_v1");
 
   const identificadorLimpo = identificador.toLowerCase().replace(/[^a-z0-9-]/g, "");
   const urlPreview = `${publicApiBaseUrl}/webhooks/ofertas/${identificadorLimpo || "..."}`;
@@ -87,6 +87,24 @@ export function NovoWebhookForm({ publicApiBaseUrl }: { publicApiBaseUrl: string
             o nome do header e o segredo.
           </span>
         </label>
+
+        <label className="radio-option">
+          <input
+            type="radio"
+            name="esquemaAssinatura"
+            value="token_simples"
+            checked={esquema === "token_simples"}
+            onChange={() => setEsquema("token_simples")}
+          />
+          <span>
+            <strong>Opção 3 — Token fixo (sem cálculo nenhum)</strong>
+            <br />
+            Use só quando o sistema do parceiro <em>não consegue calcular nenhum hash</em> do lado
+            deles — eles só sabem colar um valor fixo direto num header. É a opção mais fraca das
+            três (o segredo trafega em texto puro a cada chamada), mas funciona pra sistemas simples
+            que não têm como fazer HMAC.
+          </span>
+        </label>
       </div>
 
       {esquema === "ofertas_v1" ? (
@@ -103,7 +121,11 @@ export function NovoWebhookForm({ publicApiBaseUrl }: { publicApiBaseUrl: string
           <label className="field-label" htmlFor="headerAssinatura">
             Nome do header que o parceiro vai usar
           </label>
-          <p className="field-help">Pergunte pro parceiro. Ex.: X-Odysseia-Signature.</p>
+          <p className="field-help">
+            {esquema === "token_simples"
+              ? "Pergunte pro parceiro, ou combine um nome — ex.: x-ofertas-signature mesmo, só que sem timestamp."
+              : "Pergunte pro parceiro. Ex.: X-Odysseia-Signature."}
+          </p>
           <input
             id="headerAssinatura"
             name="headerAssinatura"
@@ -121,7 +143,9 @@ export function NovoWebhookForm({ publicApiBaseUrl }: { publicApiBaseUrl: string
         <p className="field-help">
           {esquema === "ofertas_v1"
             ? "Deixe em branco — o sistema gera um segredo seguro automaticamente. Depois de criar, copie esse segredo aqui na tela e envie pro parceiro configurar do lado dele."
-            : "Se o parceiro já gerou um segredo do lado dele, cole aqui. Se for você quem vai definir, pode deixar em branco pra gerar automaticamente."}
+            : esquema === "token_simples"
+              ? "Esse valor vai trafegar em texto puro em toda chamada — pode deixar em branco pra gerar um automaticamente, ou colar um valor que o parceiro já tenha."
+              : "Se o parceiro já gerou um segredo do lado dele, cole aqui. Se for você quem vai definir, pode deixar em branco pra gerar automaticamente."}
         </p>
         <input id="secretHmac" name="secretHmac" placeholder="Deixe em branco para gerar automaticamente" />
       </div>

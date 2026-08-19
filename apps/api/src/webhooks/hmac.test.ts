@@ -173,3 +173,73 @@ describe("verifyWebhookSignature — esquema hmac_sha256_simple (um único heade
     expect(result.valid).toBe(true);
   });
 });
+
+describe("verifyWebhookSignature — esquema token_simples (segredo em texto puro, sem hash)", () => {
+  const secret = "segredo-fixo-do-parceiro-abc123";
+  const rawBody = JSON.stringify({ cpf: "12345678900" });
+
+  it("aceita quando o header traz o segredo exato", () => {
+    const result = verifyWebhookSignature({
+      scheme: "token_simples",
+      secret,
+      rawBody,
+      headers: { "x-parceiro-token": secret },
+      headerAssinatura: "x-parceiro-token",
+      toleranceSeconds: 300,
+    });
+
+    expect(result).toEqual({ valid: true });
+  });
+
+  it("rejeita quando o header traz um valor diferente do segredo", () => {
+    const result = verifyWebhookSignature({
+      scheme: "token_simples",
+      secret,
+      rawBody,
+      headers: { "x-parceiro-token": "valor-errado" },
+      headerAssinatura: "x-parceiro-token",
+      toleranceSeconds: 300,
+    });
+
+    expect(result).toEqual({ valid: false, reason: "signature_mismatch" });
+  });
+
+  it("rejeita quando o header nem veio na requisição", () => {
+    const result = verifyWebhookSignature({
+      scheme: "token_simples",
+      secret,
+      rawBody,
+      headers: {},
+      headerAssinatura: "x-parceiro-token",
+      toleranceSeconds: 300,
+    });
+
+    expect(result).toEqual({ valid: false, reason: "missing_signature" });
+  });
+
+  it("não importa o corpo da requisição — não é usado no cálculo desse esquema", () => {
+    const result = verifyWebhookSignature({
+      scheme: "token_simples",
+      secret,
+      rawBody: "corpo completamente diferente, não faz diferença nesse esquema",
+      headers: { "x-parceiro-token": secret },
+      headerAssinatura: "x-parceiro-token",
+      toleranceSeconds: 300,
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
+  it("rejeita um segredo que é só um prefixo do valor certo (tamanhos diferentes)", () => {
+    const result = verifyWebhookSignature({
+      scheme: "token_simples",
+      secret,
+      rawBody,
+      headers: { "x-parceiro-token": secret.slice(0, 10) },
+      headerAssinatura: "x-parceiro-token",
+      toleranceSeconds: 300,
+    });
+
+    expect(result.valid).toBe(false);
+  });
+});
