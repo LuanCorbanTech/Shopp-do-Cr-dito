@@ -630,6 +630,29 @@ export class PrismaPipelineRepository
     // oferta. DISPARO_CONSULTADO é terminal: a oferta nunca mais aparece aqui.
     return this.claimByStatus(["AGUARDANDO_DISPARO"], "DISPARO_CONSULTADO", limit);
   }
+
+  // Chamado pelo endpoint POST /api/v1/leads/status — busca por id (nosso) OU
+  // externalId (do parceiro), o que vier preenchido. Devolve null se não
+  // achou a oferta (o endpoint traduz isso pra 404). De propósito NÃO valida
+  // a transição de status anterior (ex.: aceita ir direto pra
+  // DISPARO_RESPONDIDO mesmo sem ter passado por DISPARO_ENVIADO antes) —
+  // um evento real do lado do parceiro não deve ser rejeitado só por causa
+  // de uma etapa de bookkeeping que porventura não chegou antes.
+  async atualizarStatusDisparo(params: {
+    id?: string;
+    externalId?: string;
+    novoStatus: "DISPARO_ENVIADO" | "DISPARO_RESPONDIDO";
+  }): Promise<OfferSnapshot | null> {
+    if (!params.id && !params.externalId) return null;
+    const whereSql = params.id ? Prisma.sql`id = ${params.id}` : Prisma.sql`external_id = ${params.externalId}`;
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      UPDATE offers
+      SET status = ${params.novoStatus}::"OfferStatus", updated_at = now()
+      WHERE ${whereSql}
+      RETURNING ${OFFER_COLUMNS_SQL}
+    `;
+    return rows.length > 0 ? mapRow(rows[0]) : null;
+  }
 }
 
 function toJsonInput(value: unknown): Prisma.InputJsonValue | undefined {

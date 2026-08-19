@@ -252,4 +252,16 @@ export interface DispatchPollPort {
    * a mesma oferta.
    */
   claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]>;
+
+  /**
+   * Atualiza o status de disparo de uma oferta específica (chamado pelo
+   * sistema de disparo de WhatsApp via POST /api/v1/leads/status). Busca por
+   * id (nosso) ou externalId (do parceiro) — o que vier preenchido. Devolve
+   * null se não achou a oferta.
+   */
+  atualizarStatusDisparo(params: {
+    id?: string;
+    externalId?: string;
+    novoStatus: "DISPARO_ENVIADO" | "DISPARO_RESPONDIDO";
+  }): Promise<OfferSnapshot | null>;
 }

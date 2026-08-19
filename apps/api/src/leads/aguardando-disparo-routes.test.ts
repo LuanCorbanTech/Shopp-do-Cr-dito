@@ -1,50 +1,10 @@
 import { describe, expect, it } from "vitest";
 import Fastify from "fastify";
-import type { DispatchPollPort, OfferSnapshot } from "@plataforma-ofertas/domain";
+import type { DispatchPollPort } from "@plataforma-ofertas/domain";
 import { registerAguardandoDisparoRoutes } from "./aguardando-disparo-routes";
+import { fakeOferta, FakeDispatchPollPort } from "./fake-dispatch-poll-port";
 
 const TOKEN = "segredo-do-endpoint-de-disparo";
-
-function fakeOferta(overrides: Partial<OfferSnapshot> = {}): OfferSnapshot {
-  return {
-    id: "offer-1",
-    webhookId: "webhook-1",
-    externalId: "lead-externo-1",
-    nome: "Lucas Mendes",
-    cpf: "03073732152",
-    dataNascimento: new Date("1990-02-03T02:00:00.000Z"),
-    telefoneOriginal: "62993718537",
-    telefoneAtualizado: "5562993718537",
-    telefoneValidado: "5562993718537",
-    possuiWhatsapp: true,
-    bancoAutorizado: "C6",
-    produto: "credito-pessoal",
-    valor: 5000,
-    parcelas: 12,
-    status: "AGUARDANDO_DISPARO",
-    routingRuleId: null,
-    endpointId: null,
-    tentativasTelefone: 0,
-    tentativasWhatsapp: 0,
-    tentativasEnvio: 0,
-    whatsappRequestId: null,
-    whatsappCheckIniciadoEm: null,
-    ...overrides,
-  };
-}
-
-class FakeDispatchPollPort implements DispatchPollPort {
-  ofertasDisponiveis: OfferSnapshot[] = [];
-  ultimoLimitPedido: number | null = null;
-
-  async claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]> {
-    this.ultimoLimitPedido = limit;
-    const consumidas = this.ofertasDisponiveis.slice(0, limit);
-    // simula o consumo atômico: uma vez lida, não aparece mais.
-    this.ofertasDisponiveis = this.ofertasDisponiveis.slice(limit);
-    return consumidas;
-  }
-}
 
 function buildApp(port: DispatchPollPort, token: string | undefined) {
   const app = Fastify();

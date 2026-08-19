@@ -40,6 +40,12 @@ enum OfferStatus {
   // automaticamente pra DISPARO_CONSULTADO (nunca mais aparece nessa consulta).
   AGUARDANDO_DISPARO
   DISPARO_CONSULTADO
+  // Atualizações de status pós-consulta — o próprio sistema de disparo de
+  // WhatsApp chama POST /api/v1/leads/status pra informar essas duas
+  // mudanças, conforme elas acontecem do lado dele (não são detectadas
+  // automaticamente por nós).
+  DISPARO_ENVIADO
+  DISPARO_RESPONDIDO
 }
 
 enum DispatchQueueStatus {
