@@ -191,9 +191,6 @@ function CredencialForm({
             defaultValue={status.intervaloSegundos ?? intervaloPadrao}
             style={{ width: "100%" }}
           />
-          <p className="field-help" style={{ marginTop: 4 }}>
-            Vale a partir do próximo ciclo — não precisa reiniciar nada no servidor.
-          </p>
         </div>
 
         {integracao === "whatsapp" && (
@@ -214,10 +211,6 @@ function CredencialForm({
             defaultValue={status.limiteRequisicoesPorCiclo ?? limitePadrao}
             style={{ width: "100%" }}
           />
-          <p className="field-help" style={{ marginTop: 4 }}>
-            No máximo esse tanto de chamadas por ciclo da CRON — o resto fica na fila,
-            aguardando o próximo ciclo (evita estourar o limite da API externa).
-          </p>
         </div>
 
         {integracao === "whatsapp" && (
@@ -238,10 +231,6 @@ function CredencialForm({
                 defaultValue={status.loteMinimo ?? 500}
                 style={{ width: "100%" }}
               />
-              <p className="field-help" style={{ marginTop: 4 }}>
-                Esse é o mínimo exigido pra validação em lote — não reduza abaixo disso a menos
-                que o fornecedor mude essa regra.
-              </p>
             </div>
             <div style={{ marginBottom: 10 }}>
               <label htmlFor={`${integracao}-loteMaximo`} style={{ display: "block", marginBottom: 4 }}>
@@ -256,10 +245,6 @@ function CredencialForm({
                 defaultValue={status.loteMaximo ?? 5000}
                 style={{ width: "100%" }}
               />
-              <p className="field-help" style={{ marginTop: 4 }}>
-                Nunca manda mais que esse tanto de números num único lote, mesmo se houver mais
-                ofertas esperando — o resto fica pro próximo ciclo.
-              </p>
             </div>
             <div style={{ marginBottom: 10 }}>
               <label htmlFor={`${integracao}-tempoMaximoEsperaLoteHoras`} style={{ display: "block", marginBottom: 4 }}>
@@ -274,11 +259,6 @@ function CredencialForm({
                 defaultValue={status.tempoMaximoEsperaLoteHoras ?? 2}
                 style={{ width: "100%" }}
               />
-              <p className="field-help" style={{ marginTop: 4 }}>
-                Se o volume ficar baixo e não juntar o mínimo dentro desse prazo, o sistema usa
-                o caminho individual (mais caro) como plano B — nunca deixa a oferta presa esperando
-                o lote se formar.
-              </p>
             </div>
           </>
         )}
