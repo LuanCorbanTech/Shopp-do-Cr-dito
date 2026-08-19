@@ -15,6 +15,7 @@ interface CredencialStatus {
   apiKeyMascarada: string | null;
   baseUrl: string | null;
   intervaloSegundos: number | null;
+  limiteRequisicoesPorCiclo: number | null;
 }
 
 interface CredenciaisIntegracoes {
@@ -100,6 +101,7 @@ export default async function IntegracoesPage() {
             baseUrlPlaceholder="https://api.lemit.com.br (padrão, deixe em branco)"
             labelIntervalo="Frequência da CRON de Consulta Lemit (em segundos)"
             intervaloPadrao={5}
+            limitePadrao={20}
           />
           <CredencialForm
             titulo="CorbanTech (validação de WhatsApp)"
@@ -108,6 +110,7 @@ export default async function IntegracoesPage() {
             baseUrlPlaceholder="https://SEU-DOMINIO (raiz da API da CorbanTech)"
             labelIntervalo="Frequência da CRON de Validação de WhatsApp (em segundos)"
             intervaloPadrao={5}
+            limitePadrao={20}
           />
         </div>
       )}
@@ -122,6 +125,7 @@ function CredencialForm({
   baseUrlPlaceholder,
   labelIntervalo,
   intervaloPadrao,
+  limitePadrao,
 }: {
   titulo: string;
   integracao: "lemit" | "whatsapp";
@@ -129,6 +133,7 @@ function CredencialForm({
   baseUrlPlaceholder: string;
   labelIntervalo: string;
   intervaloPadrao: number;
+  limitePadrao: number;
 }) {
   return (
     <div className="card">
@@ -185,6 +190,24 @@ function CredencialForm({
           />
           <p className="field-help" style={{ marginTop: 4 }}>
             Vale a partir do próximo ciclo — não precisa reiniciar nada no servidor.
+          </p>
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <label htmlFor={`${integracao}-limiteRequisicoesPorCiclo`} style={{ display: "block", marginBottom: 4 }}>
+            Limite de requisições por ciclo (rate limit)
+          </label>
+          <input
+            id={`${integracao}-limiteRequisicoesPorCiclo`}
+            name="limiteRequisicoesPorCiclo"
+            type="number"
+            min={1}
+            step={1}
+            defaultValue={status.limiteRequisicoesPorCiclo ?? limitePadrao}
+            style={{ width: "100%" }}
+          />
+          <p className="field-help" style={{ marginTop: 4 }}>
+            No máximo esse tanto de chamadas por ciclo da CRON — o resto fica na fila,
+            aguardando o próximo ciclo (evita estourar o limite da API externa).
           </p>
         </div>
         <button type="submit">Salvar</button>

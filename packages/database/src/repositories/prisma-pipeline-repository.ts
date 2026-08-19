@@ -671,9 +671,16 @@ export class PrismaPipelineRepository
   }): Promise<OfferSnapshot | null> {
     if (!params.id && !params.externalId) return null;
     const whereSql = params.id ? Prisma.sql`id = ${params.id}` : Prisma.sql`external_id = ${params.externalId}`;
+    // COALESCE: só preenche o marcador cumulativo na PRIMEIRA vez (nunca
+    // sobrescreve um valor que já existe) — ver comentário no schema.prisma
+    // sobre por que esses 2 campos existem separados do "status" atual.
+    const marcadorSql =
+      params.novoStatus === "DISPARO_ENVIADO"
+        ? Prisma.sql`disparo_enviado_em = COALESCE(disparo_enviado_em, now())`
+        : Prisma.sql`disparo_respondido_em = COALESCE(disparo_respondido_em, now())`;
     const rows = await this.prisma.$queryRaw<OfferRow[]>`
       UPDATE offers
-      SET status = ${params.novoStatus}::"OfferStatus", updated_at = now()
+      SET status = ${params.novoStatus}::"OfferStatus", updated_at = now(), ${marcadorSql}
       WHERE ${whereSql}
       RETURNING ${OFFER_COLUMNS_SQL}
     `;

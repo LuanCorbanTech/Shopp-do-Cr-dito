@@ -9,14 +9,17 @@ function mascararCredencial(valor: unknown): {
   apiKeyMascarada: string | null;
   baseUrl: string | null;
   intervaloSegundos: number | null;
+  limiteRequisicoesPorCiclo: number | null;
 } {
-  const v = (valor ?? {}) as { apiKey?: string; baseUrl?: string; intervaloSegundos?: number };
+  const v = (valor ?? {}) as { apiKey?: string; baseUrl?: string; intervaloSegundos?: number; limiteRequisicoesPorCiclo?: number };
   const apiKey = v.apiKey ?? null;
   return {
     apiKeyConfigurada: Boolean(apiKey),
     apiKeyMascarada: apiKey ? `${"•".repeat(Math.max(apiKey.length - 4, 0))}${apiKey.slice(-4)}` : null,
     baseUrl: v.baseUrl ?? null,
     intervaloSegundos: typeof v.intervaloSegundos === "number" && v.intervaloSegundos > 0 ? v.intervaloSegundos : null,
+    limiteRequisicoesPorCiclo:
+      typeof v.limiteRequisicoesPorCiclo === "number" && v.limiteRequisicoesPorCiclo > 0 ? v.limiteRequisicoesPorCiclo : null,
   };
 }
 
@@ -91,8 +94,20 @@ export class AdminRepository {
       this.prisma.offer.count({ where: { ...createdAt, possuiWhatsapp: true, ...filtroExtra } }),
       this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["AGUARDANDO_DISPARO"]) as never[] } } }),
       this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["DISPARO_CONSULTADO"]) as never[] } } }),
-      this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["DISPARO_ENVIADO"]) as never[] } } }),
-      this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["DISPARO_RESPONDIDO"]) as never[] } } }),
+      this.prisma.offer.count({
+        where: {
+          ...(params.from || params.to
+            ? { disparoEnviadoEm: { ...(params.from ? { gte: params.from } : {}), ...(params.to ? { lte: params.to } : {}) } }
+            : { disparoEnviadoEm: { not: null } }),
+        },
+      }),
+      this.prisma.offer.count({
+        where: {
+          ...(params.from || params.to
+            ? { disparoRespondidoEm: { ...(params.from ? { gte: params.from } : {}), ...(params.to ? { lte: params.to } : {}) } }
+            : { disparoRespondidoEm: { not: null } }),
+        },
+      }),
     ]);
 
     return {
@@ -141,6 +156,46 @@ export class AdminRepository {
       dia: r.dia.toISOString().slice(0, 10),
       recebidas: Number(r.recebidas),
       processadas: Number(r.processadas),
+    }));
+  }
+
+  // Série temporal comparativa "Disparo Enviado x Disparo Respondido" (pro
+  // gráfico do Dashboard) — usa os marcadores cumulativos (disparo_enviado_em
+  // / disparo_respondido_em), não o "status" atual, então uma oferta que já
+  // foi respondida continua contando no dia em que foi ENVIADA também (são
+  // dias possivelmente diferentes — union pelos 2 lados, não um só GROUP BY).
+  async dashboardEnviadosVsRespondidos(params: { from?: Date; to?: Date }) {
+    const from = params.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const to = params.to ?? new Date();
+
+    const rows = await this.prisma.$queryRaw<{ dia: Date; enviados: bigint; respondidos: bigint }[]>(
+      Prisma.sql`
+        WITH enviados AS (
+          SELECT date_trunc('day', disparo_enviado_em) AS dia, count(*) AS total
+          FROM offers
+          WHERE disparo_enviado_em >= ${from} AND disparo_enviado_em <= ${to}
+          GROUP BY dia
+        ),
+        respondidos AS (
+          SELECT date_trunc('day', disparo_respondido_em) AS dia, count(*) AS total
+          FROM offers
+          WHERE disparo_respondido_em >= ${from} AND disparo_respondido_em <= ${to}
+          GROUP BY dia
+        )
+        SELECT
+          COALESCE(e.dia, r.dia) AS dia,
+          COALESCE(e.total, 0) AS enviados,
+          COALESCE(r.total, 0) AS respondidos
+        FROM enviados e
+        FULL OUTER JOIN respondidos r ON e.dia = r.dia
+        ORDER BY dia ASC
+      `
+    );
+
+    return rows.map((r) => ({
+      dia: r.dia.toISOString().slice(0, 10),
+      enviados: Number(r.enviados),
+      respondidos: Number(r.respondidos),
     }));
   }
 
@@ -240,10 +295,15 @@ export class AdminRepository {
 
   async salvarCredenciaisIntegracao(
     chave: "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS",
-    dados: { apiKey?: string; baseUrl?: string; intervaloSegundos?: number }
+    dados: { apiKey?: string; baseUrl?: string; intervaloSegundos?: number; limiteRequisicoesPorCiclo?: number }
   ) {
     const atual = await this.prisma.integrationConfig.findUnique({ where: { chave } });
-    const valorAtual = (atual?.valor ?? {}) as { apiKey?: string; baseUrl?: string; intervaloSegundos?: number };
+    const valorAtual = (atual?.valor ?? {}) as {
+      apiKey?: string;
+      baseUrl?: string;
+      intervaloSegundos?: number;
+      limiteRequisicoesPorCiclo?: number;
+    };
     const apiKey =
       dados.apiKey !== undefined && dados.apiKey.trim() !== "" ? dados.apiKey.trim() : valorAtual.apiKey ?? null;
     const baseUrl =
@@ -254,7 +314,16 @@ export class AdminRepository {
       dados.intervaloSegundos !== undefined && Number.isFinite(dados.intervaloSegundos) && dados.intervaloSegundos > 0
         ? Math.floor(dados.intervaloSegundos)
         : valorAtual.intervaloSegundos ?? null;
-    const novoValor = { apiKey, baseUrl, intervaloSegundos };
+    // Mesma lógica pro limite de requisições por ciclo (rate limit da API
+    // externa) — usado pelo worker pra nunca processar mais que isso num
+    // único ciclo (ver resolverBatchSize em apps/workers/src/index.ts).
+    const limiteRequisicoesPorCiclo =
+      dados.limiteRequisicoesPorCiclo !== undefined &&
+      Number.isFinite(dados.limiteRequisicoesPorCiclo) &&
+      dados.limiteRequisicoesPorCiclo > 0
+        ? Math.floor(dados.limiteRequisicoesPorCiclo)
+        : valorAtual.limiteRequisicoesPorCiclo ?? null;
+    const novoValor = { apiKey, baseUrl, intervaloSegundos, limiteRequisicoesPorCiclo };
     return this.prisma.integrationConfig.upsert({
       where: { chave },
       update: { valor: novoValor },

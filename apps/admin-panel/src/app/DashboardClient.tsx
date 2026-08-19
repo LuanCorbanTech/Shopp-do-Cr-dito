@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { FunnelChart } from "@/components/charts/FunnelChart";
 import { TimeSeriesChart } from "@/components/charts/TimeSeriesChart";
+import { EnviadosRespondidosChart } from "@/components/charts/EnviadosRespondidosChart";
 import { DonutChart } from "@/components/charts/DonutChart";
 import { StatusMultiSelect } from "@/components/StatusMultiSelect";
 import { calcularIntervalo, type Periodo } from "@/lib/periodo";
@@ -28,6 +29,12 @@ interface PontoSerie {
   dia: string;
   recebidas: number;
   processadas: number;
+}
+
+interface PontoSerieDisparo {
+  dia: string;
+  enviados: number;
+  respondidos: number;
 }
 
 const REFRESH_SECONDS = 30;
@@ -117,6 +124,7 @@ export function DashboardClient() {
   const [kpis, setKpis] = useState<KpiData | null>(null);
   const [statusSummary, setStatusSummary] = useState<StatusSummary | null>(null);
   const [serie, setSerie] = useState<PontoSerie[]>([]);
+  const [serieDisparo, setSerieDisparo] = useState<PontoSerieDisparo[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [contagem, setContagem] = useState(REFRESH_SECONDS);
@@ -134,17 +142,20 @@ export function DashboardClient() {
       // vai junto em TODAS as 3 chamadas abaixo.
       if (statusSelecionados.length > 0) qs.set("status", statusSelecionados.join(","));
 
-      const [kpisResp, statusResp, serieResp] = await Promise.all([
+      const [kpisResp, statusResp, serieResp, serieDisparoResp] = await Promise.all([
         fetch(`/api/dashboard-kpis?${qs.toString()}`, { cache: "no-store" }),
         fetch(`/api/dashboard-summary?${qs.toString()}`, { cache: "no-store" }),
         fetch(`/api/dashboard-timeseries?${qs.toString()}`, { cache: "no-store" }),
+        fetch(`/api/dashboard-enviados-vs-respondidos?${qs.toString()}`, { cache: "no-store" }),
       ]);
       const kpisData: KpiData = await kpisResp.json();
       const statusData: StatusSummary = await statusResp.json();
       const serieData: PontoSerie[] = await serieResp.json();
+      const serieDisparoData: PontoSerieDisparo[] = await serieDisparoResp.json();
       setKpis(kpisData);
       setStatusSummary(statusData);
       setSerie(Array.isArray(serieData) ? serieData : []);
+      setSerieDisparo(Array.isArray(serieDisparoData) ? serieDisparoData : []);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -266,6 +277,11 @@ export function DashboardClient() {
             <span><span style={{ display: "inline-block", width: 10, height: 2, background: "var(--series-1)", marginRight: 6 }} />Recebidas</span>
             <span><span style={{ display: "inline-block", width: 10, height: 2, background: "var(--status-good)", marginRight: 6 }} />Processadas</span>
           </div>
+        </div>
+
+        <div className="chart-card chart-card-wide">
+          <h2 style={{ margin: "0 0 16px" }}>Disparo enviado × respondido por dia</h2>
+          <EnviadosRespondidosChart dados={serieDisparo} />
         </div>
       </div>
 

@@ -223,6 +223,19 @@ model Offer {
   whatsappRequestId       String?   @map("whatsapp_request_id")
   whatsappCheckIniciadoEm DateTime? @map("whatsapp_check_iniciado_em")
 
+  // Marcadores de PRIMEIRA ocorrência de cada evento pós-disparo (ver POST
+  // /api/v1/leads/status) — preenchidos UMA VEZ e NUNCA apagados/sobrescritos
+  // depois, mesmo que o status da oferta continue mudando (ex.: de
+  // DISPARO_ENVIADO pra DISPARO_RESPONDIDO). Existem à parte do campo
+  // "status" (que só guarda o estado ATUAL) justamente pra os contadores
+  // "enviados" e "respondidos" do Dashboard serem cumulativos e
+  // independentes um do outro — sem isso, contar por "status = X" faz o
+  // total de "enviados" cair sempre que uma oferta avança pra "respondido"
+  // (só uma pode ser o status atual por vez), o que parecia um "zeramento"
+  // pro usuário mesmo sem ser exclusão de dado nenhuma.
+  disparoEnviadoEm    DateTime? @map("disparo_enviado_em")
+  disparoRespondidoEm DateTime? @map("disparo_respondido_em")
+
   createdAt        DateTime    @default(now()) @map("created_at")
   updatedAt        DateTime    @updatedAt @map("updated_at")
 
@@ -244,6 +257,8 @@ model Offer {
   @@index([reservedAt], map: "idx_offers_reserved_at")
   @@index([status, proximaTentativaEm], map: "idx_offers_status_proxima_tentativa")
   @@index([whatsappRequestId], map: "idx_offers_whatsapp_request_id")
+  @@index([disparoEnviadoEm], map: "idx_offers_disparo_enviado_em")
+  @@index([disparoRespondidoEm], map: "idx_offers_disparo_respondido_em")
   @@index([status, whatsappCheckIniciadoEm], map: "idx_offers_status_whatsapp_check_iniciado")
   @@map("offers")
 }

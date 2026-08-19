@@ -38,6 +38,14 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           statuses,
         });
       });
+      instance.get<{ Querystring: { from?: string; to?: string } }>("/dashboard/enviados-vs-respondidos", async (request) => {
+        const from = request.query.from ? new Date(request.query.from) : undefined;
+        const to = request.query.to ? new Date(request.query.to) : undefined;
+        return adminRepo.dashboardEnviadosVsRespondidos({
+          from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+          to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+        });
+      });
       instance.get("/dashboard/webhooks", async () => adminRepo.dashboardPorWebhook());
       instance.get("/dashboard/bancos", async () => adminRepo.dashboardPorBanco());
       instance.get("/dashboard/endpoints", async () => adminRepo.dashboardPorEndpoint());
@@ -57,7 +65,7 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       instance.get("/integrations/credenciais", async () => adminRepo.getCredenciaisIntegracoes());
 
       instance.post<{
-        Body: { integracao?: string; apiKey?: string; baseUrl?: string; intervaloSegundos?: number };
+        Body: { integracao?: string; apiKey?: string; baseUrl?: string; intervaloSegundos?: number; limiteRequisicoesPorCiclo?: number };
       }>("/integrations/credenciais", async (request, reply) => {
         const body = request.body ?? {};
         const chaveMap: Record<string, "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS"> = {
@@ -73,6 +81,7 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           apiKey: body.apiKey,
           baseUrl: body.baseUrl,
           intervaloSegundos: body.intervaloSegundos,
+          limiteRequisicoesPorCiclo: body.limiteRequisicoesPorCiclo,
         });
         const atualizado = await adminRepo.getCredenciaisIntegracoes();
         return atualizado[body.integracao as "lemit" | "whatsapp"];

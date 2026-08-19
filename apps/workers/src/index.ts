@@ -90,6 +90,30 @@ async function resolverIntervaloMs(
   return envDefaultMs;
 }
 
+// Mesmo padrão do "resolverIntervaloMs" acima, mas pro limite de requisições
+// por ciclo (rate limit da API externa, configurável no painel
+// "Integrações") — lido do banco A CADA CICLO, então trocar o valor no
+// painel vale a partir do próximo ciclo, sem reiniciar o worker. Isso é o
+// que faz o worker NUNCA processar mais que esse número de itens por vez —
+// o excedente simplesmente fica pra trás (nem é "puxado" da fila ainda),
+// aguardando o próximo ciclo automaticamente (o claim usa SKIP LOCKED com
+// limite, então não precisa de nenhuma fila separada pra isso).
+async function resolverBatchSize(
+  chave: "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS",
+  padrao: number
+): Promise<number> {
+  try {
+    const config = await prisma.integrationConfig.findUnique({ where: { chave } });
+    const valor = (config?.valor ?? {}) as { limiteRequisicoesPorCiclo?: number };
+    if (typeof valor.limiteRequisicoesPorCiclo === "number" && valor.limiteRequisicoesPorCiclo > 0) {
+      return valor.limiteRequisicoesPorCiclo;
+    }
+  } catch (error) {
+    logger.warn({ chave, error }, "Falha ao ler limite de requisições configurado no painel — usando o padrão");
+  }
+  return padrao;
+}
+
 const hyperflowService = createHyperflowService();
 
 // "resolverIntervalo" (opcional): quando informado, o próximo ciclo é
@@ -136,14 +160,20 @@ const WORKER2_INTERVAL_MS_PADRAO = Number(process.env.WORKER2_INTERVAL_MS ?? 500
 loop(
   "worker1-limit",
   WORKER1_INTERVAL_MS_PADRAO,
-  () => runLimitWorkerOnce({ phonePort: repo, configPort: repo, limitService }),
+  async () => {
+    const batchSize = await resolverBatchSize("LEMIT_CREDENCIAIS", 20);
+    return runLimitWorkerOnce({ phonePort: repo, configPort: repo, limitService, batchSize });
+  },
   () => resolverIntervaloMs("LEMIT_CREDENCIAIS", WORKER1_INTERVAL_MS_PADRAO)
 );
 
 loop(
   "worker2-whatsapp",
   WORKER2_INTERVAL_MS_PADRAO,
-  () => runWhatsappWorkerOnce({ whatsappPort: repo, configPort: repo, whatsappService }),
+  async () => {
+    const batchSize = await resolverBatchSize("WHATSAPP_VALIDACAO_CREDENCIAIS", 20);
+    return runWhatsappWorkerOnce({ whatsappPort: repo, configPort: repo, whatsappService, batchSize });
+  },
   () => resolverIntervaloMs("WHATSAPP_VALIDACAO_CREDENCIAIS", WORKER2_INTERVAL_MS_PADRAO)
 );
 
