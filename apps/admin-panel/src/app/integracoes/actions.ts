@@ -12,10 +12,10 @@ export async function setLimitEnabled(ativo: boolean): Promise<void> {
 }
 
 // Salva a credencial da Lemit ou da CorbanTech (WhatsApp), o intervalo do
-// CRON em segundos, e o limite de requisições por ciclo (rate limit). Campos
-// vazios no formulário = "não trocar o que já estava" (evita apagar a
-// credencial/intervalo/limite por engano ao só atualizar outro campo, por
-// exemplo).
+// CRON em segundos, o limite de requisições por ciclo (rate limit), e — só
+// pra WhatsApp — os 3 parâmetros do lote de validação (checknumber.ai).
+// Campos vazios no formulário = "não trocar o que já estava" (evita apagar
+// a credencial/intervalo/limite por engano ao só atualizar outro campo).
 export async function salvarCredenciais(integracao: "lemit" | "whatsapp", formData: FormData): Promise<void> {
   const apiKey = String(formData.get("apiKey") ?? "");
   const baseUrl = String(formData.get("baseUrl") ?? "");
@@ -23,9 +23,24 @@ export async function salvarCredenciais(integracao: "lemit" | "whatsapp", formDa
   const intervaloSegundos = intervaloRaw !== "" ? Number(intervaloRaw) : undefined;
   const limiteRaw = String(formData.get("limiteRequisicoesPorCiclo") ?? "").trim();
   const limiteRequisicoesPorCiclo = limiteRaw !== "" ? Number(limiteRaw) : undefined;
+  const loteMinimoRaw = String(formData.get("loteMinimo") ?? "").trim();
+  const loteMinimo = loteMinimoRaw !== "" ? Number(loteMinimoRaw) : undefined;
+  const loteMaximoRaw = String(formData.get("loteMaximo") ?? "").trim();
+  const loteMaximo = loteMaximoRaw !== "" ? Number(loteMaximoRaw) : undefined;
+  const tempoMaximoRaw = String(formData.get("tempoMaximoEsperaLoteHoras") ?? "").trim();
+  const tempoMaximoEsperaLoteHoras = tempoMaximoRaw !== "" ? Number(tempoMaximoRaw) : undefined;
   await adminApiFetch("/admin/integrations/credenciais", {
     method: "POST",
-    body: JSON.stringify({ integracao, apiKey, baseUrl, intervaloSegundos, limiteRequisicoesPorCiclo }),
+    body: JSON.stringify({
+      integracao,
+      apiKey,
+      baseUrl,
+      intervaloSegundos,
+      limiteRequisicoesPorCiclo,
+      loteMinimo,
+      loteMaximo,
+      tempoMaximoEsperaLoteHoras,
+    }),
   });
   revalidatePath("/integracoes");
 }

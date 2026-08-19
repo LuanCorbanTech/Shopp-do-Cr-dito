@@ -31,6 +31,10 @@ export interface OfferSnapshot {
   tentativasWhatsapp: number;
   tentativasEnvio: number;
   whatsappRequestId: string | null;
+  // Consulta em LOTE (só é preenchido quando essa oferta entrou num lote
+  // de 500+, em vez da consulta individual) — várias ofertas compartilham
+  // o mesmo valor (todas do mesmo lote). Ver runWhatsappWorkerOnce.
+  whatsappLoteId: string | null;
   whatsappCheckIniciadoEm: Date | null;
 }
 
@@ -153,6 +157,41 @@ export interface WhatsappValidationPort {
     // salvo, perdendo detalhes úteis pra investigar (httpStatus, request_id, etc.).
     params: { erro: string; tentativa: number; proximaTentativaEm: Date | null; cancelar: boolean; respostaBruta?: unknown }
   ): Promise<void>;
+
+  // -------------------------------------------------------------------------
+  // Consulta em LOTE (custo bem menor, mínimo 500 números por vez — a
+  // checknumber.ai não tem consulta individual de verdade). O Worker 2
+  // acumula ofertas em TELEFONE_ATUALIZADO até ter volume suficiente, em vez
+  // de validar uma a uma. Ver docs internas: mudança pedida em 19/08 pra
+  // reduzir custo (eKYC Pro era usada antes, ficou cara em alto volume).
+  // -------------------------------------------------------------------------
+
+  /**
+   * Quantas ofertas estão esperando pra entrar num lote agora, e desde
+   * quando a mais antiga está esperando (pra decidir: já tem volume
+   * suficiente pro lote, ou já esperou demais e deve usar o caminho
+   * individual como plano B, sem ficar preso pra sempre).
+   */
+  countOffersAwaitingValidation(): Promise<{ total: number; esperandoDesde: Date | null }>;
+
+  /**
+   * Marca um grupo de ofertas (já reservadas por claimOffersForValidation)
+   * como "consulta em lote iniciada" — todas compartilham o mesmo loteId.
+   * Cada oferta guarda o telefone efetivamente usado (telefoneAtualizado ??
+   * telefoneOriginal), igual o fluxo individual já fazia.
+   */
+  markWhatsappLoteCheckStarted(params: { offerIds: string[]; loteId: string }): Promise<void>;
+
+  /**
+   * Lotes iniciados há mais de `olderThanMs` sem o resultado ter sido
+   * distribuído ainda — plano B se o callback do lote não chegar (mesmo
+   * espírito do findOffersAwaitingWhatsappResult, mas por lote, não por
+   * oferta individual, já que várias ofertas compartilham 1 lote_id).
+   */
+  findLotesAwaitingWhatsappResult(params: { olderThanMs: number; limit: number; now?: Date }): Promise<string[]>;
+
+  /** Todas as ofertas que pertencem a um lote específico — usado pra distribuir o resultado. */
+  findOffersByWhatsappLoteId(loteId: string): Promise<OfferSnapshot[]>;
 }
 
 // ---------------------------------------------------------------------------

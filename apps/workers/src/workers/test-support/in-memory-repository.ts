@@ -94,6 +94,7 @@ export class InMemoryPipelineRepository
       tentativasWhatsapp: partial.tentativasWhatsapp ?? 0,
       tentativasEnvio: partial.tentativasEnvio ?? 0,
       whatsappRequestId: partial.whatsappRequestId ?? null,
+      whatsappLoteId: partial.whatsappLoteId ?? null,
       whatsappCheckIniciadoEm: partial.whatsappCheckIniciadoEm ?? null,
       dadosPessoaLemit: partial.dadosPessoaLemit ?? null,
       possuiWhatsappSegundoLemit: partial.possuiWhatsappSegundoLemit ?? null,
@@ -268,6 +269,48 @@ export class InMemoryPipelineRepository
     return candidates.map((o) => this.snapshot(o));
   }
 
+  // -------------------------------------------------------------------------
+  // Consulta em LOTE (fake pro teste do Worker 2 batelado)
+  // -------------------------------------------------------------------------
+
+  async countOffersAwaitingValidation(): Promise<{ total: number; esperandoDesde: Date | null }> {
+    const candidatos = [...this.offers.values()].filter((o) => o.status === "TELEFONE_ATUALIZADO");
+    if (candidatos.length === 0) return { total: 0, esperandoDesde: null };
+    const maisAntiga = candidatos.reduce((a, b) => (a.createdAt.getTime() < b.createdAt.getTime() ? a : b));
+    return { total: candidatos.length, esperandoDesde: maisAntiga.createdAt };
+  }
+
+  async markWhatsappLoteCheckStarted(params: { offerIds: string[]; loteId: string }): Promise<void> {
+    for (const offerId of params.offerIds) {
+      const offer = this.require(offerId);
+      offer.whatsappLoteId = params.loteId;
+      offer.whatsappCheckIniciadoEm = new Date();
+      offer.reservedAt = null;
+      this.processingLog.push({ offerId, etapa: "WHATSAPP", resultado: "CONSULTA_LOTE_INICIADA" });
+    }
+  }
+
+  async findLotesAwaitingWhatsappResult(params: { olderThanMs: number; limit: number; now?: Date }): Promise<string[]> {
+    const now = params.now ?? new Date();
+    const cutoff = now.getTime() - params.olderThanMs;
+    const lotes = new Set<string>();
+    for (const o of this.offers.values()) {
+      if (
+        o.status === "VALIDANDO_WHATSAPP" &&
+        o.whatsappLoteId !== null &&
+        o.whatsappCheckIniciadoEm !== null &&
+        o.whatsappCheckIniciadoEm.getTime() < cutoff
+      ) {
+        lotes.add(o.whatsappLoteId);
+      }
+    }
+    return [...lotes].sort().slice(0, params.limit);
+  }
+
+  async findOffersByWhatsappLoteId(loteId: string): Promise<OfferSnapshot[]> {
+    return [...this.offers.values()].filter((o) => o.whatsappLoteId === loteId).map((o) => this.snapshot(o));
+  }
+
   async markWhatsappValidated(
     offerId: string,
     params: { possuiWhatsapp: boolean; telefoneUsado: string }
@@ -279,6 +322,7 @@ export class InMemoryPipelineRepository
     offer.telefoneValidado = params.possuiWhatsapp ? params.telefoneUsado : null;
     offer.possuiWhatsapp = params.possuiWhatsapp;
     offer.whatsappRequestId = null;
+    offer.whatsappLoteId = null;
     offer.whatsappCheckIniciadoEm = null;
     offer.reservedAt = null;
     this.processingLog.push({
@@ -295,6 +339,7 @@ export class InMemoryPipelineRepository
     const offer = this.require(offerId);
     offer.status = params.cancelar ? "CANCELADO" : "ERRO_VALIDACAO_WHATSAPP";
     offer.whatsappRequestId = null;
+    offer.whatsappLoteId = null;
     offer.whatsappCheckIniciadoEm = null;
     offer.reservedAt = null;
     offer.tentativasWhatsapp += 1;

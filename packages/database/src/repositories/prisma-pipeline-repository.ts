@@ -45,6 +45,7 @@ type OfferRow = {
   tentativasEnvio: number;
   reservedAt?: Date | null;
   whatsappRequestId: string | null;
+  whatsappLoteId: string | null;
   whatsappCheckIniciadoEm: Date | null;
 };
 
@@ -58,7 +59,8 @@ const OFFER_COLUMNS_SQL = Prisma.sql`
   routing_rule_id AS "routingRuleId", endpoint_id AS "endpointId",
   tentativas_telefone AS "tentativasTelefone", tentativas_whatsapp AS "tentativasWhatsapp",
   tentativas_envio AS "tentativasEnvio", reserved_at AS "reservedAt",
-  whatsapp_request_id AS "whatsappRequestId", whatsapp_check_iniciado_em AS "whatsappCheckIniciadoEm"
+  whatsapp_request_id AS "whatsappRequestId", whatsapp_lote_id AS "whatsappLoteId",
+  whatsapp_check_iniciado_em AS "whatsappCheckIniciadoEm"
 `;
 
 function mapRow(row: OfferRow): OfferSnapshot {
@@ -84,6 +86,7 @@ function mapRow(row: OfferRow): OfferSnapshot {
     tentativasWhatsapp: row.tentativasWhatsapp,
     tentativasEnvio: row.tentativasEnvio,
     whatsappRequestId: row.whatsappRequestId,
+    whatsappLoteId: row.whatsappLoteId,
     whatsappCheckIniciadoEm: row.whatsappCheckIniciadoEm,
   };
 }
@@ -339,6 +342,59 @@ export class PrismaPipelineRepository
     return rows.map(mapRow);
   }
 
+  // -------------------------------------------------------------------------
+  // Consulta em LOTE (ver comentário na interface WhatsappValidationPort)
+  // -------------------------------------------------------------------------
+
+  async countOffersAwaitingValidation(): Promise<{ total: number; esperandoDesde: Date | null }> {
+    const rows = await this.prisma.$queryRaw<{ total: bigint; esperandoDesde: Date | null }[]>`
+      SELECT count(*) AS total, min(updated_at) AS "esperandoDesde"
+      FROM offers
+      WHERE status = 'TELEFONE_ATUALIZADO'::"OfferStatus"
+    `;
+    return { total: Number(rows[0]?.total ?? 0), esperandoDesde: rows[0]?.esperandoDesde ?? null };
+  }
+
+  async markWhatsappLoteCheckStarted(params: { offerIds: string[]; loteId: string }): Promise<void> {
+    if (params.offerIds.length === 0) return;
+    await this.prisma.$transaction([
+      this.prisma.offer.updateMany({
+        where: { id: { in: params.offerIds } },
+        data: { whatsappLoteId: params.loteId, whatsappCheckIniciadoEm: new Date(), reservedAt: null },
+      }),
+      this.prisma.offerProcessing.createMany({
+        data: params.offerIds.map((offerId) => ({
+          offerId,
+          etapa: "WHATSAPP",
+          resultado: "CONSULTA_LOTE_INICIADA",
+          response: toJsonInput({ loteId: params.loteId }),
+          tentativa: 1,
+        })),
+      }),
+    ]);
+  }
+
+  async findLotesAwaitingWhatsappResult(params: { olderThanMs: number; limit: number; now?: Date }): Promise<string[]> {
+    const cutoff = new Date((params.now ?? new Date()).getTime() - params.olderThanMs);
+    const rows = await this.prisma.$queryRaw<{ whatsappLoteId: string }[]>`
+      SELECT DISTINCT whatsapp_lote_id AS "whatsappLoteId"
+      FROM offers
+      WHERE status = 'VALIDANDO_WHATSAPP'::"OfferStatus"
+        AND whatsapp_lote_id IS NOT NULL
+        AND whatsapp_check_iniciado_em < ${cutoff}
+      ORDER BY "whatsappLoteId"
+      LIMIT ${params.limit}
+    `;
+    return rows.map((r) => r.whatsappLoteId);
+  }
+
+  async findOffersByWhatsappLoteId(loteId: string): Promise<OfferSnapshot[]> {
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      SELECT ${OFFER_COLUMNS_SQL} FROM offers WHERE whatsapp_lote_id = ${loteId}
+    `;
+    return rows.map(mapRow);
+  }
+
   async markWhatsappValidated(
     offerId: string,
     params: { possuiWhatsapp: boolean; respostaBruta: unknown; telefoneUsado: string }
@@ -353,6 +409,7 @@ export class PrismaPipelineRepository
           telefoneValidado: params.possuiWhatsapp ? params.telefoneUsado : null,
           possuiWhatsapp: params.possuiWhatsapp,
           whatsappRequestId: null,
+          whatsappLoteId: null,
           whatsappCheckIniciadoEm: null,
           reservedAt: null,
         },
@@ -383,6 +440,7 @@ export class PrismaPipelineRepository
         data: {
           status: params.cancelar ? "CANCELADO" : "ERRO_VALIDACAO_WHATSAPP",
           whatsappRequestId: null,
+          whatsappLoteId: null,
           whatsappCheckIniciadoEm: null,
           reservedAt: null,
           tentativasWhatsapp: { increment: 1 },

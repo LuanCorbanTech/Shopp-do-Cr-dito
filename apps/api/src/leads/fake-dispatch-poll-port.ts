@@ -23,6 +23,7 @@ export function fakeOferta(overrides: Partial<OfferSnapshot> = {}): OfferSnapsho
     tentativasWhatsapp: 0,
     tentativasEnvio: 0,
     whatsappRequestId: null,
+    whatsappLoteId: null,
     whatsappCheckIniciadoEm: null,
     ...overrides,
   };

@@ -58,9 +58,13 @@ describe("pipeline completo (RECEBIDO -> AGUARDANDO_DISPARO)", () => {
     await runWhatsappWorkerOnce({
       whatsappPort: repo,
       configPort: repo,
+      loteMinimo: 999999,
+      tempoMaximoEsperaLoteMs: -60000,
       whatsappService: {
         startCheck: async ({ phone }) => ({ requestId: `req-${offer.id}`, phone }),
         getCheckResult: async () => ({ status: "done", hasWhatsapp: true }),
+        startCheckLote: async () => { throw new Error("startCheckLote não deveria ser chamado neste teste"); },
+        getCheckResultLote: async () => { throw new Error("getCheckResultLote não deveria ser chamado neste teste"); },
       },
     });
     expect(repo.offers.get(offer.id)?.status).toBe("VALIDANDO_WHATSAPP");
@@ -68,9 +72,13 @@ describe("pipeline completo (RECEBIDO -> AGUARDANDO_DISPARO)", () => {
     await runWhatsappWorkerOnce({
       whatsappPort: repo,
       configPort: repo,
+      loteMinimo: 999999,
+      tempoMaximoEsperaLoteMs: -60000,
       whatsappService: {
         startCheck: async ({ phone }) => ({ requestId: `req-${offer.id}`, phone }),
         getCheckResult: async () => ({ status: "done", hasWhatsapp: true }),
+        startCheckLote: async () => { throw new Error("startCheckLote não deveria ser chamado neste teste"); },
+        getCheckResultLote: async () => { throw new Error("getCheckResultLote não deveria ser chamado neste teste"); },
       },
       awaitingResultTimeoutMs: 0,
       now: new Date(Date.now() + 1000),
@@ -97,20 +105,28 @@ describe("pipeline completo (RECEBIDO -> AGUARDANDO_DISPARO)", () => {
     await runWhatsappWorkerOnce({
       whatsappPort: repo,
       configPort: repo,
+      loteMinimo: 999999,
+      tempoMaximoEsperaLoteMs: -60000,
       whatsappService: {
         startCheck: async ({ phone }) => {
           telefoneRecebido = phone;
           return { requestId: "req-bmg", phone };
         },
         getCheckResult: async () => ({ status: "done", hasWhatsapp: telefoneRecebido === "62988887777" }),
+        startCheckLote: async () => { throw new Error("startCheckLote não deveria ser chamado neste teste"); },
+        getCheckResultLote: async () => { throw new Error("getCheckResultLote não deveria ser chamado neste teste"); },
       },
     });
     await runWhatsappWorkerOnce({
       whatsappPort: repo,
       configPort: repo,
+      loteMinimo: 999999,
+      tempoMaximoEsperaLoteMs: -60000,
       whatsappService: {
         startCheck: async ({ phone }) => ({ requestId: "req-bmg", phone }),
         getCheckResult: async () => ({ status: "done", hasWhatsapp: telefoneRecebido === "62988887777" }),
+        startCheckLote: async () => { throw new Error("startCheckLote não deveria ser chamado neste teste"); },
+        getCheckResultLote: async () => { throw new Error("getCheckResultLote não deveria ser chamado neste teste"); },
       },
       awaitingResultTimeoutMs: 0,
       now: new Date(Date.now() + 1000),

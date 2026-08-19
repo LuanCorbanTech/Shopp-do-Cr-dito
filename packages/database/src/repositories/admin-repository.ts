@@ -10,8 +10,19 @@ function mascararCredencial(valor: unknown): {
   baseUrl: string | null;
   intervaloSegundos: number | null;
   limiteRequisicoesPorCiclo: number | null;
+  loteMinimo: number | null;
+  loteMaximo: number | null;
+  tempoMaximoEsperaLoteHoras: number | null;
 } {
-  const v = (valor ?? {}) as { apiKey?: string; baseUrl?: string; intervaloSegundos?: number; limiteRequisicoesPorCiclo?: number };
+  const v = (valor ?? {}) as {
+    apiKey?: string;
+    baseUrl?: string;
+    intervaloSegundos?: number;
+    limiteRequisicoesPorCiclo?: number;
+    loteMinimo?: number;
+    loteMaximo?: number;
+    tempoMaximoEsperaLoteHoras?: number;
+  };
   const apiKey = v.apiKey ?? null;
   return {
     apiKeyConfigurada: Boolean(apiKey),
@@ -20,6 +31,10 @@ function mascararCredencial(valor: unknown): {
     intervaloSegundos: typeof v.intervaloSegundos === "number" && v.intervaloSegundos > 0 ? v.intervaloSegundos : null,
     limiteRequisicoesPorCiclo:
       typeof v.limiteRequisicoesPorCiclo === "number" && v.limiteRequisicoesPorCiclo > 0 ? v.limiteRequisicoesPorCiclo : null,
+    loteMinimo: typeof v.loteMinimo === "number" && v.loteMinimo > 0 ? v.loteMinimo : null,
+    loteMaximo: typeof v.loteMaximo === "number" && v.loteMaximo > 0 ? v.loteMaximo : null,
+    tempoMaximoEsperaLoteHoras:
+      typeof v.tempoMaximoEsperaLoteHoras === "number" && v.tempoMaximoEsperaLoteHoras > 0 ? v.tempoMaximoEsperaLoteHoras : null,
   };
 }
 
@@ -295,7 +310,15 @@ export class AdminRepository {
 
   async salvarCredenciaisIntegracao(
     chave: "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS",
-    dados: { apiKey?: string; baseUrl?: string; intervaloSegundos?: number; limiteRequisicoesPorCiclo?: number }
+    dados: {
+      apiKey?: string;
+      baseUrl?: string;
+      intervaloSegundos?: number;
+      limiteRequisicoesPorCiclo?: number;
+      loteMinimo?: number;
+      loteMaximo?: number;
+      tempoMaximoEsperaLoteHoras?: number;
+    }
   ) {
     const atual = await this.prisma.integrationConfig.findUnique({ where: { chave } });
     const valorAtual = (atual?.valor ?? {}) as {
@@ -303,6 +326,9 @@ export class AdminRepository {
       baseUrl?: string;
       intervaloSegundos?: number;
       limiteRequisicoesPorCiclo?: number;
+      loteMinimo?: number;
+      loteMaximo?: number;
+      tempoMaximoEsperaLoteHoras?: number;
     };
     const apiKey =
       dados.apiKey !== undefined && dados.apiKey.trim() !== "" ? dados.apiKey.trim() : valorAtual.apiKey ?? null;
@@ -323,7 +349,32 @@ export class AdminRepository {
       dados.limiteRequisicoesPorCiclo > 0
         ? Math.floor(dados.limiteRequisicoesPorCiclo)
         : valorAtual.limiteRequisicoesPorCiclo ?? null;
-    const novoValor = { apiKey, baseUrl, intervaloSegundos, limiteRequisicoesPorCiclo };
+    // Parâmetros do lote de validação de WhatsApp (checknumber.ai) — só faz
+    // sentido pra WHATSAPP_VALIDACAO_CREDENCIAIS, mas não custa aceitar o
+    // campo pra Lemit também (fica simplesmente sem uso lá).
+    const loteMinimo =
+      dados.loteMinimo !== undefined && Number.isFinite(dados.loteMinimo) && dados.loteMinimo > 0
+        ? Math.floor(dados.loteMinimo)
+        : valorAtual.loteMinimo ?? null;
+    const loteMaximo =
+      dados.loteMaximo !== undefined && Number.isFinite(dados.loteMaximo) && dados.loteMaximo > 0
+        ? Math.floor(dados.loteMaximo)
+        : valorAtual.loteMaximo ?? null;
+    const tempoMaximoEsperaLoteHoras =
+      dados.tempoMaximoEsperaLoteHoras !== undefined &&
+      Number.isFinite(dados.tempoMaximoEsperaLoteHoras) &&
+      dados.tempoMaximoEsperaLoteHoras > 0
+        ? Math.floor(dados.tempoMaximoEsperaLoteHoras)
+        : valorAtual.tempoMaximoEsperaLoteHoras ?? null;
+    const novoValor = {
+      apiKey,
+      baseUrl,
+      intervaloSegundos,
+      limiteRequisicoesPorCiclo,
+      loteMinimo,
+      loteMaximo,
+      tempoMaximoEsperaLoteHoras,
+    };
     return this.prisma.integrationConfig.upsert({
       where: { chave },
       update: { valor: novoValor },

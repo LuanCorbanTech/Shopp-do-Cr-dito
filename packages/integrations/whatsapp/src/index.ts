@@ -43,6 +43,34 @@ export interface WhatsAppCheckResult {
   httpStatus: number;
 }
 
+export interface StartWhatsAppCheckLoteParams {
+  /** Só dígitos são considerados; pode incluir ou não o DDI, mesma regra do individual. */
+  phones: string[];
+  ddi?: string;
+  callbackUrl?: string;
+}
+
+export interface StartWhatsAppCheckLoteResult {
+  loteId: string;
+  total: number;
+  httpStatus: number;
+}
+
+export interface WhatsAppCheckLoteItemResult {
+  telefone: string;
+  possuiWhatsapp: boolean;
+}
+
+export interface WhatsAppCheckLoteResult {
+  status: WhatsAppCheckStatus;
+  loteId: string;
+  total: number;
+  /** Só presente quando status === "done". */
+  resultados?: WhatsAppCheckLoteItemResult[];
+  message?: string;
+  httpStatus: number;
+}
+
 export interface WhatsAppValidationServiceConfig {
   /** Raiz do serviço, ex.: "https://SEU-DOMINIO" — sem o "/api/v1/...". */
   baseUrl: string;
@@ -56,6 +84,15 @@ export interface WhatsAppValidationService {
   startCheck(params: StartWhatsAppCheckParams): Promise<StartWhatsAppCheckResult>;
   /** Consulta manual do resultado por request_id (fallback ao webhook). */
   getCheckResult(requestId: string): Promise<WhatsAppCheckResult>;
+  /**
+   * Consulta em LOTE (mínimo 500 números — a checknumber.ai, fornecedor por
+   * trás desse endpoint, não tem consulta individual de verdade). Bem mais
+   * barata por número que startCheck/getCheckResult (que usam a eKYC Pro),
+   * em troca de não ser instantânea — ver POST /api/v1/whatsapp/check-lote.
+   */
+  startCheckLote(params: StartWhatsAppCheckLoteParams): Promise<StartWhatsAppCheckLoteResult>;
+  /** Consulta manual do resultado do lote inteiro por lote_id. */
+  getCheckResultLote(loteId: string): Promise<WhatsAppCheckLoteResult>;
 }
 
 /**
@@ -151,6 +188,47 @@ export function createWhatsAppValidationService(
         requestId: String(body.request_id ?? requestId),
         phone: typeof body.phone === "string" ? body.phone : undefined,
         hasWhatsapp: typeof body.has_whatsapp === "boolean" ? body.has_whatsapp : undefined,
+        message: typeof body.message === "string" ? body.message : undefined,
+        httpStatus: result.status,
+      };
+    },
+
+    async startCheckLote(params: StartWhatsAppCheckLoteParams): Promise<StartWhatsAppCheckLoteResult> {
+      const payload: Record<string, unknown> = { phones: params.phones };
+      if (params.ddi) payload.ddi = params.ddi;
+      if (params.callbackUrl) payload.callback_url = params.callbackUrl;
+
+      const result = await request("/api/v1/whatsapp/check-lote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      throwIfError(result);
+
+      const body = result.body as Record<string, unknown>;
+      return {
+        loteId: String(body.lote_id),
+        total: Number(body.total ?? params.phones.length),
+        httpStatus: result.status,
+      };
+    },
+
+    async getCheckResultLote(loteId: string): Promise<WhatsAppCheckLoteResult> {
+      const result = await request(`/api/v1/whatsapp/check-lote/${encodeURIComponent(loteId)}`, {
+        method: "GET",
+      });
+      throwIfError(result);
+
+      const body = result.body as Record<string, unknown>;
+      const resultadosRaw = Array.isArray(body.resultados) ? (body.resultados as Record<string, unknown>[]) : undefined;
+      return {
+        status: body.status as WhatsAppCheckStatus,
+        loteId: String(body.lote_id ?? loteId),
+        total: Number(body.total ?? 0),
+        resultados: resultadosRaw?.map((r) => ({
+          telefone: String(r.telefone),
+          possuiWhatsapp: Boolean(r.possui_whatsapp),
+        })),
         message: typeof body.message === "string" ? body.message : undefined,
         httpStatus: result.status,
       };

@@ -66,6 +66,14 @@ const whatsappService = {
     const credenciais = await resolverCredenciaisWhatsapp();
     return createWhatsAppValidationService(credenciais).getCheckResult(requestId);
   },
+  async startCheckLote(params: Parameters<ReturnType<typeof createWhatsAppValidationService>["startCheckLote"]>[0]) {
+    const credenciais = await resolverCredenciaisWhatsapp();
+    return createWhatsAppValidationService(credenciais).startCheckLote(params);
+  },
+  async getCheckResultLote(loteId: string) {
+    const credenciais = await resolverCredenciaisWhatsapp();
+    return createWhatsAppValidationService(credenciais).getCheckResultLote(loteId);
+  },
 };
 
 // Intervalo em segundos configurável no painel ("Integrações"), salvo junto
@@ -112,6 +120,36 @@ async function resolverBatchSize(
     logger.warn({ chave, error }, "Falha ao ler limite de requisições configurado no painel — usando o padrão");
   }
   return padrao;
+}
+
+// Mesmo padrão acima, mas pros 3 parâmetros do lote de WhatsApp (checknumber.ai,
+// mínimo real do fornecedor: 500) — configuráveis no painel Integrações,
+// lidos de novo a cada ciclo do worker (troca no painel vale a partir do
+// próximo ciclo, sem reiniciar nada).
+async function resolverParametrosLote(padroes: {
+  loteMinimo: number;
+  loteMaximo: number;
+  tempoMaximoEsperaLoteMs: number;
+}): Promise<{ loteMinimo: number; loteMaximo: number; tempoMaximoEsperaLoteMs: number }> {
+  try {
+    const config = await prisma.integrationConfig.findUnique({ where: { chave: "WHATSAPP_VALIDACAO_CREDENCIAIS" } });
+    const valor = (config?.valor ?? {}) as {
+      loteMinimo?: number;
+      loteMaximo?: number;
+      tempoMaximoEsperaLoteHoras?: number;
+    };
+    return {
+      loteMinimo: typeof valor.loteMinimo === "number" && valor.loteMinimo > 0 ? valor.loteMinimo : padroes.loteMinimo,
+      loteMaximo: typeof valor.loteMaximo === "number" && valor.loteMaximo > 0 ? valor.loteMaximo : padroes.loteMaximo,
+      tempoMaximoEsperaLoteMs:
+        typeof valor.tempoMaximoEsperaLoteHoras === "number" && valor.tempoMaximoEsperaLoteHoras > 0
+          ? valor.tempoMaximoEsperaLoteHoras * 60 * 60 * 1000
+          : padroes.tempoMaximoEsperaLoteMs,
+    };
+  } catch (error) {
+    logger.warn({ error }, "Falha ao ler parâmetros de lote configurados no painel — usando os padrões");
+    return padroes;
+  }
 }
 
 const hyperflowService = createHyperflowService();
@@ -172,7 +210,20 @@ loop(
   WORKER2_INTERVAL_MS_PADRAO,
   async () => {
     const batchSize = await resolverBatchSize("WHATSAPP_VALIDACAO_CREDENCIAIS", 20);
-    return runWhatsappWorkerOnce({ whatsappPort: repo, configPort: repo, whatsappService, batchSize });
+    const { loteMinimo, loteMaximo, tempoMaximoEsperaLoteMs } = await resolverParametrosLote({
+      loteMinimo: 500,
+      loteMaximo: 5000,
+      tempoMaximoEsperaLoteMs: 2 * 60 * 60 * 1000,
+    });
+    return runWhatsappWorkerOnce({
+      whatsappPort: repo,
+      configPort: repo,
+      whatsappService,
+      batchSize,
+      loteMinimo,
+      loteMaximo,
+      tempoMaximoEsperaLoteMs,
+    });
   },
   () => resolverIntervaloMs("WHATSAPP_VALIDACAO_CREDENCIAIS", WORKER2_INTERVAL_MS_PADRAO)
 );

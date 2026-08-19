@@ -16,6 +16,9 @@ interface CredencialStatus {
   baseUrl: string | null;
   intervaloSegundos: number | null;
   limiteRequisicoesPorCiclo: number | null;
+  loteMinimo: number | null;
+  loteMaximo: number | null;
+  tempoMaximoEsperaLoteHoras: number | null;
 }
 
 interface CredenciaisIntegracoes {
@@ -210,6 +213,66 @@ function CredencialForm({
             aguardando o próximo ciclo (evita estourar o limite da API externa).
           </p>
         </div>
+
+        {integracao === "whatsapp" && (
+          <>
+            <div style={{ marginBottom: 10 }}>
+              <label htmlFor={`${integracao}-loteMinimo`} style={{ display: "block", marginBottom: 4 }}>
+                Mínimo de números para disparar um lote de validação
+              </label>
+              <input
+                id={`${integracao}-loteMinimo`}
+                name="loteMinimo"
+                type="number"
+                min={1}
+                step={1}
+                defaultValue={status.loteMinimo ?? 500}
+                style={{ width: "100%" }}
+              />
+              <p className="field-help" style={{ marginTop: 4 }}>
+                A checknumber.ai exige pelo menos 500 números por lote — não reduza abaixo disso
+                a menos que o fornecedor mude essa regra.
+              </p>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label htmlFor={`${integracao}-loteMaximo`} style={{ display: "block", marginBottom: 4 }}>
+                Teto de segurança por lote
+              </label>
+              <input
+                id={`${integracao}-loteMaximo`}
+                name="loteMaximo"
+                type="number"
+                min={1}
+                step={1}
+                defaultValue={status.loteMaximo ?? 5000}
+                style={{ width: "100%" }}
+              />
+              <p className="field-help" style={{ marginTop: 4 }}>
+                Nunca manda mais que esse tanto de números num único lote, mesmo se houver mais
+                ofertas esperando — o resto fica pro próximo ciclo.
+              </p>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label htmlFor={`${integracao}-tempoMaximoEsperaLoteHoras`} style={{ display: "block", marginBottom: 4 }}>
+                Tempo máximo de espera pelo lote (horas)
+              </label>
+              <input
+                id={`${integracao}-tempoMaximoEsperaLoteHoras`}
+                name="tempoMaximoEsperaLoteHoras"
+                type="number"
+                min={1}
+                step={1}
+                defaultValue={status.tempoMaximoEsperaLoteHoras ?? 2}
+                style={{ width: "100%" }}
+              />
+              <p className="field-help" style={{ marginTop: 4 }}>
+                Se o volume ficar baixo e não juntar o mínimo dentro desse prazo, o sistema usa
+                o caminho individual (mais caro) como plano B — nunca deixa a oferta presa esperando
+                o lote se formar.
+              </p>
+            </div>
+          </>
+        )}
         <button type="submit">Salvar</button>
       </form>
     </div>

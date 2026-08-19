@@ -221,6 +221,7 @@ model Offer {
   // Worker 2 se o webhook não chegar em tempo (whatsappCheckIniciadoEm é usado
   // para decidir quando essa consulta manual de fallback é acionada).
   whatsappRequestId       String?   @map("whatsapp_request_id")
+  whatsappLoteId          String?   @map("whatsapp_lote_id")
   whatsappCheckIniciadoEm DateTime? @map("whatsapp_check_iniciado_em")
 
   // Marcadores de PRIMEIRA ocorrência de cada evento pós-disparo (ver POST
@@ -257,6 +258,7 @@ model Offer {
   @@index([reservedAt], map: "idx_offers_reserved_at")
   @@index([status, proximaTentativaEm], map: "idx_offers_status_proxima_tentativa")
   @@index([whatsappRequestId], map: "idx_offers_whatsapp_request_id")
+  @@index([whatsappLoteId], map: "idx_offers_whatsapp_lote_id")
   @@index([disparoEnviadoEm], map: "idx_offers_disparo_enviado_em")
   @@index([disparoRespondidoEm], map: "idx_offers_disparo_respondido_em")
   @@index([status, whatsappCheckIniciadoEm], map: "idx_offers_status_whatsapp_check_iniciado")
