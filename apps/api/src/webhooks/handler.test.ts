@@ -57,7 +57,7 @@ describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
     if (outcome.kind === "single") expect(outcome.resultado.kind).toBe("created");
   });
 
-  it("não cria duplicado quando a mesma oferta chega duas vezes (idempotência)", async () => {
+  it("não cria duplicado quando o mesmo CPF chega duas vezes no mesmo webhook (reseta em vez de duplicar)", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
     const body = { cpf: "11111111111", telefone: "62999999999", external_id: "abc-1" };
     const rawBody = JSON.stringify(body);
@@ -77,8 +77,8 @@ describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
     expect(second.kind).toBe("single");
     if (first.kind === "single" && second.kind === "single") {
       expect(first.resultado.kind).toBe("created");
-      expect(second.resultado.kind).toBe("duplicate");
-      if (first.resultado.kind === "created" && second.resultado.kind === "duplicate") {
+      expect(second.resultado.kind).toBe("reset");
+      if (first.resultado.kind === "created" && second.resultado.kind === "reset") {
         expect(second.resultado.offerId).toBe(first.resultado.offerId);
       }
     }
@@ -236,7 +236,7 @@ describe("handleWebhookRequest — lote (array de leads)", () => {
     }
   });
 
-  it("reenviar o mesmo lote inteiro não duplica nada (idempotência por item)", async () => {
+  it("reenviar o mesmo lote inteiro reseta os itens (mesmo webhook + mesmo CPF nunca duplica — ver regra de reset)", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
     const body = [
       { cpf: "11111111111", telefone: "85992100340", external_id: "lead-1" },
@@ -258,7 +258,8 @@ describe("handleWebhookRequest — lote (array de leads)", () => {
     expect(second.kind).toBe("batch");
     if (first.kind === "batch" && second.kind === "batch") {
       expect(first.resultados.map((r) => r.kind)).toEqual(["created", "created"]);
-      expect(second.resultados.map((r) => r.kind)).toEqual(["duplicate", "duplicate"]);
+      // Mesmo webhook + mesmo CPF de novo -> reseta (não duplica, não fica "parado" como antes)
+      expect(second.resultados.map((r) => r.kind)).toEqual(["reset", "reset"]);
     }
   });
 
@@ -355,5 +356,79 @@ describe("handleWebhookRequest — formato envelope (ex.: Odysseia manda { teste
 
     expect(outcome.kind).toBe("invalid_signature");
     expect(offersByKey.size).toBe(0);
+  });
+});
+
+describe("handleWebhookRequest — CPF repetido no mesmo webhook (reset, nunca duplica)", () => {
+  it("mesmo webhook + mesmo CPF de novo: reseta a oferta existente em vez de criar outra, mesmo com dados diferentes", async () => {
+    const { port, offersByCpf } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
+
+    const body1 = { cpf: "11111111111", telefone: "62999999999", nome: "João", external_id: "lead-1" };
+    const rawBody1 = JSON.stringify(body1);
+    const primeira = await handleWebhookRequest(port, {
+      identificador: "origem-teste", rawBody: rawBody1, body: body1,
+      headers: ofertasV1Headers(rawBody1), toleranceSeconds: 300, nowSeconds: NOW,
+    });
+    expect(primeira.kind).toBe("single");
+    if (primeira.kind === "single") expect(primeira.resultado.kind).toBe("created");
+
+    // 2 dias depois: mesmo webhook, mesmo CPF, dados novos, external_id novo
+    const body2 = { cpf: "11111111111", telefone: "62988887777", nome: "João Atualizado", external_id: "lead-2" };
+    const rawBody2 = JSON.stringify(body2);
+    const segunda = await handleWebhookRequest(port, {
+      identificador: "origem-teste", rawBody: rawBody2, body: body2,
+      headers: ofertasV1Headers(rawBody2, NOW + 172800), toleranceSeconds: 300, nowSeconds: NOW + 172800,
+    });
+
+    expect(segunda.kind).toBe("single");
+    if (segunda.kind === "single") expect(segunda.resultado.kind).toBe("reset");
+    // "offersByCpf" é a fonte de verdade de "quantas ofertas distintas existem" —
+    // continua sendo 1 (a mesma oferta, resetada), não uma 2ª criada.
+    expect(offersByCpf.size).toBe(1);
+  });
+
+  it("reseta mesmo que o CPF venha formatado diferente da 1ª vez (com pontuação vs só dígitos)", async () => {
+    const { port, offersByCpf } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
+
+    const body1 = { cpf: "111.111.111-11", telefone: "62999999999", external_id: "lead-1" };
+    const rawBody1 = JSON.stringify(body1);
+    await handleWebhookRequest(port, {
+      identificador: "origem-teste", rawBody: rawBody1, body: body1,
+      headers: ofertasV1Headers(rawBody1), toleranceSeconds: 300, nowSeconds: NOW,
+    });
+
+    const body2 = { cpf: "11111111111", telefone: "62988887777", external_id: "lead-2" }; // mesmo CPF, sem pontuação
+    const rawBody2 = JSON.stringify(body2);
+    const segunda = await handleWebhookRequest(port, {
+      identificador: "origem-teste", rawBody: rawBody2, body: body2,
+      headers: ofertasV1Headers(rawBody2, NOW + 172800), toleranceSeconds: 300, nowSeconds: NOW + 172800,
+    });
+
+    expect(segunda.kind).toBe("single");
+    if (segunda.kind === "single") expect(segunda.resultado.kind).toBe("reset");
+    expect(offersByCpf.size).toBe(1); // não criou uma 2ª oferta por causa da formatação diferente
+  });
+
+  it("webhooks DIFERENTES com o mesmo CPF continuam gerando ofertas separadas (não reseta entre fornecedores)", async () => {
+    const WEBHOOK_OUTRO = { ...WEBHOOK_OFERTAS_V1, id: "webhook-outro", identificador: "outro-fornecedor" };
+    const { port, offersByCpf } = createFakeOffersPort([WEBHOOK_OFERTAS_V1, WEBHOOK_OUTRO]);
+
+    const body = { cpf: "11111111111", telefone: "62999999999", external_id: "lead-1" };
+    const rawBody = JSON.stringify(body);
+
+    const primeira = await handleWebhookRequest(port, {
+      identificador: "origem-teste", rawBody, body,
+      headers: ofertasV1Headers(rawBody), toleranceSeconds: 300, nowSeconds: NOW,
+    });
+    const segunda = await handleWebhookRequest(port, {
+      identificador: "outro-fornecedor", rawBody, body,
+      headers: ofertasV1Headers(rawBody), toleranceSeconds: 300, nowSeconds: NOW,
+    });
+
+    expect(primeira.kind).toBe("single");
+    expect(segunda.kind).toBe("single");
+    if (primeira.kind === "single") expect(primeira.resultado.kind).toBe("created");
+    if (segunda.kind === "single") expect(segunda.resultado.kind).toBe("created"); // não é "reset"
+    expect(offersByCpf.size).toBe(2); // 2 ofertas separadas, uma por webhook
   });
 });

@@ -4,6 +4,7 @@ import type {
   WebhookRecord,
   CreateOfferInput,
   CreateOfferResult,
+  OfferRecord,
 } from "@plataforma-ofertas/domain";
 
 const UNIQUE_CONSTRAINT_ERROR_CODE = "P2002";
@@ -24,6 +25,42 @@ export class PrismaOffersPort implements OffersPort {
   }
 
   async createOfferIdempotent(input: CreateOfferInput): Promise<CreateOfferResult> {
+    // Pedido explícito: o MESMO fornecedor (webhookId) mandando o MESMO CPF
+    // de novo nunca deve duplicar — reaproveita a oferta existente, com os
+    // dados novos e todo o progresso resetado pro início do fluxo, não
+    // importa em que status ela estava (mesmo já tendo dado certo antes).
+    // Fornecedores DIFERENTES com o mesmo CPF continuam gerando ofertas
+    // separadas normalmente (não checa isso globalmente, só por webhookId).
+    const resetadas = await this.prisma.$queryRaw<OfferRecord[]>`
+      UPDATE offers SET
+        idempotency_key = ${input.idempotencyKey},
+        external_id = ${input.externalId ?? null},
+        nome = ${input.nome ?? null},
+        telefone_original = ${input.telefoneOriginal},
+        banco_autorizado = ${input.bancoAutorizado ?? null},
+        produto = ${input.produto ?? null},
+        valor = ${input.valor ?? null},
+        parcelas = ${input.parcelas ?? null},
+        payload_original = ${JSON.stringify(input.payloadOriginal)}::jsonb,
+        dados_adicionais = ${input.dadosAdicionais != null ? JSON.stringify(input.dadosAdicionais) : null}::jsonb,
+        status = 'RECEBIDO'::"OfferStatus",
+        data_nascimento = NULL, sexo = NULL, nome_mae = NULL, email = NULL,
+        telefone_lemit = NULL, whatsapp_lemit = NULL, endereco = NULL, uf = NULL,
+        cep = NULL, bairro = NULL, cidade = NULL, numero = NULL, logradouro = NULL,
+        complemento = NULL, telefone_atualizado = NULL, telefone_validado = NULL,
+        possui_whatsapp = NULL, dados_pessoa_lemit = NULL,
+        routing_rule_id = NULL, endpoint_id = NULL, campaign_id = NULL,
+        reserved_at = NULL, tentativas_telefone = 0, tentativas_whatsapp = 0,
+        tentativas_envio = 0, proxima_tentativa_em = NULL,
+        whatsapp_request_id = NULL, whatsapp_check_iniciado_em = NULL,
+        updated_at = now()
+      WHERE webhook_id = ${input.webhookId} AND regexp_replace(cpf, '\\D', '', 'g') = regexp_replace(${input.cpf}, '\\D', '', 'g')
+      RETURNING id, webhook_id AS "webhookId", idempotency_key AS "idempotencyKey", status, created_at AS "createdAt"
+    `;
+    if (resetadas.length > 0) {
+      return { offer: resetadas[0], kind: "reset" };
+    }
+
     try {
       const offer = await this.prisma.offer.create({
         data: {
@@ -42,11 +79,12 @@ export class PrismaOffersPort implements OffersPort {
           status: "RECEBIDO",
         },
       });
-      return { offer, created: true };
+      return { offer, kind: "created" };
     } catch (error) {
-      // Duas requisições simultâneas com a mesma idempotency_key: a constraint única
-      // (webhookId, idempotencyKey) garante que só uma cria; a outra cai aqui e
-      // devolve o registro existente em vez de duplicar (item 3 do escopo original).
+      // Corrida rara: duas requisições simultâneas pro MESMO CPF novo (nenhuma
+      // achou a outra no SELECT/UPDATE acima, ambas tentaram criar) — a
+      // constraint única (webhookId, idempotencyKey) garante que só uma cria
+      // de verdade; a outra cai aqui e devolve a que já foi criada.
       if (this.isUniqueConstraintError(error)) {
         const existing = await this.prisma.offer.findUnique({
           where: {
@@ -57,7 +95,7 @@ export class PrismaOffersPort implements OffersPort {
           },
         });
         if (existing) {
-          return { offer: existing, created: false };
+          return { offer: existing, kind: "duplicate" };
         }
       }
       throw error;
