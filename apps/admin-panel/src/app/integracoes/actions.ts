@@ -44,3 +44,26 @@ export async function salvarCredenciais(integracao: "lemit" | "whatsapp", formDa
   });
   revalidatePath("/integracoes");
 }
+
+// Relatório periódico (novo, painel "Integrações"): liga/desliga a integração e
+// salva o endpoint + a frequência (em horas) que o worker7 usa pra decidir quando
+// enviar o próximo relatório do dia.
+
+export async function toggleRelatorioPeriodico(ativo: boolean): Promise<void> {
+  await adminApiFetch("/admin/integrations/relatorio-periodico", {
+    method: "POST",
+    body: JSON.stringify({ ativo }),
+  });
+  revalidatePath("/integracoes");
+}
+
+export async function salvarRelatorioPeriodico(formData: FormData): Promise<void> {
+  const endpointUrl = String(formData.get("endpointUrl") ?? "");
+  const intervaloRaw = String(formData.get("intervaloHoras") ?? "").trim();
+  const intervaloHoras = intervaloRaw !== "" ? Number(intervaloRaw) : undefined;
+  await adminApiFetch("/admin/integrations/relatorio-periodico", {
+    method: "POST",
+    body: JSON.stringify({ endpointUrl, intervaloHoras }),
+  });
+  revalidatePath("/integracoes");
+}

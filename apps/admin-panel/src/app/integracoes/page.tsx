@@ -1,5 +1,5 @@
 import { adminApiFetch } from "@/lib/api";
-import { setLimitEnabled, salvarCredenciais } from "./actions";
+import { setLimitEnabled, salvarCredenciais, toggleRelatorioPeriodico, salvarRelatorioPeriodico } from "./actions";
 import { formatarDataHora } from "@/lib/data-hora";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +27,12 @@ interface CredenciaisIntegracoes {
   whatsapp: CredencialStatus;
 }
 
+interface RelatorioPeriodicoStatus {
+  ativo: boolean;
+  endpointUrl: string | null;
+  intervaloHoras: number | null;
+}
+
 export default async function IntegracoesPage() {
   let status: LimitStatus | null = null;
   let error: string | null = null;
@@ -42,6 +48,14 @@ export default async function IntegracoesPage() {
     credenciais = await adminApiFetch<CredenciaisIntegracoes>("/admin/integrations/credenciais");
   } catch (e) {
     erroCredenciais = e instanceof Error ? e.message : String(e);
+  }
+
+  let relatorioPeriodico: RelatorioPeriodicoStatus | null = null;
+  let erroRelatorioPeriodico: string | null = null;
+  try {
+    relatorioPeriodico = await adminApiFetch<RelatorioPeriodicoStatus>("/admin/integrations/relatorio-periodico");
+  } catch (e) {
+    erroRelatorioPeriodico = e instanceof Error ? e.message : String(e);
   }
 
   return (
@@ -116,6 +130,65 @@ export default async function IntegracoesPage() {
             intervaloPadrao={5}
             limitePadrao={20}
           />
+        </div>
+      )}
+
+      <h1 style={{ marginTop: 40 }}>Relatório periódico</h1>
+      <p className="subtitle">
+        Envia por POST as contagens de HOJE (Total de ofertas recebidas, Aguardando
+        processamento, Com Lemit validado, Com Whatsapp validado, Aguardando consulta
+        do disparo, Com disparo consultado, Disparo enviado, Disparo respondido, Taxa
+        de resposta) para o endpoint cadastrado abaixo, na frequência configurada.
+        Requisição POST simples, com header <code>Content-Type: application/json</code>{" "}
+        apenas.
+      </p>
+
+      {erroRelatorioPeriodico && <p className="empty-state">Não foi possível carregar: {erroRelatorioPeriodico}</p>}
+
+      {relatorioPeriodico && (
+        <div className="card">
+          <div className="toggle-form">
+            <strong>Relatório periódico</strong>
+            <span className={`badge ${relatorioPeriodico.ativo ? "good" : "neutral"}`}>
+              {relatorioPeriodico.ativo ? "● ATIVADO" : "○ DESATIVADO"}
+            </span>
+            <form action={toggleRelatorioPeriodico.bind(null, !relatorioPeriodico.ativo)}>
+              <button type="submit" className={relatorioPeriodico.ativo ? "secondary" : ""}>
+                {relatorioPeriodico.ativo ? "Desativar" : "Ativar"}
+              </button>
+            </form>
+          </div>
+
+          <form action={salvarRelatorioPeriodico} style={{ marginTop: 16 }}>
+            <div style={{ marginBottom: 10 }}>
+              <label htmlFor="relatorio-endpointUrl" style={{ display: "block", marginBottom: 4 }}>
+                URL do endpoint (recebe o POST)
+              </label>
+              <input
+                id="relatorio-endpointUrl"
+                name="endpointUrl"
+                type="text"
+                defaultValue={relatorioPeriodico.endpointUrl ?? ""}
+                placeholder="https://seu-sistema.com/webhook/relatorio"
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label htmlFor="relatorio-intervaloHoras" style={{ display: "block", marginBottom: 4 }}>
+                Frequência de envio (em horas — ex.: 4 = de 4 em 4 horas)
+              </label>
+              <input
+                id="relatorio-intervaloHoras"
+                name="intervaloHoras"
+                type="number"
+                min={1}
+                step={1}
+                defaultValue={relatorioPeriodico.intervaloHoras ?? 4}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <button type="submit">Salvar</button>
+          </form>
         </div>
       )}
     </div>

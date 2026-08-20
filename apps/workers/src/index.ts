@@ -1,6 +1,7 @@
 import IORedis from "ioredis";
 import { logger } from "@plataforma-ofertas/shared";
-import { prisma, PrismaPipelineRepository } from "@plataforma-ofertas/database";
+import { prisma, PrismaPipelineRepository, AdminRepository } from "@plataforma-ofertas/database";
+import { inicioDoDiaEmBrasilia } from "@plataforma-ofertas/domain";
 import { createLimitService } from "@plataforma-ofertas/integration-limit";
 import { createWhatsAppValidationService } from "@plataforma-ofertas/integration-whatsapp";
 import { createHyperflowService } from "@plataforma-ofertas/integration-hyperflow";
@@ -9,6 +10,7 @@ import { runWhatsappWorkerOnce } from "./workers/worker2-whatsapp";
 import { runDispatchWorkerOnce } from "./workers/worker4-dispatch";
 import { runRetryWorkerOnce } from "./workers/worker5-retry";
 import { runReconciliationWorkerOnce } from "./workers/worker6-reconciliation";
+import { runRelatorioPeriodicoWorkerOnce } from "./workers/worker7-relatorio-periodico";
 
 // Entry point dos 6 workers do pipeline (seção 6.1 do doc de arquitetura). Cada um é
 // um polling loop simples (setInterval) — roda tudo em um único processo Node por
@@ -16,6 +18,7 @@ import { runReconciliationWorkerOnce } from "./workers/worker6-reconciliation";
 // (o schema/domínio já é o mesmo, só muda como este arquivo é dividido).
 
 const repo = new PrismaPipelineRepository(prisma);
+const adminRepo = new AdminRepository(prisma);
 const redis = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 
 // Credenciais da Lemit e da CorbanTech (WhatsApp) agora são editáveis no painel
@@ -152,6 +155,35 @@ async function resolverParametrosLote(padroes: {
   }
 }
 
+// Config do worker7 (relatório periódico) — mesmo padrão dos resolvers acima:
+// lida do banco a cada ciclo, então trocar o endpoint/frequência no painel
+// ("Integrações") vale a partir do ciclo seguinte, sem reiniciar nada. Ao
+// contrário das outras integrações, aqui o intervalo é em HORAS (o usuário pediu
+// algo como "de 4 em 4 horas"), não segundos.
+async function resolverConfigRelatorioPeriodico(): Promise<{ ativo: boolean; endpointUrl: string | null }> {
+  try {
+    const config = await prisma.integrationConfig.findUnique({ where: { chave: "RELATORIO_PERIODICO_WEBHOOK" } });
+    const valor = (config?.valor ?? {}) as { endpointUrl?: string };
+    return { ativo: config?.ativo ?? false, endpointUrl: valor.endpointUrl || null };
+  } catch (error) {
+    logger.warn({ error }, "Falha ao ler a config do relatório periódico — ciclo será ignorado");
+    return { ativo: false, endpointUrl: null };
+  }
+}
+
+async function resolverIntervaloRelatorioPeriodicoMs(padraoMs: number): Promise<number> {
+  try {
+    const config = await prisma.integrationConfig.findUnique({ where: { chave: "RELATORIO_PERIODICO_WEBHOOK" } });
+    const valor = (config?.valor ?? {}) as { intervaloHoras?: number };
+    if (typeof valor.intervaloHoras === "number" && valor.intervaloHoras > 0) {
+      return valor.intervaloHoras * 60 * 60 * 1000;
+    }
+  } catch (error) {
+    logger.warn({ error }, "Falha ao ler o intervalo do relatório periódico — usando o padrão");
+  }
+  return padraoMs;
+}
+
 const hyperflowService = createHyperflowService();
 
 // "resolverIntervalo" (opcional): quando informado, o próximo ciclo é
@@ -251,6 +283,25 @@ loop("worker6-reconciliation", Number(process.env.WORKER6_INTERVAL_MS ?? 60000),
     reconciliationPort: repo,
     slaMs: Number(process.env.RECONCILIATION_SLA_MS ?? 10 * 60 * 1000),
   })
+);
+
+// Worker7 — relatório periódico (nova integração, painel "Integrações"): envia por
+// POST as contagens de HOJE (em Brasília) pro endpoint que o usuário cadastrar, na
+// frequência que ele configurar (ex.: de 4 em 4 horas — WORKER7_INTERVAL_MS só serve
+// de padrão de fallback antes de qualquer configuração salva no painel). O guard
+// "!ativo" evita calcular os KPIs à toa quando a integração está desligada.
+const WORKER7_INTERVAL_MS_PADRAO = Number(process.env.WORKER7_INTERVAL_MS ?? 4 * 60 * 60 * 1000);
+
+loop(
+  "worker7-relatorio-periodico",
+  WORKER7_INTERVAL_MS_PADRAO,
+  async () => {
+    const { ativo, endpointUrl } = await resolverConfigRelatorioPeriodico();
+    if (!ativo) return 0;
+    const kpis = await adminRepo.dashboardKpis({ from: inicioDoDiaEmBrasilia(), to: new Date() });
+    return runRelatorioPeriodicoWorkerOnce({ ativo, endpointUrl, kpis });
+  },
+  () => resolverIntervaloRelatorioPeriodicoMs(WORKER7_INTERVAL_MS_PADRAO)
 );
 
 process.on("SIGTERM", async () => {

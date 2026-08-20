@@ -551,6 +551,44 @@ export class AdminRepository {
     });
   }
 
+  // -- Relatório periódico (nova integração — envia os KPIs do dia por POST pro
+  // endpoint cadastrado aqui pelo usuário, na frequência configurada) -----------
+  // Mesmo padrão das credenciais acima: uma chave própria em "integration_configs",
+  // { endpointUrl, intervaloHoras } dentro de "valor", "ativo" no campo já existente
+  // da tabela. O worker (apps/workers/src/index.ts) lê essa config a cada ciclo.
+
+  async getRelatorioPeriodicoConfig() {
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "RELATORIO_PERIODICO_WEBHOOK" } });
+    const valor = (config?.valor ?? {}) as { endpointUrl?: string; intervaloHoras?: number };
+    return {
+      ativo: config?.ativo ?? false,
+      endpointUrl: valor.endpointUrl ?? null,
+      intervaloHoras: typeof valor.intervaloHoras === "number" && valor.intervaloHoras > 0 ? valor.intervaloHoras : null,
+    };
+  }
+
+  async salvarRelatorioPeriodicoConfig(dados: { ativo?: boolean; endpointUrl?: string; intervaloHoras?: number }) {
+    const atual = await this.prisma.integrationConfig.findUnique({ where: { chave: "RELATORIO_PERIODICO_WEBHOOK" } });
+    const valorAtual = (atual?.valor ?? {}) as { endpointUrl?: string; intervaloHoras?: number };
+    const endpointUrl =
+      dados.endpointUrl !== undefined
+        ? dados.endpointUrl.trim() === ""
+          ? null
+          : dados.endpointUrl.trim()
+        : valorAtual.endpointUrl ?? null;
+    const intervaloHoras =
+      dados.intervaloHoras !== undefined && Number.isFinite(dados.intervaloHoras) && dados.intervaloHoras > 0
+        ? Math.floor(dados.intervaloHoras)
+        : valorAtual.intervaloHoras ?? null;
+    const novoValor = { endpointUrl, intervaloHoras };
+    const ativo = dados.ativo ?? atual?.ativo ?? false;
+    return this.prisma.integrationConfig.upsert({
+      where: { chave: "RELATORIO_PERIODICO_WEBHOOK" },
+      update: { valor: novoValor, ativo },
+      create: { chave: "RELATORIO_PERIODICO_WEBHOOK", valor: novoValor, ativo },
+    });
+  }
+
   // -- Endpoints (item 19) ---------------------------------------------------------
 
   // -- Parceiros (webhooks de entrada) -----------------------------------------

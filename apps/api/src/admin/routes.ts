@@ -131,6 +131,23 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         return atualizado[body.integracao as "lemit" | "whatsapp"];
       });
 
+      // Relatório periódico: envia os KPIs do dia (mesmas contagens do
+      // /dashboard/kpis) por POST simples pro endpoint cadastrado aqui, na
+      // frequência configurada (worker7-relatorio-periodico, apps/workers).
+      instance.get("/integrations/relatorio-periodico", async () => adminRepo.getRelatorioPeriodicoConfig());
+
+      instance.post<{
+        Body: { ativo?: boolean; endpointUrl?: string; intervaloHoras?: number };
+      }>("/integrations/relatorio-periodico", async (request) => {
+        const body = request.body ?? {};
+        await adminRepo.salvarRelatorioPeriodicoConfig({
+          ativo: body.ativo,
+          endpointUrl: body.endpointUrl,
+          intervaloHoras: body.intervaloHoras,
+        });
+        return adminRepo.getRelatorioPeriodicoConfig();
+      });
+
       instance.get("/webhooks", async () => adminRepo.listWebhooks());
 
       instance.post<{
