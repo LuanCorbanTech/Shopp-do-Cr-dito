@@ -4,9 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import { OfferModalButton, type OfferFullInfo } from "./OfferModal";
 import { TODOS_STATUS } from "@/lib/periodo";
+import { formatarDataHora } from "@/lib/data-hora";
 
 interface Offer extends OfferFullInfo {
   createdAt: string;
+  updatedAt: string;
 }
 
 interface OffersResponse {
@@ -119,13 +121,15 @@ export function OfertasClient() {
               <th>Banco</th>
               <th>WhatsApp</th>
               <th>Status</th>
+              <th>Horário recebido</th>
+              <th>Última atualização</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             {carregando && !data && (
               <tr>
-                <td colSpan={6} className="empty-state">
+                <td colSpan={8} className="empty-state">
                   Carregando…
                 </td>
               </tr>
@@ -155,6 +159,8 @@ export function OfertasClient() {
                       <StatusBadge status={offer.status} />
                     </a>
                   </td>
+                  <td style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{formatarDataHora(offer.createdAt)}</td>
+                  <td style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{formatarDataHora(offer.updatedAt)}</td>
                   <td>
                     <OfferModalButton offer={offer} />
                   </td>
@@ -163,7 +169,7 @@ export function OfertasClient() {
             })}
             {data && data.items.length === 0 && (
               <tr>
-                <td colSpan={6} className="empty-state">
+                <td colSpan={8} className="empty-state">
                   Nenhuma oferta encontrada.
                 </td>
               </tr>

@@ -15,6 +15,7 @@ import { PerformanceParceiroCard } from "@/components/dashboard/PerformanceParce
 import { HorarioRespostaCard } from "@/components/dashboard/HorarioRespostaCard";
 import { formatarDeltaPercentual, deltaEhPositivo } from "@/components/dashboard/formatacao";
 import { calcularIntervalo, type Periodo } from "@/lib/periodo";
+import { formatarDataHora } from "@/lib/data-hora";
 
 interface KpiContagens {
   totalRecebidas: number;
@@ -275,10 +276,7 @@ export function DashboardClient() {
     return () => clearInterval(tick);
   }, [carregar]);
 
-  const agora = kpis ? new Date(kpis.atualizadoEm) : null;
-  const atualizadoTexto = agora
-    ? agora.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })
-    : "—";
+  const atualizadoTexto = kpis ? formatarDataHora(kpis.atualizadoEm, { second: "2-digit" }) : "—";
 
   // Selo de variação (▲/▼ vs. período anterior) de cada KPI de vazão — só
   // aparece quando dashboardKpis conseguiu calcular o período anterior (ver

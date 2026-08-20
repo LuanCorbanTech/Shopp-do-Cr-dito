@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { criarUsuarioAction, atualizarUsuarioAction, gerarSenhaAction, type UsuarioPainel } from "./actions";
+import { formatarDataHora } from "@/lib/data-hora";
 
 const ROLE_LABEL: Record<UsuarioPainel["role"], string> = {
   ADMINISTRADOR: "Administrador",
@@ -11,7 +12,7 @@ const ROLE_LABEL: Record<UsuarioPainel["role"], string> = {
 
 function fmtData(iso: string | null): string {
   if (!iso) return "Nunca";
-  return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return formatarDataHora(iso);
 }
 
 function NovoUsuarioModal({ onFechar, onCriado }: { onFechar: () => void; onCriado: () => void }) {

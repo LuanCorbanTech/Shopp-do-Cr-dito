@@ -1,5 +1,6 @@
 import { adminApiFetch } from "@/lib/api";
 import { setLimitEnabled, salvarCredenciais } from "./actions";
+import { formatarDataHora } from "@/lib/data-hora";
 
 export const dynamic = "force-dynamic";
 
@@ -78,7 +79,7 @@ export default async function IntegracoesPage() {
             </div>
             <div className="stat-tile">
               <div className="value" style={{ fontSize: 14 }}>
-                {status.ultimaExecucao ? new Date(status.ultimaExecucao).toLocaleString("pt-BR") : "—"}
+                {formatarDataHora(status.ultimaExecucao)}
               </div>
               <div className="label">Última execução</div>
             </div>

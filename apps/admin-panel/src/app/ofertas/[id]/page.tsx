@@ -1,5 +1,6 @@
 import { adminApiFetch } from "@/lib/api";
 import { StatusBadge } from "@/components/status-badge";
+import { formatarDataHora } from "@/lib/data-hora";
 
 export const dynamic = "force-dynamic";
 
@@ -119,7 +120,7 @@ export default async function OfertaDetailPage({ params }: { params: { id: strin
       <h2>Timeline</h2>
       <ul className="timeline">
         <li>
-          <span className="ts">{new Date(offer.createdAt).toLocaleString("pt-BR")}</span>
+          <span className="ts">{formatarDataHora(offer.createdAt, { second: "2-digit" })}</span>
           Oferta recebida
         </li>
         {processingEvents.map((event) => {
@@ -130,7 +131,7 @@ export default async function OfertaDetailPage({ params }: { params: { id: strin
               : null;
           return (
             <li key={event.id}>
-              <span className="ts">{new Date(event.createdAt).toLocaleString("pt-BR")}</span>
+              <span className="ts">{formatarDataHora(event.createdAt, { second: "2-digit" })}</span>
               {event.etapa} — {event.resultado} (tentativa {event.tentativa})
               {detalheErro && (
                 <div style={{ color: "var(--status-critical)", fontSize: 13, marginTop: 4 }}>Motivo: {String(detalheErro)}</div>

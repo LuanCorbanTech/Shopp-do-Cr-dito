@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatarData } from "@/lib/data-hora";
 
 // Modal simples (sem biblioteca externa) que mostra todos os campos da oferta
 // — a tabela principal só mostra Nome/CPF/WhatsApp pra não ficar poluída (ver
@@ -53,9 +54,7 @@ function Campo({ label, value }: { label: string; value: string | number | null 
 export function OfferModalButton({ offer }: { offer: OfferFullInfo }) {
   const [aberto, setAberto] = useState(false);
 
-  const dataNascimentoFormatada = offer.dataNascimento
-    ? new Date(offer.dataNascimento).toLocaleDateString("pt-BR")
-    : null;
+  const dataNascimentoFormatada = offer.dataNascimento ? formatarData(offer.dataNascimento) : null;
 
   return (
     <>

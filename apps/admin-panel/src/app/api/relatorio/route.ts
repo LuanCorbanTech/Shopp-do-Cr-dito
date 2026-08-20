@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { adminApiFetch } from "@/lib/api";
+import { formatarData, formatarDataHora } from "@/lib/data-hora";
 
 // Mesmos campos do modal "Ver tudo" da tela de Ofertas — reaproveitados aqui
 // pra virar colunas da planilha (pedido explícito de estrutura de colunas).
@@ -40,15 +41,21 @@ function simNaoOuVazio(valor: boolean | null): string {
   return "";
 }
 
+// Delega pro helper compartilhado (@/lib/data-hora), que fixa o fuso em
+// America/Sao_Paulo explicitamente — antes, sem "timeZone" no
+// toLocaleString/toLocaleDateString, essas duas funções rodavam no fuso do
+// SERVIDOR (o droplet, em UTC), então o relatório baixado mostrava a hora
+// certa do banco só por coincidência, quando o servidor estava em UTC-3;
+// no droplet em UTC, vinha 3h adiantado. Mantém "" em vez de "—" pra não
+// mudar o formato de célula vazia que a planilha já usava.
 function fmtData(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? "" : d.toLocaleDateString("pt-BR");
+  const texto = formatarData(iso);
+  return texto === "—" ? "" : texto;
 }
 
 function fmtDataHora(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? "" : d.toLocaleString("pt-BR");
+  const texto = formatarDataHora(iso);
+  return texto === "—" ? "" : texto;
 }
 
 export async function GET(request: NextRequest) {
