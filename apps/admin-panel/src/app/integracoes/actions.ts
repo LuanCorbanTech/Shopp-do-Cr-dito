@@ -46,8 +46,9 @@ export async function salvarCredenciais(integracao: "lemit" | "whatsapp", formDa
 }
 
 // Relatório periódico (novo, painel "Integrações"): liga/desliga a integração e
-// salva o endpoint + a frequência (em horas) que o worker7 usa pra decidir quando
-// enviar o próximo relatório do dia.
+// salva o endpoint, a frequência (em horas) e a janela de horário permitida
+// (horaInicio/horaFim, "HH:MM" em Brasília — pra não enviar de madrugada) que o
+// worker7 usa pra decidir quando enviar o próximo relatório do dia.
 
 export async function toggleRelatorioPeriodico(ativo: boolean): Promise<void> {
   await adminApiFetch("/admin/integrations/relatorio-periodico", {
@@ -61,9 +62,11 @@ export async function salvarRelatorioPeriodico(formData: FormData): Promise<void
   const endpointUrl = String(formData.get("endpointUrl") ?? "");
   const intervaloRaw = String(formData.get("intervaloHoras") ?? "").trim();
   const intervaloHoras = intervaloRaw !== "" ? Number(intervaloRaw) : undefined;
+  const horaInicio = String(formData.get("horaInicio") ?? "");
+  const horaFim = String(formData.get("horaFim") ?? "");
   await adminApiFetch("/admin/integrations/relatorio-periodico", {
     method: "POST",
-    body: JSON.stringify({ endpointUrl, intervaloHoras }),
+    body: JSON.stringify({ endpointUrl, intervaloHoras, horaInicio, horaFim }),
   });
   revalidatePath("/integracoes");
 }

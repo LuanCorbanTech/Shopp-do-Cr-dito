@@ -137,13 +137,21 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       instance.get("/integrations/relatorio-periodico", async () => adminRepo.getRelatorioPeriodicoConfig());
 
       instance.post<{
-        Body: { ativo?: boolean; endpointUrl?: string; intervaloHoras?: number };
+        Body: {
+          ativo?: boolean;
+          endpointUrl?: string;
+          intervaloHoras?: number;
+          horaInicio?: string;
+          horaFim?: string;
+        };
       }>("/integrations/relatorio-periodico", async (request) => {
         const body = request.body ?? {};
         await adminRepo.salvarRelatorioPeriodicoConfig({
           ativo: body.ativo,
           endpointUrl: body.endpointUrl,
           intervaloHoras: body.intervaloHoras,
+          horaInicio: body.horaInicio,
+          horaFim: body.horaFim,
         });
         return adminRepo.getRelatorioPeriodicoConfig();
       });

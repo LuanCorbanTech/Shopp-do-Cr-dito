@@ -31,6 +31,8 @@ interface RelatorioPeriodicoStatus {
   ativo: boolean;
   endpointUrl: string | null;
   intervaloHoras: number | null;
+  horaInicio: string | null;
+  horaFim: string | null;
 }
 
 export default async function IntegracoesPage() {
@@ -138,9 +140,9 @@ export default async function IntegracoesPage() {
         Envia por POST as contagens de HOJE (Total de ofertas recebidas, Aguardando
         processamento, Com Lemit validado, Com Whatsapp validado, Aguardando consulta
         do disparo, Com disparo consultado, Disparo enviado, Disparo respondido, Taxa
-        de resposta) para o endpoint cadastrado abaixo, na frequência configurada.
-        Requisição POST simples, com header <code>Content-Type: application/json</code>{" "}
-        apenas.
+        de resposta) para o endpoint cadastrado abaixo, na frequência configurada,
+        dentro da janela de horário escolhida. Requisição POST simples, com header{" "}
+        <code>Content-Type: application/json</code> apenas.
       </p>
 
       {erroRelatorioPeriodico && <p className="empty-state">Não foi possível carregar: {erroRelatorioPeriodico}</p>}
@@ -187,6 +189,37 @@ export default async function IntegracoesPage() {
                 style={{ width: "100%" }}
               />
             </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 4 }}>
+              <div>
+                <label htmlFor="relatorio-horaInicio" style={{ display: "block", marginBottom: 4 }}>
+                  Não enviar antes de (horário de Brasília)
+                </label>
+                <input
+                  id="relatorio-horaInicio"
+                  name="horaInicio"
+                  type="time"
+                  defaultValue={relatorioPeriodico.horaInicio ?? "08:00"}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div>
+                <label htmlFor="relatorio-horaFim" style={{ display: "block", marginBottom: 4 }}>
+                  Não enviar depois de (horário de Brasília)
+                </label>
+                <input
+                  id="relatorio-horaFim"
+                  name="horaFim"
+                  type="time"
+                  defaultValue={relatorioPeriodico.horaFim ?? "20:00"}
+                  style={{ width: "100%" }}
+                />
+              </div>
+            </div>
+            <p className="subtitle" style={{ marginTop: 0, marginBottom: 10 }}>
+              O relatório só é enviado dentro dessa janela (ex.: 08:00 até 20:00 —
+              nada de madrugada). Deixe os dois campos vazios e salve pra remover a
+              restrição e enviar em qualquer horário.
+            </p>
             <button type="submit">Salvar</button>
           </form>
         </div>

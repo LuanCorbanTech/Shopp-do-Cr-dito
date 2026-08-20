@@ -1,4 +1,5 @@
 import { logger } from "@plataforma-ofertas/shared";
+import { estaDentroDaJanelaDeEnvio } from "@plataforma-ofertas/domain";
 
 // Worker 7 — Relatório periódico. Diferente dos workers 1-6, este não manipula
 // estado de ofertas através das portas do pipeline (não precisa — só lê contagens
@@ -6,10 +7,11 @@ import { logger } from "@plataforma-ofertas/shared";
 // trabalho dele é montar o relatório do dia e enviar via POST simples pro
 // endpoint que o usuário cadastrar no painel ("Integrações"). Por isso é uma
 // função pura (sem porta/interface própria), recebendo já resolvidos: se está
-// ativo, a URL de destino, e as contagens do dia — tudo isso é resolvido em
-// apps/workers/src/index.ts (config lida do banco a cada ciclo, igual aos
-// outros workers; contagens vindas de AdminRepository.dashboardKpis, a mesma
-// consulta que alimenta os cards do Dashboard).
+// ativo, a URL de destino, a janela de horário permitida, e as contagens do dia
+// — tudo isso é resolvido em apps/workers/src/index.ts (config lida do banco a
+// cada ciclo, igual aos outros workers; contagens vindas de
+// AdminRepository.dashboardKpis, a mesma consulta que alimenta os cards do
+// Dashboard).
 
 export interface RelatorioPeriodicoKpis {
   totalRecebidas: number;
@@ -26,6 +28,11 @@ export interface RunRelatorioPeriodicoWorkerOnceParams {
   ativo: boolean;
   endpointUrl?: string | null;
   kpis: RelatorioPeriodicoKpis;
+  /** "HH:MM" — início/fim da janela de horário permitida pro envio (em Brasília). Sem os dois, envia a qualquer hora. */
+  horaInicio?: string | null;
+  horaFim?: string | null;
+  /** Instante usado pra checar a janela de horário — só pra testar; em produção usa o agora de verdade. */
+  agora?: Date;
   /** Injeção do fetch — só pra testar sem rede de verdade; em produção usa o fetch global. */
   fetchImpl?: typeof fetch;
 }
@@ -60,11 +67,18 @@ export function montarRelatorioPeriodicoBody(kpis: RelatorioPeriodicoKpis): Rela
 }
 
 export async function runRelatorioPeriodicoWorkerOnce(params: RunRelatorioPeriodicoWorkerOnceParams): Promise<number> {
-  const { ativo, endpointUrl, kpis, fetchImpl = fetch } = params;
+  const { ativo, endpointUrl, kpis, horaInicio, horaFim, agora = new Date(), fetchImpl = fetch } = params;
 
   if (!ativo) return 0;
   if (!endpointUrl) {
     logger.warn("Relatório periódico ativado mas sem endpoint cadastrado no painel — ciclo ignorado");
+    return 0;
+  }
+  if (!estaDentroDaJanelaDeEnvio(agora, horaInicio, horaFim)) {
+    logger.info(
+      { horaInicio, horaFim },
+      "Fora da janela de horário configurada pro relatório periódico — ciclo ignorado"
+    );
     return 0;
   }
 

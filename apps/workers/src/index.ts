@@ -160,14 +160,26 @@ async function resolverParametrosLote(padroes: {
 // ("Integrações") vale a partir do ciclo seguinte, sem reiniciar nada. Ao
 // contrário das outras integrações, aqui o intervalo é em HORAS (o usuário pediu
 // algo como "de 4 em 4 horas"), não segundos.
-async function resolverConfigRelatorioPeriodico(): Promise<{ ativo: boolean; endpointUrl: string | null }> {
+async function resolverConfigRelatorioPeriodico(): Promise<{
+  ativo: boolean;
+  endpointUrl: string | null;
+  horaInicio: string | null;
+  horaFim: string | null;
+}> {
   try {
     const config = await prisma.integrationConfig.findUnique({ where: { chave: "RELATORIO_PERIODICO_WEBHOOK" } });
-    const valor = (config?.valor ?? {}) as { endpointUrl?: string };
-    return { ativo: config?.ativo ?? false, endpointUrl: valor.endpointUrl || null };
+    const valor = (config?.valor ?? {}) as { endpointUrl?: string; horaInicio?: string; horaFim?: string };
+    return {
+      ativo: config?.ativo ?? false,
+      endpointUrl: valor.endpointUrl || null,
+      // Janela de horário permitida pro envio (ex.: "08:00" a "20:00", pra não
+      // mandar de madrugada) — sem os dois, o worker envia a qualquer hora.
+      horaInicio: valor.horaInicio || null,
+      horaFim: valor.horaFim || null,
+    };
   } catch (error) {
     logger.warn({ error }, "Falha ao ler a config do relatório periódico — ciclo será ignorado");
-    return { ativo: false, endpointUrl: null };
+    return { ativo: false, endpointUrl: null, horaInicio: null, horaFim: null };
   }
 }
 
@@ -296,10 +308,10 @@ loop(
   "worker7-relatorio-periodico",
   WORKER7_INTERVAL_MS_PADRAO,
   async () => {
-    const { ativo, endpointUrl } = await resolverConfigRelatorioPeriodico();
+    const { ativo, endpointUrl, horaInicio, horaFim } = await resolverConfigRelatorioPeriodico();
     if (!ativo) return 0;
     const kpis = await adminRepo.dashboardKpis({ from: inicioDoDiaEmBrasilia(), to: new Date() });
-    return runRelatorioPeriodicoWorkerOnce({ ativo, endpointUrl, kpis });
+    return runRelatorioPeriodicoWorkerOnce({ ativo, endpointUrl, horaInicio, horaFim, kpis });
   },
   () => resolverIntervaloRelatorioPeriodicoMs(WORKER7_INTERVAL_MS_PADRAO)
 );

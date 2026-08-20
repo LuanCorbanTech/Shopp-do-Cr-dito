@@ -98,4 +98,50 @@ describe("runRelatorioPeriodicoWorkerOnce", () => {
     });
     expect(resultado).toBe(0);
   });
+
+  it("não envia fora da janela de horário configurada (ex.: de madrugada)", async () => {
+    const fetchImpl = vi.fn();
+    // 2026-08-20T06:00:00Z = 03:00 em Brasília — de madrugada, fora de 08:00-20:00.
+    const resultado = await runRelatorioPeriodicoWorkerOnce({
+      ativo: true,
+      endpointUrl: "https://exemplo.com/relatorio",
+      kpis: KPIS_EXEMPLO,
+      horaInicio: "08:00",
+      horaFim: "20:00",
+      agora: new Date("2026-08-20T06:00:00.000Z"),
+      fetchImpl,
+    });
+    expect(resultado).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("envia normalmente dentro da janela de horário configurada", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    // 2026-08-20T15:00:00Z = 12:00 em Brasília — dentro de 08:00-20:00.
+    const resultado = await runRelatorioPeriodicoWorkerOnce({
+      ativo: true,
+      endpointUrl: "https://exemplo.com/relatorio",
+      kpis: KPIS_EXEMPLO,
+      horaInicio: "08:00",
+      horaFim: "20:00",
+      agora: new Date("2026-08-20T15:00:00.000Z"),
+      fetchImpl,
+    });
+    expect(resultado).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("sem janela configurada, envia a qualquer hora (comportamento de antes de o campo existir)", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    const resultado = await runRelatorioPeriodicoWorkerOnce({
+      ativo: true,
+      endpointUrl: "https://exemplo.com/relatorio",
+      kpis: KPIS_EXEMPLO,
+      horaInicio: null,
+      horaFim: null,
+      agora: new Date("2026-08-20T06:00:00.000Z"),
+      fetchImpl,
+    });
+    expect(resultado).toBe(1);
+  });
 });

@@ -566,22 +566,44 @@ export class AdminRepository {
   // -- Relatório periódico (nova integração — envia os KPIs do dia por POST pro
   // endpoint cadastrado aqui pelo usuário, na frequência configurada) -----------
   // Mesmo padrão das credenciais acima: uma chave própria em "integration_configs",
-  // { endpointUrl, intervaloHoras } dentro de "valor", "ativo" no campo já existente
-  // da tabela. O worker (apps/workers/src/index.ts) lê essa config a cada ciclo.
+  // { endpointUrl, intervaloHoras, horaInicio, horaFim } dentro de "valor", "ativo"
+  // no campo já existente da tabela. O worker (apps/workers/src/index.ts) lê essa
+  // config a cada ciclo. "horaInicio"/"horaFim" ("HH:MM", horário de Brasília) são a
+  // janela em que o envio é permitido (ex.: "08:00"/"20:00" pra não mandar de
+  // madrugada) — em branco os dois, o worker envia a qualquer hora.
 
   async getRelatorioPeriodicoConfig() {
     const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "RELATORIO_PERIODICO_WEBHOOK" } });
-    const valor = (config?.valor ?? {}) as { endpointUrl?: string; intervaloHoras?: number };
+    const valor = (config?.valor ?? {}) as {
+      endpointUrl?: string;
+      intervaloHoras?: number;
+      horaInicio?: string;
+      horaFim?: string;
+    };
     return {
       ativo: config?.ativo ?? false,
       endpointUrl: valor.endpointUrl ?? null,
       intervaloHoras: typeof valor.intervaloHoras === "number" && valor.intervaloHoras > 0 ? valor.intervaloHoras : null,
+      horaInicio: valor.horaInicio ?? null,
+      horaFim: valor.horaFim ?? null,
     };
   }
 
-  async salvarRelatorioPeriodicoConfig(dados: { ativo?: boolean; endpointUrl?: string; intervaloHoras?: number }) {
+  async salvarRelatorioPeriodicoConfig(dados: {
+    ativo?: boolean;
+    endpointUrl?: string;
+    intervaloHoras?: number;
+    horaInicio?: string;
+    horaFim?: string;
+  }) {
+    const HORA_MINUTO_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
     const atual = await this.prisma.integrationConfig.findUnique({ where: { chave: "RELATORIO_PERIODICO_WEBHOOK" } });
-    const valorAtual = (atual?.valor ?? {}) as { endpointUrl?: string; intervaloHoras?: number };
+    const valorAtual = (atual?.valor ?? {}) as {
+      endpointUrl?: string;
+      intervaloHoras?: number;
+      horaInicio?: string;
+      horaFim?: string;
+    };
     const endpointUrl =
       dados.endpointUrl !== undefined
         ? dados.endpointUrl.trim() === ""
@@ -592,7 +614,26 @@ export class AdminRepository {
       dados.intervaloHoras !== undefined && Number.isFinite(dados.intervaloHoras) && dados.intervaloHoras > 0
         ? Math.floor(dados.intervaloHoras)
         : valorAtual.intervaloHoras ?? null;
-    const novoValor = { endpointUrl, intervaloHoras };
+    // Campo em branco = mantém o que já estava (mesma convenção dos outros
+    // campos acima); valor inválido (não é "HH:MM") também mantém o anterior,
+    // em vez de salvar uma janela quebrada que travaria o envio pra sempre.
+    const horaInicio =
+      dados.horaInicio !== undefined
+        ? dados.horaInicio.trim() === ""
+          ? null
+          : HORA_MINUTO_REGEX.test(dados.horaInicio.trim())
+            ? dados.horaInicio.trim()
+            : valorAtual.horaInicio ?? null
+        : valorAtual.horaInicio ?? null;
+    const horaFim =
+      dados.horaFim !== undefined
+        ? dados.horaFim.trim() === ""
+          ? null
+          : HORA_MINUTO_REGEX.test(dados.horaFim.trim())
+            ? dados.horaFim.trim()
+            : valorAtual.horaFim ?? null
+        : valorAtual.horaFim ?? null;
+    const novoValor = { endpointUrl, intervaloHoras, horaInicio, horaFim };
     const ativo = dados.ativo ?? atual?.ativo ?? false;
     return this.prisma.integrationConfig.upsert({
       where: { chave: "RELATORIO_PERIODICO_WEBHOOK" },
