@@ -284,13 +284,25 @@ export class AdminRepository {
   // a operação a concentrar reforços/retentativas de disparo na janela de
   // pico. Preenche as 24 horas mesmo sem nenhuma resposta registrada nelas,
   // pra o gráfico de barras não "pular" horas no eixo X.
+  //
+  // "disparo_respondido_em" é uma coluna `timestamp` (SEM timezone) que guarda
+  // o instante em UTC (é o que o Prisma/Node grava) — um EXTRACT(HOUR FROM ...)
+  // direto nela lê a hora literal gravada, ou seja, a hora em UTC, não em
+  // Brasília (mesmo bug de fuso já corrigido no painel, agora encontrado aqui
+  // na consulta: um pico às 18h de Brasília aparecia como 21h). Por isso
+  // convertemos explicitamente pra America/Sao_Paulo antes do EXTRACT — 1º
+  // "AT TIME ZONE 'UTC'" reinterpreta o valor gravado como o instante UTC que
+  // ele já é (vira timestamptz), 2º "AT TIME ZONE 'America/Sao_Paulo'" projeta
+  // esse instante no horário de parede de Brasília.
   async dashboardHorarioResposta(params: { from?: Date; to?: Date } = {}) {
     const desde = params.from ? Prisma.sql`AND disparo_respondido_em >= ${params.from}` : Prisma.empty;
     const ate = params.to ? Prisma.sql`AND disparo_respondido_em <= ${params.to}` : Prisma.empty;
 
     const rows = await this.prisma.$queryRaw<{ hora: number; total: bigint }[]>(
       Prisma.sql`
-        SELECT EXTRACT(HOUR FROM disparo_respondido_em)::int AS hora, count(*) AS total
+        SELECT
+          EXTRACT(HOUR FROM (disparo_respondido_em AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'))::int AS hora,
+          count(*) AS total
         FROM offers
         WHERE disparo_respondido_em IS NOT NULL ${desde} ${ate}
         GROUP BY hora

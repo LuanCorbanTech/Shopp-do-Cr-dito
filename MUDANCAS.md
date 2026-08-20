@@ -1,134 +1,100 @@
-# Nova integração: Relatório periódico (cron configurável)
+# Correção: "Horário com maior taxa de resposta" com o horário errado
 
-Este zip é **incremental** — pressupõe que os dois zips anteriores (redesign do
-Dashboard, e colunas de horário + correção de fuso) já foram aplicados. Contém só
-os arquivos alterados/novos desta rodada.
+Este zip é **incremental** — pressupõe que os três zips anteriores (redesign do
+Dashboard, colunas de horário + fuso, e a integração de Relatório periódico) já
+foram aplicados. Contém só o arquivo alterado desta rodada.
 
-## O que foi pedido
+## O que foi reportado
 
-Uma nova integração no painel: uma cron cuja frequência é configurada pelo
-próprio usuário (ex.: de 4 em 4 horas), que envia um relatório para um endpoint
-que o usuário cadastra no painel. Requisição POST simples, com um único header
-(`Content-Type: application/json`), e o corpo com 9 campos, sempre com os dados
-de HOJE:
+No card "Horário com maior taxa de resposta" do Dashboard, o pico aparecia às
+21:00 — mas esse não era o horário real de maior resposta; o valor certo
+deveria ser mais cedo.
 
-- Total de ofertas recebidas
-- Aguardando processamento
-- Com Lemit validado
-- Com Whatsapp validado
-- Aguardando consulta do disparo
-- Com disparo consultado
-- Disparo enviado
-- Disparo respondido
-- Taxa de resposta
+## O que eu encontrei
 
-## Como funciona
+Confirmado: é o mesmo tipo de bug de fuso horário já corrigido no painel (zip
+"colunas de horário e fuso"), só que dessa vez direto na consulta SQL, não na
+formatação.
 
-**1. Configuração (painel → Integrações → "Relatório periódico")**
+A coluna `disparo_respondido_em` no banco é do tipo `timestamp` **sem** fuso
+horário (`timestamp(3)`, o padrão do Prisma quando não se especifica
+`@db.Timestamptz`) — ela guarda o valor exatamente como o Node grava, que é
+sempre em UTC. O problema é que a consulta antiga fazia:
 
-Uma seção nova na página de Integrações, com:
+```sql
+EXTRACT(HOUR FROM disparo_respondido_em)
+```
 
-- Botão Ativar/Desativar (mesmo padrão do toggle da Lemit).
-- Campo para a URL do endpoint que vai receber o POST.
-- Campo para a frequência de envio, em horas (ex.: `4` = de 4 em 4 horas — é só
-  um exemplo, o número é livre).
+Isso lê a hora **literal** gravada na coluna — ou seja, a hora em UTC — sem
+converter pra Brasília. Como Brasília é UTC-3 (fixo, sem horário de verão desde
+2019), toda hora mostrada nesse card vinha **3 horas adiantada** em relação à
+hora real de Brasília.
 
-Salvar aqui vale a partir do próximo ciclo do worker (poucos segundos) — não
-precisa reiniciar nada no servidor, mesmo padrão das outras integrações.
+Isso bate exatamente com o que foi reportado: um pico verdadeiro às **18:00**
+em Brasília ficava gravado no banco como **21:00** (18:00 + 3h = 21:00 em
+UTC), e a consulta antiga lia esse "21" direto, sem converter de volta —
+exibindo 21:00 como se fosse o horário de pico real, quando na verdade era o
+horário em UTC do que aconteceu às 18:00 em Brasília.
 
-**2. Onde fica guardado**
+## A correção
 
-Reaproveita a mesma tabela `integration_configs` já usada pela Lemit e pelo
-WhatsApp (nenhuma migração de banco necessária): uma nova chave
-`RELATORIO_PERIODICO_WEBHOOK`, com `ativo` no campo já existente da tabela, e
-`{ endpointUrl, intervaloHoras }` dentro do campo `valor` (JSON).
+Troquei a consulta em `dashboardHorarioResposta`
+(`packages/database/src/repositories/admin-repository.ts`) para converter
+explicitamente pra `America/Sao_Paulo` antes de extrair a hora:
 
-**3. O worker novo (worker7-relatorio-periodico)**
+```sql
+EXTRACT(HOUR FROM (disparo_respondido_em AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'))::int
+```
 
-Roda no mesmo processo dos outros 6 workers (`apps/workers/src/index.ts`), com o
-mesmo mecanismo de intervalo reconfigurável sem reiniciar (o `loop()` já
-existente, que relê a frequência do banco a cada ciclo — igual ao que a Lemit e
-o WhatsApp já fazem com o intervalo delas).
+- `AT TIME ZONE 'UTC'` reinterpreta o valor gravado como o instante UTC que ele
+  já é (transforma num `timestamptz` de verdade).
+- `AT TIME ZONE 'America/Sao_Paulo'` projeta esse instante no horário de
+  parede de Brasília.
+- Só então o `EXTRACT(HOUR FROM ...)` lê a hora certa.
 
-A cada ciclo:
+Nenhuma outra parte dessa consulta (o filtro de período `from`/`to`, que
+compara instantes absolutos) precisou mudar — só o agrupamento por "hora do
+dia" é que dependia do fuso.
 
-1. Lê a config (`ativo`, `endpointUrl`) do banco. Se estiver desativado, não faz
-   nada (nem calcula os números à toa).
-2. Calcula o início do dia **em horário de Brasília** — não do servidor. Isso é
-   importante: se o servidor rodar em UTC (comum em droplets), "hoje" pro
-   servidor pode começar 3h antes de "hoje" em Brasília, o que faria o relatório
-   contar um pedaço de ontem junto. Criei um helper novo pra isso
-   (`packages/domain/src/fuso-horario.ts`, função `inicioDoDiaEmBrasilia`) —
-   mesmo princípio já usado na correção de fuso do zip anterior, agora aplicado
-   no lado do worker/backend. Ele usa `Intl.DateTimeFormat` pra descobrir o
-   dia/mês/ano atual em Brasília (não depende do fuso do servidor) e monta a
-   meia-noite de Brasília em UTC (00:00 BRT = 03:00 UTC, já que Brasília é
-   UTC-3 fixo, sem horário de verão desde 2019).
-3. Busca as contagens do dia usando a MESMA consulta que já alimenta os cards do
-   Dashboard (`AdminRepository.dashboardKpis`) — não duplica lógica de contagem
-   nova, só reaproveita a que já existe e já é usada e validada no Dashboard.
-4. Monta o corpo com os 9 campos, calcula "Taxa de resposta" como
-   `Disparo respondido / Disparo enviado` (fica `0`, não erro, se ainda não
-   houve nenhum disparo enviado no dia).
-5. Faz o POST pro endpoint cadastrado, com **só** o header
-   `Content-Type: application/json` (nenhum header extra, como pedido).
-6. Se o endpoint responder com erro ou estiver fora do ar, o worker só registra
-   o erro no log e tenta de novo no próximo ciclo — nunca derruba o processo.
+## Sobre os outros gráficos do Dashboard (aviso, não corrigido ainda)
 
-## Arquivos alterados (6)
+Ao procurar por esse mesmo tipo de problema no restante do arquivo, encontrei
+que os 3 gráficos de **série diária** (evolução dia a dia) fazem a mesma coisa
+com o dia, em vez da hora — usam `date_trunc('day', coluna)` direto na coluna
+em UTC, sem converter pra Brasília:
+
+- `dashboardTimeseries` (Recebidas × Processadas)
+- `dashboardEnviadosVsRespondidos` (Disparo Enviado × Respondido)
+- `dashboardRecebidasVsEnviados` (Recebidas × Enviados)
+
+Na prática, o efeito aqui é bem menor: só ofertas que acontecem entre 21h e
+23h59 em Brasília (0h-2h59 em UTC do dia seguinte) correriam o risco de cair no
+dia seguinte do gráfico em vez do dia certo — não muda quantidades totais, só
+pode deslocar uma oferta perto da virada da meia-noite para o dia ao lado no
+gráfico. Não mexi nisso agora porque não foi o que foi reportado e é uma
+mudança que eu não consigo testar de ponta a ponta neste ambiente (não tenho
+acesso a um Postgres de verdade aqui para comparar o resultado antes/depois).
+Se quiser, posso aplicar a mesma correção nesses 3 gráficos também — é o
+mesmo padrão de `AT TIME ZONE`.
+
+## Arquivo alterado (1)
 
 | Caminho | O que mudou |
 |---|---|
-| `packages/domain/src/index.ts` | Passa a exportar o novo helper `fuso-horario.ts`. |
-| `packages/database/src/repositories/admin-repository.ts` | 2 métodos novos: `getRelatorioPeriodicoConfig()` e `salvarRelatorioPeriodicoConfig(...)` — mesmo padrão de `getLimitConfig`/`salvarCredenciaisIntegracao`, lendo/gravando a nova chave `RELATORIO_PERIODICO_WEBHOOK` na tabela `integration_configs` já existente. |
-| `apps/api/src/admin/routes.ts` | 2 rotas novas: `GET /admin/integrations/relatorio-periodico` e `POST /admin/integrations/relatorio-periodico`, mesmo padrão das rotas de credenciais. |
-| `apps/workers/src/index.ts` | Importa `AdminRepository` e `inicioDoDiaEmBrasilia`; 2 funções novas de resolução de config (`resolverConfigRelatorioPeriodico`, `resolverIntervaloRelatorioPeriodicoMs`, mesmo padrão de `resolverCredenciaisLemit`/`resolverIntervaloMs`); registra o novo `loop("worker7-relatorio-periodico", ...)`. |
-| `apps/admin-panel/src/app/integracoes/page.tsx` | Nova seção "Relatório periódico": toggle ativo/inativo + formulário com URL do endpoint e frequência em horas. |
-| `apps/admin-panel/src/app/integracoes/actions.ts` | 2 server actions novas: `toggleRelatorioPeriodico` e `salvarRelatorioPeriodico`. |
-
-## Arquivos novos (4)
-
-| Caminho | O que é |
-|---|---|
-| `packages/domain/src/fuso-horario.ts` | Helper `inicioDoDiaEmBrasilia(agora?)` — meia-noite de Brasília em UTC, robusto ao fuso do servidor. |
-| `packages/domain/src/fuso-horario.test.ts` | Testes do helper acima (3 casos, incluindo virada de dia). |
-| `apps/workers/src/workers/worker7-relatorio-periodico.ts` | O worker novo — função pura (recebe `ativo`, `endpointUrl` e os KPIs já prontos; monta o corpo e faz o POST). |
-| `apps/workers/src/workers/worker7-relatorio-periodico.test.ts` | Testes do worker (7 casos: desativado, sem endpoint, POST correto, cálculo da taxa de resposta incluindo divisão por zero, erro HTTP, exceção de rede). |
+| `packages/database/src/repositories/admin-repository.ts` | `dashboardHorarioResposta`: a hora agora é extraída já convertida pra `America/Sao_Paulo`, em vez da hora crua em UTC. |
 
 ## Validação
 
-- `packages/domain`: `npx vitest run` — **36 testes passando** (6 arquivos,
-  incluindo os 3 novos do `fuso-horario`). Esse pacote não depende do Prisma,
-  então rodou 100% sem restrição nenhuma.
-- `apps/workers`: `npx vitest run src/workers/worker7-relatorio-periodico.test.ts`
-  — **7 testes passando**. O worker novo não importa Prisma diretamente (só
-  recebe os dados já prontos), então também rodou sem restrição.
-- `apps/admin-panel`: `npx tsc --noEmit` (zero erros) e `npx next build`
-  (sucesso, as mesmas 24 rotas de antes, `/integracoes` incluída).
-- `packages/database`, `apps/api`, `apps/workers/src/index.ts`: como nos zips
-  anteriores, o `prisma generate` não funciona neste ambiente de geração
-  (`binaries.prisma.sh` bloqueado), então o `tsc` desses três não compila
-  100% aqui. Validei da mesma forma que nos zips anteriores: rodei o `tsc`
-  mesmo assim e conferi que os erros nos arquivos alterados são exatamente a
-  MESMA categoria (módulo `@plataforma-ofertas/*` não encontrado, porque os
-  pacotes do workspace não foram buildados neste ambiente) que já aparece em
-  código antigo, intocado, que já funciona em produção — ou seja, nenhum erro
-  NOVO ou de tipo diferente apareceu por causa do código adicionado. Isso deve
-  compilar limpo no seu ambiente normal (CI/local), onde o Prisma consegue
-  baixar o engine.
-- **Nenhuma migração de banco necessária** — a nova integração usa só a tabela
-  `integration_configs`, que já existe e já guarda a Lemit/WhatsApp/Limit do
-  mesmo jeito.
+Como nos zips anteriores, não consigo rodar `prisma generate` neste ambiente
+de geração (`binaries.prisma.sh` bloqueado), então não dá pra compilar 100%
+este pacote aqui nem testar contra um banco de verdade. Rodei `npx tsc
+--noEmit` mesmo assim e conferi que os erros na função alterada são exatamente
+a mesma categoria (`Prisma.sql`/`Prisma.empty` não resolvidos, porque o client
+do Prisma não foi gerado neste ambiente) que já existia nas outras consultas
+raw SQL do mesmo arquivo, intocadas — nenhum erro novo ou de tipo diferente
+apareceu. É uma mudança puramente de SQL (a sintaxe `AT TIME ZONE` é padrão do
+Postgres), então deve compilar e rodar normalmente no seu ambiente (CI/local),
+onde o Prisma consegue gerar o client.
 
-## Como configurar depois de subir
-
-1. Suba estes 6 arquivos alterados + 4 arquivos novos no GitHub, nos mesmos
-   caminhos.
-2. Depois do deploy, abra o painel → **Integrações** → seção **Relatório
-   periódico** (no final da página).
-3. Cole a URL do seu endpoint, defina a frequência em horas (ex.: `4`) e clique
-   em **Salvar**.
-4. Clique em **Ativar**.
-5. Pronto — a partir do próximo ciclo do worker (poucos segundos depois de
-   ativar), o relatório do dia passa a ser enviado automaticamente na
-   frequência escolhida, todo dia.
+**Nenhuma migração de banco necessária** — é só uma mudança na consulta, a
+coluna continua exatamente a mesma.
