@@ -72,7 +72,31 @@ export class AdminRepository {
   // AGUARDANDO_DISPARO no filtro, esse card correspondente zera. Os cards que
   // não são baseados em status (totalRecebidas, limiteValidado,
   // whatsappValidado) só recebem o filtro como uma condição A MAIS (E lógico).
+  // Cards de KPI + comparativo com o período anterior de igual duração (item
+  // "delta ▲/▼ vs. período anterior" do redesign do Dashboard) — só calcula o
+  // "anterior" quando o usuário filtrou um intervalo FECHADO (from E to); num
+  // período aberto ("todo o histórico") não existe um "anterior" bem
+  // definido, então fica null e o front-end simplesmente não mostra o selo de
+  // variação nesse caso.
   async dashboardKpis(params: { from?: Date; to?: Date; statuses?: string[] }) {
+    const atual = await this.contarKpis(params);
+
+    let anterior: Awaited<ReturnType<AdminRepository["contarKpis"]>> | null = null;
+    if (params.from && params.to) {
+      const duracaoMs = params.to.getTime() - params.from.getTime();
+      const toAnterior = params.from;
+      const fromAnterior = new Date(params.from.getTime() - duracaoMs);
+      anterior = await this.contarKpis({ from: fromAnterior, to: toAnterior, statuses: params.statuses });
+    }
+
+    return {
+      ...atual,
+      anterior,
+      atualizadoEm: new Date().toISOString(),
+    };
+  }
+
+  private async contarKpis(params: { from?: Date; to?: Date; statuses?: string[] }) {
     const createdAt =
       params.from || params.to
         ? { createdAt: { ...(params.from ? { gte: params.from } : {}), ...(params.to ? { lte: params.to } : {}) } }
@@ -134,7 +158,6 @@ export class AdminRepository {
       disparoConsultado,
       disparoEnviado,
       disparoRespondido,
-      atualizadoEm: new Date().toISOString(),
     };
   }
 
@@ -212,6 +235,152 @@ export class AdminRepository {
       enviados: Number(r.enviados),
       respondidos: Number(r.respondidos),
     }));
+  }
+
+  // Série temporal "Ofertas recebidas x Disparos enviados" (Gráfico 1 do
+  // redesign do Dashboard) — mesma técnica de dashboardEnviadosVsRespondidos
+  // (2 CTEs + FULL OUTER JOIN por dia), só troca o lado "respondidos" por
+  // "recebidas" (created_at). Responde uma pergunta diferente do gráfico
+  // "recebidas x processadas" de dashboardTimeseries: aqui é especificamente
+  // sobre o gargalo de conversão até o disparo, não sobre qualquer saída das
+  // etapas iniciais (boa ou ruim).
+  async dashboardRecebidasVsEnviados(params: { from?: Date; to?: Date }) {
+    const from = params.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const to = params.to ?? new Date();
+
+    const rows = await this.prisma.$queryRaw<{ dia: Date; recebidas: bigint; enviados: bigint }[]>(
+      Prisma.sql`
+        WITH recebidas AS (
+          SELECT date_trunc('day', created_at) AS dia, count(*) AS total
+          FROM offers
+          WHERE created_at >= ${from} AND created_at <= ${to}
+          GROUP BY dia
+        ),
+        enviados AS (
+          SELECT date_trunc('day', disparo_enviado_em) AS dia, count(*) AS total
+          FROM offers
+          WHERE disparo_enviado_em >= ${from} AND disparo_enviado_em <= ${to}
+          GROUP BY dia
+        )
+        SELECT
+          COALESCE(r.dia, e.dia) AS dia,
+          COALESCE(r.total, 0) AS recebidas,
+          COALESCE(e.total, 0) AS enviados
+        FROM recebidas r
+        FULL OUTER JOIN enviados e ON r.dia = e.dia
+        ORDER BY dia ASC
+      `
+    );
+
+    return rows.map((r) => ({
+      dia: r.dia.toISOString().slice(0, 10),
+      recebidas: Number(r.recebidas),
+      enviados: Number(r.enviados),
+    }));
+  }
+
+  // Volume de respostas por hora do dia (0h-23h) — cruzamento de dados do
+  // redesign do Dashboard ("horário com maior taxa de resposta"), pra ajudar
+  // a operação a concentrar reforços/retentativas de disparo na janela de
+  // pico. Preenche as 24 horas mesmo sem nenhuma resposta registrada nelas,
+  // pra o gráfico de barras não "pular" horas no eixo X.
+  async dashboardHorarioResposta(params: { from?: Date; to?: Date } = {}) {
+    const desde = params.from ? Prisma.sql`AND disparo_respondido_em >= ${params.from}` : Prisma.empty;
+    const ate = params.to ? Prisma.sql`AND disparo_respondido_em <= ${params.to}` : Prisma.empty;
+
+    const rows = await this.prisma.$queryRaw<{ hora: number; total: bigint }[]>(
+      Prisma.sql`
+        SELECT EXTRACT(HOUR FROM disparo_respondido_em)::int AS hora, count(*) AS total
+        FROM offers
+        WHERE disparo_respondido_em IS NOT NULL ${desde} ${ate}
+        GROUP BY hora
+        ORDER BY hora ASC
+      `
+    );
+
+    const porHora = new Map(rows.map((r) => [Number(r.hora), Number(r.total)]));
+    return Array.from({ length: 24 }, (_, hora) => ({ hora, total: porHora.get(hora) ?? 0 }));
+  }
+
+  // Tempo médio (em segundos) entre duas etapas do funil — só sobre ofertas
+  // que JÁ concluíram a etapa seguinte (não distorce com casos ainda em
+  // andamento). Duas médias separadas de propósito, porque apontam para
+  // responsáveis diferentes: a primeira mede a demora do PIPELINE interno
+  // (Lemit + validação de WhatsApp em lote); a segunda mede a velocidade de
+  // resposta do LEAD depois de receber o disparo.
+  async dashboardTempoMedioEtapas(params: { from?: Date; to?: Date } = {}) {
+    const desdeEnviado = params.from ? Prisma.sql`AND disparo_enviado_em >= ${params.from}` : Prisma.empty;
+    const ateEnviado = params.to ? Prisma.sql`AND disparo_enviado_em <= ${params.to}` : Prisma.empty;
+    const desdeRespondido = params.from ? Prisma.sql`AND disparo_respondido_em >= ${params.from}` : Prisma.empty;
+    const ateRespondido = params.to ? Prisma.sql`AND disparo_respondido_em <= ${params.to}` : Prisma.empty;
+
+    const [recebidoParaEnviado, enviadoParaRespondido] = await Promise.all([
+      this.prisma.$queryRaw<{ media_segundos: number | null }[]>(
+        Prisma.sql`
+          SELECT AVG(EXTRACT(EPOCH FROM (disparo_enviado_em - created_at))) AS media_segundos
+          FROM offers
+          WHERE disparo_enviado_em IS NOT NULL ${desdeEnviado} ${ateEnviado}
+        `
+      ),
+      this.prisma.$queryRaw<{ media_segundos: number | null }[]>(
+        Prisma.sql`
+          SELECT AVG(EXTRACT(EPOCH FROM (disparo_respondido_em - disparo_enviado_em))) AS media_segundos
+          FROM offers
+          WHERE disparo_respondido_em IS NOT NULL ${desdeRespondido} ${ateRespondido}
+        `
+      ),
+    ]);
+
+    return {
+      recebimentoParaDisparoSegundos: recebidoParaEnviado[0]?.media_segundos ?? null,
+      disparoParaRespostaSegundos: enviadoParaRespondido[0]?.media_segundos ?? null,
+    };
+  }
+
+  // Taxa de resposta por parceiro/origem (webhook) — cruzamento de dados do
+  // redesign do Dashboard. Deliberadamente NÃO reaproveita dashboardPorWebhook
+  // (abaixo): aquele método agrupa pelo status ATUAL da oferta, que
+  // subcontaria "enviados" sempre que uma oferta já avançou para
+  // DISPARO_RESPONDIDO (só um status pode ser o atual por vez — o mesmo
+  // motivo pelo qual dashboardEnviadosVsRespondidos usa os marcadores
+  // cumulativos em vez de "status"). Aqui usamos os mesmos marcadores
+  // cumulativos, agora quebrados por parceiro.
+  async dashboardTaxaRespostaPorWebhook(params: { from?: Date; to?: Date } = {}) {
+    const desde = params.from ? Prisma.sql`AND o.created_at >= ${params.from}` : Prisma.empty;
+    const ate = params.to ? Prisma.sql`AND o.created_at <= ${params.to}` : Prisma.empty;
+
+    const rows = await this.prisma.$queryRaw<
+      { webhook_id: string; identificador: string; origem: string; recebidas: bigint; enviados: bigint; respondidos: bigint }[]
+    >(
+      Prisma.sql`
+        SELECT
+          w.id AS webhook_id,
+          w.identificador,
+          w.origem,
+          count(*) AS recebidas,
+          count(*) FILTER (WHERE o.disparo_enviado_em IS NOT NULL) AS enviados,
+          count(*) FILTER (WHERE o.disparo_respondido_em IS NOT NULL) AS respondidos
+        FROM offers o
+        JOIN webhooks w ON w.id = o.webhook_id
+        WHERE true ${desde} ${ate}
+        GROUP BY w.id, w.identificador, w.origem
+        ORDER BY recebidas DESC
+      `
+    );
+
+    return rows.map((r) => {
+      const enviados = Number(r.enviados);
+      const respondidos = Number(r.respondidos);
+      return {
+        webhookId: r.webhook_id,
+        identificador: r.identificador,
+        origem: r.origem,
+        recebidas: Number(r.recebidas),
+        enviados,
+        respondidos,
+        taxaResposta: enviados > 0 ? respondidos / enviados : null,
+      };
+    });
   }
 
   async dashboardPorWebhook() {

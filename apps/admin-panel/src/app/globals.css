@@ -546,8 +546,277 @@ input, select {
 .chart-card-wide {
   grid-column: 1 / -1;
 }
+.chart-card .chart-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+}
 @media (max-width: 900px) {
   .chart-grid { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   Redesenho do Dashboard (2026) — faixa de destaque (Comparativo de
+   Disparos + Taxa de Resposta), rótulos de seção agrupando os KPIs em dois
+   sub-funis, e a seção de Cruzamento de dados inteligentes.
+   ============================================================ */
+
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 30px 0 12px;
+}
+.section-label:first-of-type {
+  margin-top: 0;
+}
+
+.highlight-row {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+@media (max-width: 900px) {
+  .highlight-row { grid-template-columns: 1fr; }
+}
+
+.highlight-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 22px 24px;
+  box-shadow: 0 4px 16px -8px rgba(11, 11, 11, 0.12);
+}
+.highlight-card h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.highlight-card .hc-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 2px 0 16px;
+}
+.hc-formula {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 12px;
+  border-top: 1px dashed var(--gridline);
+  padding-top: 10px;
+}
+.hc-formula code {
+  background: var(--page-plane);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.compare-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.compare-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.compare-bar-label {
+  width: 96px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.compare-bar-track {
+  flex: 1;
+  background: var(--gridline);
+  border-radius: 6px;
+  height: 22px;
+  overflow: hidden;
+}
+.compare-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+}
+.compare-bar-value {
+  width: 74px;
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+
+.hero-stat {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  margin: 4px 0 2px;
+  flex-wrap: wrap;
+}
+.hero-stat .value {
+  font-size: 44px;
+  font-weight: 700;
+  line-height: 1;
+}
+.hero-stat .delta {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  margin-bottom: 8px;
+}
+.delta.up-good {
+  color: #0a7a0a;
+  background: #e7f6e7;
+}
+.delta.down-bad {
+  color: var(--status-critical);
+  background: #fbe9e9;
+}
+.sparkline-wrap {
+  margin-top: 10px;
+  display: block;
+}
+
+.kpi-delta {
+  font-size: 11px;
+  font-weight: 600;
+}
+.kpi-delta.up {
+  color: var(--status-good);
+}
+.kpi-delta.down {
+  color: var(--status-critical);
+}
+
+/* seção "cruzamento de dados inteligentes" */
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+@media (max-width: 900px) {
+  .insight-grid { grid-template-columns: 1fr; }
+}
+.insight-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 4px 16px -8px rgba(11, 11, 11, 0.12);
+}
+.insight-card h2 {
+  margin: 0 0 3px;
+  font-size: 15px;
+}
+.insight-card .chart-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+}
+
+.bottleneck-flow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  margin-bottom: 14px;
+}
+.bottleneck-step {
+  background: var(--page-plane);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.bottleneck-step.critico {
+  border-color: var(--status-critical);
+  color: var(--status-critical);
+  font-weight: 700;
+}
+.bottleneck-arrow {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.bottleneck-loss {
+  background: #fbe9e9;
+  color: var(--status-critical);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+}
+.bottleneck-loss b {
+  font-size: 18px;
+}
+
+.two-stat {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.mini-stat {
+  background: var(--page-plane);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+}
+.mini-stat .v {
+  font-size: 24px;
+  font-weight: 700;
+}
+.mini-stat .l {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+table.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+table.mini-table th {
+  text-align: left;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--gridline);
+}
+table.mini-table td {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--gridline);
+}
+table.mini-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+table.mini-table tr:last-child td {
+  border-bottom: none;
+}
+.bar-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bar-cell .track {
+  flex: 1;
+  background: var(--gridline);
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+}
+.bar-cell .fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--series-1);
 }
 
 /* ============================================================

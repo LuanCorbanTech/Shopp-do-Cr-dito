@@ -46,6 +46,38 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           to: to && !Number.isNaN(to.getTime()) ? to : undefined,
         });
       });
+      instance.get<{ Querystring: { from?: string; to?: string } }>("/dashboard/recebidas-vs-enviados", async (request) => {
+        const from = request.query.from ? new Date(request.query.from) : undefined;
+        const to = request.query.to ? new Date(request.query.to) : undefined;
+        return adminRepo.dashboardRecebidasVsEnviados({
+          from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+          to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+        });
+      });
+      instance.get<{ Querystring: { from?: string; to?: string } }>("/dashboard/horario-resposta", async (request) => {
+        const from = request.query.from ? new Date(request.query.from) : undefined;
+        const to = request.query.to ? new Date(request.query.to) : undefined;
+        return adminRepo.dashboardHorarioResposta({
+          from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+          to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+        });
+      });
+      instance.get<{ Querystring: { from?: string; to?: string } }>("/dashboard/tempo-medio-etapas", async (request) => {
+        const from = request.query.from ? new Date(request.query.from) : undefined;
+        const to = request.query.to ? new Date(request.query.to) : undefined;
+        return adminRepo.dashboardTempoMedioEtapas({
+          from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+          to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+        });
+      });
+      instance.get<{ Querystring: { from?: string; to?: string } }>("/dashboard/taxa-resposta-parceiro", async (request) => {
+        const from = request.query.from ? new Date(request.query.from) : undefined;
+        const to = request.query.to ? new Date(request.query.to) : undefined;
+        return adminRepo.dashboardTaxaRespostaPorWebhook({
+          from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+          to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+        });
+      });
       instance.get("/dashboard/webhooks", async () => adminRepo.dashboardPorWebhook());
       instance.get("/dashboard/bancos", async () => adminRepo.dashboardPorBanco());
       instance.get("/dashboard/endpoints", async () => adminRepo.dashboardPorEndpoint());

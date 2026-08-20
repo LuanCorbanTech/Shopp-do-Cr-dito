@@ -1,4 +1,4 @@
-export type Periodo = "hoje" | "7dias" | "mes" | "personalizado";
+export type Periodo = "hoje" | "7dias" | "30dias" | "mes" | "personalizado";
 
 export const TODOS_STATUS = [
   "RECEBIDO",
@@ -27,6 +27,10 @@ export function calcularIntervalo(periodo: Periodo, customFrom: string, customTo
   }
   if (periodo === "7dias") {
     const inicio = new Date(agora.getTime() - 7 * 24 * 60 * 60 * 1000);
+    return { from: inicio.toISOString(), to: agora.toISOString() };
+  }
+  if (periodo === "30dias") {
+    const inicio = new Date(agora.getTime() - 30 * 24 * 60 * 60 * 1000);
     return { from: inicio.toISOString(), to: agora.toISOString() };
   }
   if (periodo === "mes") {

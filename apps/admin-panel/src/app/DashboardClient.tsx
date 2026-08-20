@@ -4,11 +4,19 @@ import { useCallback, useEffect, useState } from "react";
 import { FunnelChart } from "@/components/charts/FunnelChart";
 import { TimeSeriesChart } from "@/components/charts/TimeSeriesChart";
 import { EnviadosRespondidosChart } from "@/components/charts/EnviadosRespondidosChart";
+import { RecebidasVsEnviadosChart } from "@/components/charts/RecebidasVsEnviadosChart";
 import { DonutChart } from "@/components/charts/DonutChart";
 import { StatusMultiSelect } from "@/components/StatusMultiSelect";
+import { ComparativoDisparosCard } from "@/components/dashboard/ComparativoDisparosCard";
+import { TaxaRespostaCard } from "@/components/dashboard/TaxaRespostaCard";
+import { GargaloFunilCard } from "@/components/dashboard/GargaloFunilCard";
+import { TempoMedioEtapasCard } from "@/components/dashboard/TempoMedioEtapasCard";
+import { PerformanceParceiroCard } from "@/components/dashboard/PerformanceParceiroCard";
+import { HorarioRespostaCard } from "@/components/dashboard/HorarioRespostaCard";
+import { formatarDeltaPercentual, deltaEhPositivo } from "@/components/dashboard/formatacao";
 import { calcularIntervalo, type Periodo } from "@/lib/periodo";
 
-interface KpiData {
+interface KpiContagens {
   totalRecebidas: number;
   aguardandoProcessamento: number;
   limiteValidado: number;
@@ -17,6 +25,13 @@ interface KpiData {
   disparoConsultado: number;
   disparoEnviado: number;
   disparoRespondido: number;
+}
+
+// "anterior" só vem preenchido quando o filtro de período é um intervalo
+// fechado (from E to) — ver dashboardKpis em admin-repository.ts. Alimenta
+// os selos de variação (▲/▼) nos cards de KPI e no card de Taxa de Resposta.
+interface KpiData extends KpiContagens {
+  anterior: KpiContagens | null;
   atualizadoEm: string;
 }
 
@@ -35,6 +50,32 @@ interface PontoSerieDisparo {
   dia: string;
   enviados: number;
   respondidos: number;
+}
+
+interface PontoSerieRecebidasEnviados {
+  dia: string;
+  recebidas: number;
+  enviados: number;
+}
+
+interface PontoHorario {
+  hora: number;
+  total: number;
+}
+
+interface TempoMedioEtapas {
+  recebimentoParaDisparoSegundos: number | null;
+  disparoParaRespostaSegundos: number | null;
+}
+
+interface ParceiroTaxaResposta {
+  webhookId: string;
+  identificador: string;
+  origem: string;
+  recebidas: number;
+  enviados: number;
+  respondidos: number;
+  taxaResposta: number | null;
 }
 
 const REFRESH_SECONDS = 30;
@@ -104,16 +145,30 @@ function IconCheckCheck() {
   );
 }
 
-function KpiCard({ icon, value, label, loading }: { icon: React.ReactNode; value: number | null; label: string; loading: boolean }) {
+function KpiCard({
+  icon,
+  value,
+  label,
+  loading,
+  deltaTexto,
+  deltaPositivo,
+}: {
+  icon: React.ReactNode;
+  value: number | null;
+  label: string;
+  loading: boolean;
+  deltaTexto?: string | null;
+  deltaPositivo?: boolean;
+}) {
   return (
     <div className={`kpi-card${loading ? " skeleton" : ""}`}>
       <div className="kpi-icon">{icon}</div>
       <div className="kpi-value">{loading ? "—" : (value ?? 0).toLocaleString("pt-BR")}</div>
       <div className="kpi-label">{label}</div>
+      {deltaTexto && <div className={`kpi-delta ${deltaPositivo ? "up" : "down"}`}>{deltaTexto}</div>}
     </div>
   );
 }
-
 
 export function DashboardClient() {
   const [periodo, setPeriodo] = useState<Periodo>("mes");
@@ -125,6 +180,10 @@ export function DashboardClient() {
   const [statusSummary, setStatusSummary] = useState<StatusSummary | null>(null);
   const [serie, setSerie] = useState<PontoSerie[]>([]);
   const [serieDisparo, setSerieDisparo] = useState<PontoSerieDisparo[]>([]);
+  const [serieRecebidasEnviados, setSerieRecebidasEnviados] = useState<PontoSerieRecebidasEnviados[]>([]);
+  const [horarioResposta, setHorarioResposta] = useState<PontoHorario[]>([]);
+  const [tempoMedioEtapas, setTempoMedioEtapas] = useState<TempoMedioEtapas | null>(null);
+  const [performanceParceiro, setPerformanceParceiro] = useState<ParceiroTaxaResposta[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [contagem, setContagem] = useState(REFRESH_SECONDS);
@@ -139,23 +198,53 @@ export function DashboardClient() {
       if (to) qs.set("to", to);
       // Pedido explícito: o filtro de status precisa afetar o Dashboard
       // inteiro (cards + gráficos), não só uma tabela auxiliar — por isso
-      // vai junto em TODAS as 3 chamadas abaixo.
+      // vai junto em TODAS as chamadas abaixo que aceitam esse filtro.
       if (statusSelecionados.length > 0) qs.set("status", statusSelecionados.join(","));
 
-      const [kpisResp, statusResp, serieResp, serieDisparoResp] = await Promise.all([
+      // Os 4 gráficos/cards de cruzamento de dados (recebidas-vs-enviados,
+      // horário de resposta, tempo médio entre etapas, performance por
+      // parceiro) usam os marcadores cumulativos de disparo, não o filtro de
+      // status — mesmo motivo de dashboard-enviados-vs-respondidos, que já
+      // seguia esse padrão antes deste redesign.
+      const qsSemStatus = new URLSearchParams();
+      if (from) qsSemStatus.set("from", from);
+      if (to) qsSemStatus.set("to", to);
+
+      const [
+        kpisResp,
+        statusResp,
+        serieResp,
+        serieDisparoResp,
+        serieRecebidasEnviadosResp,
+        horarioRespostaResp,
+        tempoMedioEtapasResp,
+        performanceParceiroResp,
+      ] = await Promise.all([
         fetch(`/api/dashboard-kpis?${qs.toString()}`, { cache: "no-store" }),
         fetch(`/api/dashboard-summary?${qs.toString()}`, { cache: "no-store" }),
         fetch(`/api/dashboard-timeseries?${qs.toString()}`, { cache: "no-store" }),
-        fetch(`/api/dashboard-enviados-vs-respondidos?${qs.toString()}`, { cache: "no-store" }),
+        fetch(`/api/dashboard-enviados-vs-respondidos?${qsSemStatus.toString()}`, { cache: "no-store" }),
+        fetch(`/api/dashboard-recebidas-vs-enviados?${qsSemStatus.toString()}`, { cache: "no-store" }),
+        fetch(`/api/dashboard-horario-resposta?${qsSemStatus.toString()}`, { cache: "no-store" }),
+        fetch(`/api/dashboard-tempo-medio-etapas?${qsSemStatus.toString()}`, { cache: "no-store" }),
+        fetch(`/api/dashboard-taxa-resposta-parceiro?${qsSemStatus.toString()}`, { cache: "no-store" }),
       ]);
       const kpisData: KpiData = await kpisResp.json();
       const statusData: StatusSummary = await statusResp.json();
       const serieData: PontoSerie[] = await serieResp.json();
       const serieDisparoData: PontoSerieDisparo[] = await serieDisparoResp.json();
+      const serieRecebidasEnviadosData: PontoSerieRecebidasEnviados[] = await serieRecebidasEnviadosResp.json();
+      const horarioRespostaData: PontoHorario[] = await horarioRespostaResp.json();
+      const tempoMedioEtapasData: TempoMedioEtapas = await tempoMedioEtapasResp.json();
+      const performanceParceiroData: ParceiroTaxaResposta[] = await performanceParceiroResp.json();
       setKpis(kpisData);
       setStatusSummary(statusData);
       setSerie(Array.isArray(serieData) ? serieData : []);
       setSerieDisparo(Array.isArray(serieDisparoData) ? serieDisparoData : []);
+      setSerieRecebidasEnviados(Array.isArray(serieRecebidasEnviadosData) ? serieRecebidasEnviadosData : []);
+      setHorarioResposta(Array.isArray(horarioRespostaData) ? horarioRespostaData : []);
+      setTempoMedioEtapas(tempoMedioEtapasData ?? null);
+      setPerformanceParceiro(Array.isArray(performanceParceiroData) ? performanceParceiroData : []);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -191,13 +280,27 @@ export function DashboardClient() {
     ? agora.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : "—";
 
+  // Selo de variação (▲/▼ vs. período anterior) de cada KPI de vazão — só
+  // aparece quando dashboardKpis conseguiu calcular o período anterior (ver
+  // comentário na interface KpiData).
+  function delta(chave: keyof KpiContagens): { texto: string | null; positivo: boolean } {
+    if (!kpis?.anterior) return { texto: null, positivo: true };
+    return {
+      texto: formatarDeltaPercentual(kpis[chave], kpis.anterior[chave]),
+      positivo: deltaEhPositivo(kpis[chave], kpis.anterior[chave]),
+    };
+  }
+
+  const deltaEnviado = delta("disparoEnviado");
+  const deltaRespondido = delta("disparoRespondido");
+
   return (
     <div>
       <div className="dash-header">
         <div>
           <h1>Dashboard geral</h1>
           <p className="subtitle" style={{ marginBottom: 0 }}>
-            Total recebido e distribuição das ofertas por etapa do funil.
+            Visão estratégica do funil de ofertas — do recebimento à resposta do disparo.
           </p>
         </div>
 
@@ -205,6 +308,7 @@ export function DashboardClient() {
           <select value={periodo} onChange={(e) => setPeriodo(e.target.value as Periodo)}>
             <option value="hoje">Hoje</option>
             <option value="7dias">Últimos 7 dias</option>
+            <option value="30dias">Últimos 30 dias</option>
             <option value="mes">Este mês</option>
             <option value="personalizado">Personalizado</option>
           </select>
@@ -225,32 +329,97 @@ export function DashboardClient() {
 
       {erro && <p className="empty-state">Não foi possível carregar o dashboard: {erro}</p>}
 
-      <div className="kpi-grid">
-        <KpiCard icon={<IconInbox />} value={kpis?.totalRecebidas ?? null} label="Total de ofertas recebidas" loading={carregando && !kpis} />
-        <KpiCard icon={<IconClock />} value={kpis?.aguardandoProcessamento ?? null} label="Aguardando processamento" loading={carregando && !kpis} />
-        <KpiCard icon={<IconShield />} value={kpis?.limiteValidado ?? null} label="Com limite validado (Lemit)" loading={carregando && !kpis} />
-        <KpiCard icon={<IconWhatsapp />} value={kpis?.whatsappValidado ?? null} label="Com WhatsApp validado" loading={carregando && !kpis} />
-        <KpiCard icon={<IconHourglass />} value={kpis?.aguardandoConsultaDisparo ?? null} label="Aguardando consulta de disparo" loading={carregando && !kpis} />
-        <KpiCard icon={<IconSend />} value={kpis?.disparoConsultado ?? null} label="Com disparo consultado" loading={carregando && !kpis} />
-        <KpiCard icon={<IconMailCheck />} value={kpis?.disparoEnviado ?? null} label="Disparo enviado" loading={carregando && !kpis} />
-        <KpiCard icon={<IconCheckCheck />} value={kpis?.disparoRespondido ?? null} label="Disparo respondido" loading={carregando && !kpis} />
+      {/* Faixa de destaque — comparativo de disparos + taxa de resposta,
+          acima da grade de KPIs (pedido explícito do redesign: esses dois
+          indicadores precisam de mais hierarquia visual que os demais). */}
+      <div className="highlight-row">
+        <ComparativoDisparosCard enviados={kpis?.disparoEnviado ?? null} respondidos={kpis?.disparoRespondido ?? null} />
+        <TaxaRespostaCard
+          enviados={kpis?.disparoEnviado ?? null}
+          respondidos={kpis?.disparoRespondido ?? null}
+          enviadosAnterior={kpis?.anterior?.disparoEnviado ?? null}
+          respondidosAnterior={kpis?.anterior?.disparoRespondido ?? null}
+          serieDisparo={serieDisparo}
+        />
       </div>
 
+      <div className="section-label">Funil de validação</div>
+      <div className="kpi-grid">
+        <KpiCard
+          icon={<IconInbox />}
+          value={kpis?.totalRecebidas ?? null}
+          label="Total de ofertas recebidas"
+          loading={carregando && !kpis}
+          deltaTexto={delta("totalRecebidas").texto}
+          deltaPositivo={delta("totalRecebidas").positivo}
+        />
+        <KpiCard
+          icon={<IconClock />}
+          value={kpis?.aguardandoProcessamento ?? null}
+          label="Aguardando processamento"
+          loading={carregando && !kpis}
+        />
+        <KpiCard
+          icon={<IconShield />}
+          value={kpis?.limiteValidado ?? null}
+          label="Com Lemit validado"
+          loading={carregando && !kpis}
+          deltaTexto={delta("limiteValidado").texto}
+          deltaPositivo={delta("limiteValidado").positivo}
+        />
+        <KpiCard
+          icon={<IconWhatsapp />}
+          value={kpis?.whatsappValidado ?? null}
+          label="Com WhatsApp validado"
+          loading={carregando && !kpis}
+          deltaTexto={delta("whatsappValidado").texto}
+          deltaPositivo={delta("whatsappValidado").positivo}
+        />
+      </div>
+
+      <div className="section-label">Funil de disparo</div>
+      <div className="kpi-grid">
+        <KpiCard
+          icon={<IconHourglass />}
+          value={kpis?.aguardandoConsultaDisparo ?? null}
+          label="Aguardando consulta de disparo"
+          loading={carregando && !kpis}
+        />
+        <KpiCard
+          icon={<IconSend />}
+          value={kpis?.disparoConsultado ?? null}
+          label="Com disparo consultado"
+          loading={carregando && !kpis}
+        />
+        <KpiCard
+          icon={<IconMailCheck />}
+          value={kpis?.disparoEnviado ?? null}
+          label="Disparo enviado"
+          loading={carregando && !kpis}
+          deltaTexto={deltaEnviado.texto}
+          deltaPositivo={deltaEnviado.positivo}
+        />
+        <KpiCard
+          icon={<IconCheckCheck />}
+          value={kpis?.disparoRespondido ?? null}
+          label="Disparo respondido"
+          loading={carregando && !kpis}
+          deltaTexto={deltaRespondido.texto}
+          deltaPositivo={deltaRespondido.positivo}
+        />
+      </div>
+
+      <div className="section-label">Evolução diária</div>
       <div className="chart-grid">
-        <div className="chart-card">
-          <h2 style={{ margin: "0 0 16px" }}>Funil de conversão</h2>
-          {kpis ? (
-            <FunnelChart
-              etapas={[
-                { label: "Recebidas", value: kpis.totalRecebidas },
-                { label: "Limite validado", value: kpis.limiteValidado },
-                { label: "WhatsApp validado", value: kpis.whatsappValidado },
-                { label: "Disparo consultado", value: kpis.disparoConsultado },
-              ]}
-            />
-          ) : (
-            <p className="empty-state">Carregando…</p>
-          )}
+        <div className="chart-card chart-card-wide">
+          <h2 style={{ margin: "0 0 4px" }}>Ofertas recebidas × Disparos enviados por dia</h2>
+          <p className="chart-sub">Mostra se o volume de entrada está sendo escoado pelo funil na mesma velocidade em que chega.</p>
+          <RecebidasVsEnviadosChart dados={serieRecebidasEnviados} />
+        </div>
+
+        <div className="chart-card chart-card-wide">
+          <h2 style={{ margin: "0 0 16px" }}>Disparo enviado × respondido por dia</h2>
+          <EnviadosRespondidosChart dados={serieDisparo} />
         </div>
 
         <div className="chart-card">
@@ -270,6 +439,25 @@ export function DashboardClient() {
           )}
         </div>
 
+        <div className="chart-card">
+          <h2 style={{ margin: "0 0 16px" }}>Funil de conversão</h2>
+          {kpis ? (
+            <FunnelChart
+              etapas={[
+                { label: "Recebidas", value: kpis.totalRecebidas },
+                { label: "Lemit validado", value: kpis.limiteValidado },
+                { label: "WhatsApp validado", value: kpis.whatsappValidado },
+                { label: "Disparo consultado", value: kpis.disparoConsultado },
+              ]}
+            />
+          ) : (
+            <p className="empty-state">Carregando…</p>
+          )}
+        </div>
+
+        {/* Mantido para quem já usava esse recorte (recebidas x qualquer
+            saída das etapas iniciais, boa ou ruim) — responde uma pergunta
+            diferente do gráfico de recebidas x enviados acima. */}
         <div className="chart-card chart-card-wide">
           <h2 style={{ margin: "0 0 16px" }}>Volume recebido × processado por dia</h2>
           <TimeSeriesChart dados={serie} />
@@ -278,11 +466,28 @@ export function DashboardClient() {
             <span><span style={{ display: "inline-block", width: 10, height: 2, background: "var(--status-good)", marginRight: 6 }} />Processadas</span>
           </div>
         </div>
+      </div>
 
-        <div className="chart-card chart-card-wide">
-          <h2 style={{ margin: "0 0 16px" }}>Disparo enviado × respondido por dia</h2>
-          <EnviadosRespondidosChart dados={serieDisparo} />
-        </div>
+      <div className="section-label">Cruzamento de dados inteligentes</div>
+      <div className="insight-grid">
+        <HorarioRespostaCard dados={horarioResposta} />
+        <GargaloFunilCard
+          etapas={
+            kpis
+              ? [
+                  { label: "Recebidas", value: kpis.totalRecebidas },
+                  { label: "Lemit validado", value: kpis.limiteValidado },
+                  { label: "WhatsApp validado", value: kpis.whatsappValidado },
+                  { label: "Disparo enviado", value: kpis.disparoEnviado },
+                ]
+              : []
+          }
+        />
+        <TempoMedioEtapasCard
+          recebimentoParaDisparoSegundos={tempoMedioEtapas?.recebimentoParaDisparoSegundos ?? null}
+          disparoParaRespostaSegundos={tempoMedioEtapas?.disparoParaRespostaSegundos ?? null}
+        />
+        <PerformanceParceiroCard dados={performanceParceiro} />
       </div>
 
       {statusSelecionados.length > 0 && statusSummary && (
