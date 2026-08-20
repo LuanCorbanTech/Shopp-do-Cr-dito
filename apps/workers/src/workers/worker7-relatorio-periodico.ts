@@ -37,32 +37,37 @@ export interface RunRelatorioPeriodicoWorkerOnceParams {
   fetchImpl?: typeof fetch;
 }
 
-// Nomes EXATOS pedidos pelo usuário — o endpoint que ele for cadastrar espera
-// essas 9 chaves, nesse texto, sempre com os dados de HOJE (em Brasília).
+// Nomes pedidos pelo usuário, com "_" no lugar do espaço (o Hyperflow, do
+// lado de quem recebe, não aceita chave de JSON com espaço) — o endpoint
+// cadastrado espera essas 9 chaves, nesse texto, sempre com os dados de HOJE
+// (em Brasília).
 export interface RelatorioPeriodicoBody {
-  "Total de ofertas recebidas": number;
-  "Aguardando processamento": number;
-  "Com Lemit validado": number;
-  "Com Whatsapp validado": number;
-  "Aguardando consulta do disparo": number;
-  "Com disparo consultado": number;
-  "Disparo enviado": number;
-  "Disparo respondido": number;
-  "Taxa de resposta": number;
+  Total_de_ofertas_recebidas: number;
+  Aguardando_processamento: number;
+  Com_Lemit_validado: number;
+  Com_Whatsapp_validado: number;
+  Aguardando_consulta_do_disparo: number;
+  Com_disparo_consultado: number;
+  Disparo_enviado: number;
+  Disparo_respondido: number;
+  Taxa_de_resposta: number;
 }
 
 export function montarRelatorioPeriodicoBody(kpis: RelatorioPeriodicoKpis): RelatorioPeriodicoBody {
-  const taxaResposta = kpis.disparoEnviado > 0 ? kpis.disparoRespondido / kpis.disparoEnviado : 0;
+  // Em porcentagem (0 a 100, não 0 a 1) — ex.: 44.74, não 0.4474 — arredondada
+  // em 2 casas decimais. Continua sendo um número, não uma string com "%".
+  const taxaResposta =
+    kpis.disparoEnviado > 0 ? Math.round((kpis.disparoRespondido / kpis.disparoEnviado) * 10000) / 100 : 0;
   return {
-    "Total de ofertas recebidas": kpis.totalRecebidas,
-    "Aguardando processamento": kpis.aguardandoProcessamento,
-    "Com Lemit validado": kpis.limiteValidado,
-    "Com Whatsapp validado": kpis.whatsappValidado,
-    "Aguardando consulta do disparo": kpis.aguardandoConsultaDisparo,
-    "Com disparo consultado": kpis.disparoConsultado,
-    "Disparo enviado": kpis.disparoEnviado,
-    "Disparo respondido": kpis.disparoRespondido,
-    "Taxa de resposta": taxaResposta,
+    Total_de_ofertas_recebidas: kpis.totalRecebidas,
+    Aguardando_processamento: kpis.aguardandoProcessamento,
+    Com_Lemit_validado: kpis.limiteValidado,
+    Com_Whatsapp_validado: kpis.whatsappValidado,
+    Aguardando_consulta_do_disparo: kpis.aguardandoConsultaDisparo,
+    Com_disparo_consultado: kpis.disparoConsultado,
+    Disparo_enviado: kpis.disparoEnviado,
+    Disparo_respondido: kpis.disparoRespondido,
+    Taxa_de_resposta: taxaResposta,
   };
 }
 

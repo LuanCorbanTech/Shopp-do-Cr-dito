@@ -13,24 +13,31 @@ const KPIS_EXEMPLO = {
 };
 
 describe("montarRelatorioPeriodicoBody", () => {
-  it("monta o corpo com os 9 campos exatos pedidos, calculando a taxa de resposta", () => {
+  it("monta o corpo com os 9 campos exatos pedidos (com _ no lugar do espaço), com a taxa de resposta em %", () => {
     const body = montarRelatorioPeriodicoBody(KPIS_EXEMPLO);
     expect(body).toEqual({
-      "Total de ofertas recebidas": 100,
-      "Aguardando processamento": 10,
-      "Com Lemit validado": 80,
-      "Com Whatsapp validado": 60,
-      "Aguardando consulta do disparo": 5,
-      "Com disparo consultado": 50,
-      "Disparo enviado": 40,
-      "Disparo respondido": 20,
-      "Taxa de resposta": 0.5,
+      Total_de_ofertas_recebidas: 100,
+      Aguardando_processamento: 10,
+      Com_Lemit_validado: 80,
+      Com_Whatsapp_validado: 60,
+      Aguardando_consulta_do_disparo: 5,
+      Com_disparo_consultado: 50,
+      Disparo_enviado: 40,
+      Disparo_respondido: 20,
+      // 20/40 = 0.5 → em porcentagem, 50 (não 0.5).
+      Taxa_de_resposta: 50,
     });
+  });
+
+  it("arredonda a taxa de resposta em 2 casas decimais, como número (não string com %)", () => {
+    const body = montarRelatorioPeriodicoBody({ ...KPIS_EXEMPLO, disparoEnviado: 76, disparoRespondido: 34 });
+    // 34/76 = 0.44736... → em % = 44.7368...% → arredondado, 44.74.
+    expect(body.Taxa_de_resposta).toBe(44.74);
   });
 
   it("taxa de resposta é 0 (não NaN) quando ainda não houve nenhum disparo enviado", () => {
     const body = montarRelatorioPeriodicoBody({ ...KPIS_EXEMPLO, disparoEnviado: 0, disparoRespondido: 0 });
-    expect(body["Taxa de resposta"]).toBe(0);
+    expect(body.Taxa_de_resposta).toBe(0);
   });
 });
 
