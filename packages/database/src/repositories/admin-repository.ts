@@ -642,6 +642,41 @@ export class AdminRepository {
     });
   }
 
+  // Disparo individual (push, 1 lead por ciclo) — mesmo padrão de
+  // armazenamento do relatório periódico, chave própria.
+  async getDisparoIndividualConfig() {
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" } });
+    const valor = (config?.valor ?? {}) as { endpointUrl?: string; intervaloSegundos?: number };
+    return {
+      ativo: config?.ativo ?? false,
+      endpointUrl: valor.endpointUrl ?? null,
+      intervaloSegundos:
+        typeof valor.intervaloSegundos === "number" && valor.intervaloSegundos > 0 ? valor.intervaloSegundos : null,
+    };
+  }
+
+  async salvarDisparoIndividualConfig(dados: { ativo?: boolean; endpointUrl?: string; intervaloSegundos?: number }) {
+    const atual = await this.prisma.integrationConfig.findUnique({ where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" } });
+    const valorAtual = (atual?.valor ?? {}) as { endpointUrl?: string; intervaloSegundos?: number };
+    const endpointUrl =
+      dados.endpointUrl !== undefined
+        ? dados.endpointUrl.trim() === ""
+          ? null
+          : dados.endpointUrl.trim()
+        : valorAtual.endpointUrl ?? null;
+    const intervaloSegundos =
+      dados.intervaloSegundos !== undefined && Number.isFinite(dados.intervaloSegundos) && dados.intervaloSegundos > 0
+        ? Math.floor(dados.intervaloSegundos)
+        : valorAtual.intervaloSegundos ?? null;
+    const novoValor = { endpointUrl, intervaloSegundos };
+    const ativo = dados.ativo ?? atual?.ativo ?? false;
+    return this.prisma.integrationConfig.upsert({
+      where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" },
+      update: { valor: novoValor, ativo },
+      create: { chave: "DISPARO_INDIVIDUAL_WEBHOOK", valor: novoValor, ativo },
+    });
+  }
+
   // -- Endpoints (item 19) ---------------------------------------------------------
 
   // -- Parceiros (webhooks de entrada) -----------------------------------------

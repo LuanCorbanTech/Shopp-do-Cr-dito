@@ -70,3 +70,24 @@ export async function salvarRelatorioPeriodico(formData: FormData): Promise<void
   });
   revalidatePath("/integracoes");
 }
+
+// Disparo individual (push, 1 lead por ciclo) — mesmo padrão do relatório
+// periódico acima, chave/rota própria.
+export async function toggleDisparoIndividual(ativo: boolean): Promise<void> {
+  await adminApiFetch("/admin/integrations/disparo-individual", {
+    method: "POST",
+    body: JSON.stringify({ ativo }),
+  });
+  revalidatePath("/integracoes");
+}
+
+export async function salvarDisparoIndividual(formData: FormData): Promise<void> {
+  const endpointUrl = String(formData.get("endpointUrl") ?? "");
+  const intervaloRaw = String(formData.get("intervaloSegundos") ?? "").trim();
+  const intervaloSegundos = intervaloRaw !== "" ? Number(intervaloRaw) : undefined;
+  await adminApiFetch("/admin/integrations/disparo-individual", {
+    method: "POST",
+    body: JSON.stringify({ endpointUrl, intervaloSegundos }),
+  });
+  revalidatePath("/integracoes");
+}

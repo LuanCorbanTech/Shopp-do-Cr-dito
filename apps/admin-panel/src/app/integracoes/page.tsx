@@ -1,5 +1,5 @@
 import { adminApiFetch } from "@/lib/api";
-import { setLimitEnabled, salvarCredenciais, toggleRelatorioPeriodico, salvarRelatorioPeriodico } from "./actions";
+import { setLimitEnabled, salvarCredenciais, toggleRelatorioPeriodico, salvarRelatorioPeriodico, toggleDisparoIndividual, salvarDisparoIndividual } from "./actions";
 import { formatarDataHora } from "@/lib/data-hora";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +35,12 @@ interface RelatorioPeriodicoStatus {
   horaFim: string | null;
 }
 
+interface DisparoIndividualStatus {
+  ativo: boolean;
+  endpointUrl: string | null;
+  intervaloSegundos: number | null;
+}
+
 export default async function IntegracoesPage() {
   let status: LimitStatus | null = null;
   let error: string | null = null;
@@ -58,6 +64,14 @@ export default async function IntegracoesPage() {
     relatorioPeriodico = await adminApiFetch<RelatorioPeriodicoStatus>("/admin/integrations/relatorio-periodico");
   } catch (e) {
     erroRelatorioPeriodico = e instanceof Error ? e.message : String(e);
+  }
+
+  let disparoIndividual: DisparoIndividualStatus | null = null;
+  let erroDisparoIndividual: string | null = null;
+  try {
+    disparoIndividual = await adminApiFetch<DisparoIndividualStatus>("/admin/integrations/disparo-individual");
+  } catch (e) {
+    erroDisparoIndividual = e instanceof Error ? e.message : String(e);
   }
 
   return (
@@ -220,6 +234,65 @@ export default async function IntegracoesPage() {
               nada de madrugada). Deixe os dois campos vazios e salve pra remover a
               restrição e enviar em qualquer horário.
             </p>
+            <button type="submit">Salvar</button>
+          </form>
+        </div>
+      )}
+
+      <h1 style={{ marginTop: 40 }}>Disparo individual</h1>
+      <p className="subtitle">
+        A cada ciclo, pega no máximo 1 lead aguardando consulta do disparo (o mesmo grupo
+        que já existe hoje pro <code>GET /api/v1/leads/aguardando-disparo</code>) e manda
+        por POST simples pro endpoint cadastrado abaixo — nunca todos de uma vez, sempre 1
+        por ciclo. Assim que escolhido, o lead já é marcado como &quot;disparo
+        consultado&quot; (mesmo comportamento do endpoint GET) — se o envio falhar, ele não
+        volta pra fila sozinho.
+      </p>
+
+      {erroDisparoIndividual && <p className="empty-state">Não foi possível carregar: {erroDisparoIndividual}</p>}
+
+      {disparoIndividual && (
+        <div className="card">
+          <div className="toggle-form">
+            <strong>Disparo individual</strong>
+            <span className={`badge ${disparoIndividual.ativo ? "good" : "neutral"}`}>
+              {disparoIndividual.ativo ? "● ATIVADO" : "○ DESATIVADO"}
+            </span>
+            <form action={toggleDisparoIndividual.bind(null, !disparoIndividual.ativo)}>
+              <button type="submit" className={disparoIndividual.ativo ? "secondary" : ""}>
+                {disparoIndividual.ativo ? "Desativar" : "Ativar"}
+              </button>
+            </form>
+          </div>
+
+          <form action={salvarDisparoIndividual} style={{ marginTop: 16 }}>
+            <div style={{ marginBottom: 10 }}>
+              <label htmlFor="disparo-endpointUrl" style={{ display: "block", marginBottom: 4 }}>
+                URL do endpoint (recebe o POST, 1 lead por vez)
+              </label>
+              <input
+                id="disparo-endpointUrl"
+                name="endpointUrl"
+                type="text"
+                defaultValue={disparoIndividual.endpointUrl ?? ""}
+                placeholder="https://seu-sistema.com/webhook/lead"
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label htmlFor="disparo-intervaloSegundos" style={{ display: "block", marginBottom: 4 }}>
+                Frequência de envio (em segundos)
+              </label>
+              <input
+                id="disparo-intervaloSegundos"
+                name="intervaloSegundos"
+                type="number"
+                min={1}
+                step={1}
+                defaultValue={disparoIndividual.intervaloSegundos ?? 30}
+                style={{ width: "100%" }}
+              />
+            </div>
             <button type="submit">Salvar</button>
           </form>
         </div>

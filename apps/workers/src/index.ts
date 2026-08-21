@@ -11,6 +11,7 @@ import { runDispatchWorkerOnce } from "./workers/worker4-dispatch";
 import { runRetryWorkerOnce } from "./workers/worker5-retry";
 import { runReconciliationWorkerOnce } from "./workers/worker6-reconciliation";
 import { runRelatorioPeriodicoWorkerOnce } from "./workers/worker7-relatorio-periodico";
+import { runDisparoIndividualWorkerOnce } from "./workers/worker8-disparo-individual";
 
 // Entry point dos 6 workers do pipeline (seção 6.1 do doc de arquitetura). Cada um é
 // um polling loop simples (setInterval) — roda tudo em um único processo Node por
@@ -196,6 +197,38 @@ async function resolverIntervaloRelatorioPeriodicoMs(padraoMs: number): Promise<
   return padraoMs;
 }
 
+// Config do worker8 (disparo individual, push) — mesmo padrão dos resolvers
+// acima: lida do banco a cada ciclo, então trocar endpoint/frequência/
+// ativar/desativar no painel ("Integrações") vale a partir do ciclo
+// seguinte, sem reiniciar nada. Intervalo em SEGUNDOS (não horas) — o
+// pedido foi "um temporizador", pensado pra rodar com frequência.
+async function resolverConfigDisparoIndividual(): Promise<{ ativo: boolean; endpointUrl: string | null }> {
+  try {
+    const config = await prisma.integrationConfig.findUnique({ where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" } });
+    const valor = (config?.valor ?? {}) as { endpointUrl?: string };
+    return {
+      ativo: config?.ativo ?? false,
+      endpointUrl: valor.endpointUrl || null,
+    };
+  } catch (error) {
+    logger.warn({ error }, "Falha ao ler a config do disparo individual — ciclo será ignorado");
+    return { ativo: false, endpointUrl: null };
+  }
+}
+
+async function resolverIntervaloDisparoIndividualMs(padraoMs: number): Promise<number> {
+  try {
+    const config = await prisma.integrationConfig.findUnique({ where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" } });
+    const valor = (config?.valor ?? {}) as { intervaloSegundos?: number };
+    if (typeof valor.intervaloSegundos === "number" && valor.intervaloSegundos > 0) {
+      return valor.intervaloSegundos * 1000;
+    }
+  } catch (error) {
+    logger.warn({ error }, "Falha ao ler o intervalo do disparo individual — usando o padrão");
+  }
+  return padraoMs;
+}
+
 const hyperflowService = createHyperflowService();
 
 // "resolverIntervalo" (opcional): quando informado, o próximo ciclo é
@@ -314,6 +347,24 @@ loop(
     return runRelatorioPeriodicoWorkerOnce({ ativo, endpointUrl, horaInicio, horaFim, kpis });
   },
   () => resolverIntervaloRelatorioPeriodicoMs(WORKER7_INTERVAL_MS_PADRAO)
+);
+
+// Worker8 — disparo individual (push, painel "Integrações"): a cada ciclo,
+// pega no máximo 1 lead aguardando disparo (reaproveita a mesma claim
+// atômica do GET /api/v1/leads/aguardando-disparo) e manda pro endpoint
+// cadastrado — nunca todos de uma vez, sempre 1 por ciclo (pedido
+// explícito). Intervalo padrão de fallback: 30s (antes de qualquer
+// configuração salva no painel).
+const WORKER8_INTERVAL_MS_PADRAO = Number(process.env.WORKER8_INTERVAL_MS ?? 30_000);
+
+loop(
+  "worker8-disparo-individual",
+  WORKER8_INTERVAL_MS_PADRAO,
+  async () => {
+    const { ativo, endpointUrl } = await resolverConfigDisparoIndividual();
+    return runDisparoIndividualWorkerOnce({ ativo, endpointUrl, port: repo });
+  },
+  () => resolverIntervaloDisparoIndividualMs(WORKER8_INTERVAL_MS_PADRAO)
 );
 
 process.on("SIGTERM", async () => {
