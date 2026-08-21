@@ -27,8 +27,8 @@ export async function salvarCredenciais(integracao: "lemit" | "whatsapp", formDa
   const loteMinimo = loteMinimoRaw !== "" ? Number(loteMinimoRaw) : undefined;
   const loteMaximoRaw = String(formData.get("loteMaximo") ?? "").trim();
   const loteMaximo = loteMaximoRaw !== "" ? Number(loteMaximoRaw) : undefined;
-  const tempoMaximoRaw = String(formData.get("tempoMaximoEsperaLoteHoras") ?? "").trim();
-  const tempoMaximoEsperaLoteHoras = tempoMaximoRaw !== "" ? Number(tempoMaximoRaw) : undefined;
+  const tempoMaximoRaw = String(formData.get("tempoMaximoEsperaLoteMinutos") ?? "").trim();
+  const tempoMaximoEsperaLoteMinutos = tempoMaximoRaw !== "" ? Number(tempoMaximoRaw) : undefined;
   await adminApiFetch("/admin/integrations/credenciais", {
     method: "POST",
     body: JSON.stringify({
@@ -39,7 +39,7 @@ export async function salvarCredenciais(integracao: "lemit" | "whatsapp", formDa
       limiteRequisicoesPorCiclo,
       loteMinimo,
       loteMaximo,
-      tempoMaximoEsperaLoteHoras,
+      tempoMaximoEsperaLoteMinutos,
     }),
   });
   revalidatePath("/integracoes");

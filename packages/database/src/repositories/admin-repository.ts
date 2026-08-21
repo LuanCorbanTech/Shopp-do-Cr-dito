@@ -12,7 +12,7 @@ function mascararCredencial(valor: unknown): {
   limiteRequisicoesPorCiclo: number | null;
   loteMinimo: number | null;
   loteMaximo: number | null;
-  tempoMaximoEsperaLoteHoras: number | null;
+  tempoMaximoEsperaLoteMinutos: number | null;
 } {
   const v = (valor ?? {}) as {
     apiKey?: string;
@@ -21,7 +21,7 @@ function mascararCredencial(valor: unknown): {
     limiteRequisicoesPorCiclo?: number;
     loteMinimo?: number;
     loteMaximo?: number;
-    tempoMaximoEsperaLoteHoras?: number;
+    tempoMaximoEsperaLoteMinutos?: number;
   };
   const apiKey = v.apiKey ?? null;
   return {
@@ -33,8 +33,8 @@ function mascararCredencial(valor: unknown): {
       typeof v.limiteRequisicoesPorCiclo === "number" && v.limiteRequisicoesPorCiclo > 0 ? v.limiteRequisicoesPorCiclo : null,
     loteMinimo: typeof v.loteMinimo === "number" && v.loteMinimo > 0 ? v.loteMinimo : null,
     loteMaximo: typeof v.loteMaximo === "number" && v.loteMaximo > 0 ? v.loteMaximo : null,
-    tempoMaximoEsperaLoteHoras:
-      typeof v.tempoMaximoEsperaLoteHoras === "number" && v.tempoMaximoEsperaLoteHoras > 0 ? v.tempoMaximoEsperaLoteHoras : null,
+    tempoMaximoEsperaLoteMinutos:
+      typeof v.tempoMaximoEsperaLoteMinutos === "number" && v.tempoMaximoEsperaLoteMinutos > 0 ? v.tempoMaximoEsperaLoteMinutos : null,
   };
 }
 
@@ -498,7 +498,7 @@ export class AdminRepository {
       limiteRequisicoesPorCiclo?: number;
       loteMinimo?: number;
       loteMaximo?: number;
-      tempoMaximoEsperaLoteHoras?: number;
+      tempoMaximoEsperaLoteMinutos?: number;
     }
   ) {
     const atual = await this.prisma.integrationConfig.findUnique({ where: { chave } });
@@ -509,7 +509,7 @@ export class AdminRepository {
       limiteRequisicoesPorCiclo?: number;
       loteMinimo?: number;
       loteMaximo?: number;
-      tempoMaximoEsperaLoteHoras?: number;
+      tempoMaximoEsperaLoteMinutos?: number;
     };
     const apiKey =
       dados.apiKey !== undefined && dados.apiKey.trim() !== "" ? dados.apiKey.trim() : valorAtual.apiKey ?? null;
@@ -541,12 +541,12 @@ export class AdminRepository {
       dados.loteMaximo !== undefined && Number.isFinite(dados.loteMaximo) && dados.loteMaximo > 0
         ? Math.floor(dados.loteMaximo)
         : valorAtual.loteMaximo ?? null;
-    const tempoMaximoEsperaLoteHoras =
-      dados.tempoMaximoEsperaLoteHoras !== undefined &&
-      Number.isFinite(dados.tempoMaximoEsperaLoteHoras) &&
-      dados.tempoMaximoEsperaLoteHoras > 0
-        ? Math.floor(dados.tempoMaximoEsperaLoteHoras)
-        : valorAtual.tempoMaximoEsperaLoteHoras ?? null;
+    const tempoMaximoEsperaLoteMinutos =
+      dados.tempoMaximoEsperaLoteMinutos !== undefined &&
+      Number.isFinite(dados.tempoMaximoEsperaLoteMinutos) &&
+      dados.tempoMaximoEsperaLoteMinutos > 0
+        ? Math.floor(dados.tempoMaximoEsperaLoteMinutos)
+        : valorAtual.tempoMaximoEsperaLoteMinutos ?? null;
     const novoValor = {
       apiKey,
       baseUrl,
@@ -554,7 +554,7 @@ export class AdminRepository {
       limiteRequisicoesPorCiclo,
       loteMinimo,
       loteMaximo,
-      tempoMaximoEsperaLoteHoras,
+      tempoMaximoEsperaLoteMinutos,
     };
     return this.prisma.integrationConfig.upsert({
       where: { chave },

@@ -140,14 +140,14 @@ async function resolverParametrosLote(padroes: {
     const valor = (config?.valor ?? {}) as {
       loteMinimo?: number;
       loteMaximo?: number;
-      tempoMaximoEsperaLoteHoras?: number;
+      tempoMaximoEsperaLoteMinutos?: number;
     };
     return {
       loteMinimo: typeof valor.loteMinimo === "number" && valor.loteMinimo > 0 ? valor.loteMinimo : padroes.loteMinimo,
       loteMaximo: typeof valor.loteMaximo === "number" && valor.loteMaximo > 0 ? valor.loteMaximo : padroes.loteMaximo,
       tempoMaximoEsperaLoteMs:
-        typeof valor.tempoMaximoEsperaLoteHoras === "number" && valor.tempoMaximoEsperaLoteHoras > 0
-          ? valor.tempoMaximoEsperaLoteHoras * 60 * 60 * 1000
+        typeof valor.tempoMaximoEsperaLoteMinutos === "number" && valor.tempoMaximoEsperaLoteMinutos > 0
+          ? valor.tempoMaximoEsperaLoteMinutos * 60 * 1000
           : padroes.tempoMaximoEsperaLoteMs,
     };
   } catch (error) {

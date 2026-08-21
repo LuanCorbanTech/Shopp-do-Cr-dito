@@ -19,7 +19,7 @@ interface CredencialStatus {
   limiteRequisicoesPorCiclo: number | null;
   loteMinimo: number | null;
   loteMaximo: number | null;
-  tempoMaximoEsperaLoteHoras: number | null;
+  tempoMaximoEsperaLoteMinutos: number | null;
 }
 
 interface CredenciaisIntegracoes {
@@ -427,16 +427,16 @@ function CredencialForm({
               />
             </div>
             <div style={{ marginBottom: 10 }}>
-              <label htmlFor={`${integracao}-tempoMaximoEsperaLoteHoras`} style={{ display: "block", marginBottom: 4 }}>
-                Tempo máximo de espera pelo lote (horas)
+              <label htmlFor={`${integracao}-tempoMaximoEsperaLoteMinutos`} style={{ display: "block", marginBottom: 4 }}>
+                Tempo máximo de espera pelo lote (minutos)
               </label>
               <input
-                id={`${integracao}-tempoMaximoEsperaLoteHoras`}
-                name="tempoMaximoEsperaLoteHoras"
+                id={`${integracao}-tempoMaximoEsperaLoteMinutos`}
+                name="tempoMaximoEsperaLoteMinutos"
                 type="number"
                 min={1}
                 step={1}
-                defaultValue={status.tempoMaximoEsperaLoteHoras ?? 2}
+                defaultValue={status.tempoMaximoEsperaLoteMinutos ?? 120}
                 style={{ width: "100%" }}
               />
             </div>

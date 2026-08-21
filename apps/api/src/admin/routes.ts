@@ -105,7 +105,7 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           limiteRequisicoesPorCiclo?: number;
           loteMinimo?: number;
           loteMaximo?: number;
-          tempoMaximoEsperaLoteHoras?: number;
+          tempoMaximoEsperaLoteMinutos?: number;
         };
       }>("/integrations/credenciais", async (request, reply) => {
         const body = request.body ?? {};
@@ -125,7 +125,7 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           limiteRequisicoesPorCiclo: body.limiteRequisicoesPorCiclo,
           loteMinimo: body.loteMinimo,
           loteMaximo: body.loteMaximo,
-          tempoMaximoEsperaLoteHoras: body.tempoMaximoEsperaLoteHoras,
+          tempoMaximoEsperaLoteMinutos: body.tempoMaximoEsperaLoteMinutos,
         });
         const atualizado = await adminRepo.getCredenciaisIntegracoes();
         return atualizado[body.integracao as "lemit" | "whatsapp"];
