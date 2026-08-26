@@ -404,4 +404,43 @@ describe("runWhatsappWorkerOnce — caminho de LOTE (checknumber.ai, mínimo 500
     const noLote = [...repo.offers.values()].filter((o) => o.status === "VALIDANDO_WHATSAPP");
     expect(noLote.length).toBe(499);
   });
+
+  it("BUG REAL: telefone com poucos dígitos (não passa nem na validação básica) é tirado do lote — antes disso, um único telefone assim derrubava o lote de 500 inteiro do lado da CorbanTech", async () => {
+    const repo = new InMemoryPipelineRepository();
+    // 4999 ofertas com telefone bom, mais 1 com telefone claramente
+    // malformado (poucos dígitos — um erro comum de captação/webhook de
+    // parceiro). Antes desse conserto, esse único telefone ruim fazia a
+    // CorbanTech rejeitar o LOTE INTEIRO (mesmo os 4999 bons), e o worker
+    // ficava reagendando o mesmo lote pra sempre — na prática, "perdendo"
+    // um monte de ofertas boas por causa de 1 só ruim.
+    for (let i = 0; i < 4999; i++) {
+      repo.addOffer({ telefoneOriginal: `6299${String(i).padStart(6, "0")}`, status: "TELEFONE_ATUALIZADO" });
+    }
+    repo.addOffer({ telefoneOriginal: "6299912", status: "TELEFONE_ATUALIZADO" }); // só 7 dígitos
+
+    let totalNoLote = 0;
+    await runWhatsappWorkerOnce({
+      whatsappPort: repo,
+      configPort: repo,
+      loteMinimo: 500,
+      loteMaximo: 5000,
+      whatsappService: {
+        startCheck: async () => { throw new Error("não deveria chamar"); },
+        getCheckResult: async () => { throw new Error("não deveria chamar"); },
+        startCheckLote: async ({ phones }) => {
+          totalNoLote = phones.length;
+          // Confirma que o telefone ruim NUNCA chegou a ser mandado pra CorbanTech.
+          expect(phones.some((p) => p.includes("6299912"))).toBe(false);
+          return { loteId: "lote-sem-o-ruim", total: phones.length };
+        },
+        getCheckResultLote: async () => ({ status: "processing" }),
+      },
+    });
+
+    expect(totalNoLote).toBe(4999); // só o ruim ficou de fora, os 4999 bons foram normalmente
+    const canceladas = [...repo.offers.values()].filter((o) => o.status === "CANCELADO");
+    expect(canceladas.length).toBe(1); // só o telefone ruim foi cancelado
+    const noLote = [...repo.offers.values()].filter((o) => o.status === "VALIDANDO_WHATSAPP");
+    expect(noLote.length).toBe(4999); // os 4999 bons seguiram pro lote normalmente, não ficaram "perdidos"
+  });
 });

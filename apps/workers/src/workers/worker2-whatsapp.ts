@@ -144,8 +144,39 @@ export async function runWhatsappWorkerOnce(params: RunWhatsappWorkerOnceParams)
 
     // Ofertas sem telefone nenhum não entram no lote (mesma proteção do
     // caminho individual) — tratadas uma a uma, o resto segue pro lote.
+    // Mesma regra de validação que o CorbanTech aplica do lado dele (mínimo
+    // 8 dígitos, depois de tirar o DDI) — filtrar aqui ANTES de mandar evita
+    // duas coisas: (1) desperdiçar uma vaga do lote de 500 com um número
+    // fadado a ser rejeitado (a checknumber.ai exige exatamente 500 válidos,
+    // não 500 brutos — se sobrar 499 depois de descontar 1 ruim, o lote
+    // inteiro falha de novo); (2) essas ofertas ficam esperando pra sempre
+    // sem nunca virarem um envio de verdade, já que sempre seriam
+    // rejeitadas — melhor cancelar na hora, igual já se faz com "sem
+    // telefone".
+    function telefoneParecValido(telefone: string): boolean {
+      let digitos = telefone.replace(/\D/g, "");
+      if (digitos.length >= 12 && digitos.startsWith("55")) digitos = digitos.slice(2);
+      digitos = digitos.replace(/^0+/, "");
+      return digitos.length >= 8;
+    }
     const semTelefone = ofertas.filter((o) => !(o.telefoneAtualizado ?? o.telefoneOriginal));
-    const comTelefone = ofertas.filter((o) => o.telefoneAtualizado ?? o.telefoneOriginal);
+    const telefoneInvalido = ofertas.filter((o) => {
+      const t = o.telefoneAtualizado ?? o.telefoneOriginal;
+      return !!t && !telefoneParecValido(t);
+    });
+    const comTelefone = ofertas.filter((o) => {
+      const t = o.telefoneAtualizado ?? o.telefoneOriginal;
+      return !!t && telefoneParecValido(t);
+    });
+    for (const offer of telefoneInvalido) {
+      await whatsappPort.markWhatsappFailed(offer.id, {
+        erro: "Telefone com poucos dígitos — não passa nem na validação básica do provedor de WhatsApp.",
+        tentativa: offer.tentativasWhatsapp + 1,
+        proximaTentativaEm: null,
+        cancelar: true,
+      });
+      processadas += 1;
+    }
     for (const offer of semTelefone) {
       await whatsappPort.markWhatsappFailed(offer.id, {
         erro: "Nenhum telefone disponível: não veio na captação e a Lemit não retornou um para esse CPF.",
