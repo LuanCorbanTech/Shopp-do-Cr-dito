@@ -646,29 +646,51 @@ export class AdminRepository {
   // armazenamento do relatório periódico, chave própria.
   async getDisparoIndividualConfig() {
     const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" } });
-    const valor = (config?.valor ?? {}) as { endpointUrl?: string; intervaloSegundos?: number };
+    const valor = (config?.valor ?? {}) as {
+      endpointUrl?: string;
+      endpoints?: { id: string; url: string; ativo: boolean }[];
+      intervaloSegundos?: number;
+    };
+    // Migração automática do formato antigo (1 endpoint só) pro novo (lista)
+    // — só na leitura, sem precisar de passo manual nenhum.
+    let endpoints = valor.endpoints;
+    if ((!endpoints || endpoints.length === 0) && valor.endpointUrl) {
+      endpoints = [{ id: "migrado-automatico", url: valor.endpointUrl, ativo: true }];
+    }
     return {
       ativo: config?.ativo ?? false,
-      endpointUrl: valor.endpointUrl ?? null,
+      endpoints: endpoints ?? [],
       intervaloSegundos:
         typeof valor.intervaloSegundos === "number" && valor.intervaloSegundos > 0 ? valor.intervaloSegundos : null,
     };
   }
 
-  async salvarDisparoIndividualConfig(dados: { ativo?: boolean; endpointUrl?: string; intervaloSegundos?: number }) {
+  async salvarDisparoIndividualConfig(dados: {
+    ativo?: boolean;
+    endpoints?: { id: string; url: string; ativo: boolean }[];
+    intervaloSegundos?: number;
+  }) {
     const atual = await this.prisma.integrationConfig.findUnique({ where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" } });
-    const valorAtual = (atual?.valor ?? {}) as { endpointUrl?: string; intervaloSegundos?: number };
-    const endpointUrl =
-      dados.endpointUrl !== undefined
-        ? dados.endpointUrl.trim() === ""
-          ? null
-          : dados.endpointUrl.trim()
-        : valorAtual.endpointUrl ?? null;
+    const valorAtual = (atual?.valor ?? {}) as {
+      endpointUrl?: string;
+      endpoints?: { id: string; url: string; ativo: boolean }[];
+      intervaloSegundos?: number;
+    };
+    // A lista inteira é substituída de uma vez (a tela manda o estado atual
+    // completo a cada "Salvar", não uma alteração incremental) — filtra
+    // linhas com URL vazia (descartadas antes de chegar aqui, mas por
+    // segurança) e garante um id em cada uma.
+    const endpoints =
+      dados.endpoints !== undefined
+        ? dados.endpoints
+            .map((e, i) => ({ id: e.id || `endpoint-${Date.now()}-${i}`, url: (e.url || "").trim(), ativo: !!e.ativo }))
+            .filter((e) => e.url !== "")
+        : (valorAtual.endpoints ?? (valorAtual.endpointUrl ? [{ id: "migrado-automatico", url: valorAtual.endpointUrl, ativo: true }] : []));
     const intervaloSegundos =
       dados.intervaloSegundos !== undefined && Number.isFinite(dados.intervaloSegundos) && dados.intervaloSegundos > 0
         ? Math.floor(dados.intervaloSegundos)
         : valorAtual.intervaloSegundos ?? null;
-    const novoValor = { endpointUrl, intervaloSegundos };
+    const novoValor = { endpoints, intervaloSegundos };
     const ativo = dados.ativo ?? atual?.ativo ?? false;
     return this.prisma.integrationConfig.upsert({
       where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" },

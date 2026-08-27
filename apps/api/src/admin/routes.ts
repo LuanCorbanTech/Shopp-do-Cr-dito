@@ -157,18 +157,22 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       });
 
       // Disparo individual: mesma ideia do relatório periódico, mas em vez
-      // de mandar um resumo, empurra 1 lead aguardando disparo por ciclo
-      // (worker8-disparo-individual, apps/workers) pro endpoint cadastrado
-      // aqui.
+      // de mandar um resumo, empurra 1 lead aguardando disparo por ciclo,
+      // PRA CADA endpoint ativo cadastrado (vários endpoints = vários "1
+      // por ciclo" em paralelo, multiplicando o throughput total).
       instance.get("/integrations/disparo-individual", async () => adminRepo.getDisparoIndividualConfig());
 
       instance.post<{
-        Body: { ativo?: boolean; endpointUrl?: string; intervaloSegundos?: number };
+        Body: {
+          ativo?: boolean;
+          endpoints?: { id: string; url: string; ativo: boolean }[];
+          intervaloSegundos?: number;
+        };
       }>("/integrations/disparo-individual", async (request) => {
         const body = request.body ?? {};
         await adminRepo.salvarDisparoIndividualConfig({
           ativo: body.ativo,
-          endpointUrl: body.endpointUrl,
+          endpoints: body.endpoints,
           intervaloSegundos: body.intervaloSegundos,
         });
         return adminRepo.getDisparoIndividualConfig();

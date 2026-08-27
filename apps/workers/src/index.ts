@@ -11,7 +11,7 @@ import { runDispatchWorkerOnce } from "./workers/worker4-dispatch";
 import { runRetryWorkerOnce } from "./workers/worker5-retry";
 import { runReconciliationWorkerOnce } from "./workers/worker6-reconciliation";
 import { runRelatorioPeriodicoWorkerOnce } from "./workers/worker7-relatorio-periodico";
-import { runDisparoIndividualWorkerOnce } from "./workers/worker8-disparo-individual";
+import { runDisparoIndividualWorkerOnce, type DisparoIndividualEndpoint } from "./workers/worker8-disparo-individual";
 
 // Entry point dos 6 workers do pipeline (seção 6.1 do doc de arquitetura). Cada um é
 // um polling loop simples (setInterval) — roda tudo em um único processo Node por
@@ -202,17 +202,25 @@ async function resolverIntervaloRelatorioPeriodicoMs(padraoMs: number): Promise<
 // ativar/desativar no painel ("Integrações") vale a partir do ciclo
 // seguinte, sem reiniciar nada. Intervalo em SEGUNDOS (não horas) — o
 // pedido foi "um temporizador", pensado pra rodar com frequência.
-async function resolverConfigDisparoIndividual(): Promise<{ ativo: boolean; endpointUrl: string | null }> {
+async function resolverConfigDisparoIndividual(): Promise<{ ativo: boolean; endpoints: DisparoIndividualEndpoint[] }> {
   try {
     const config = await prisma.integrationConfig.findUnique({ where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" } });
-    const valor = (config?.valor ?? {}) as { endpointUrl?: string };
+    const valor = (config?.valor ?? {}) as { endpointUrl?: string; endpoints?: DisparoIndividualEndpoint[] };
+    // Migração automática do formato antigo (1 endpoint só, campo
+    // "endpointUrl") pro novo (lista "endpoints") — só na LEITURA, sem
+    // precisar de nenhum passo manual. Assim que salvar pela tela nova, já
+    // fica gravado no formato novo dali pra frente.
+    let endpoints = valor.endpoints;
+    if ((!endpoints || endpoints.length === 0) && valor.endpointUrl) {
+      endpoints = [{ id: "migrado-automatico", url: valor.endpointUrl, ativo: true }];
+    }
     return {
       ativo: config?.ativo ?? false,
-      endpointUrl: valor.endpointUrl || null,
+      endpoints: endpoints ?? [],
     };
   } catch (error) {
     logger.warn({ error }, "Falha ao ler a config do disparo individual — ciclo será ignorado");
-    return { ativo: false, endpointUrl: null };
+    return { ativo: false, endpoints: [] };
   }
 }
 
@@ -361,8 +369,8 @@ loop(
   "worker8-disparo-individual",
   WORKER8_INTERVAL_MS_PADRAO,
   async () => {
-    const { ativo, endpointUrl } = await resolverConfigDisparoIndividual();
-    return runDisparoIndividualWorkerOnce({ ativo, endpointUrl, port: repo });
+    const { ativo, endpoints } = await resolverConfigDisparoIndividual();
+    return runDisparoIndividualWorkerOnce({ ativo, endpoints, port: repo });
   },
   () => resolverIntervaloDisparoIndividualMs(WORKER8_INTERVAL_MS_PADRAO)
 );

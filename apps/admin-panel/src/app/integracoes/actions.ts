@@ -82,12 +82,26 @@ export async function toggleDisparoIndividual(ativo: boolean): Promise<void> {
 }
 
 export async function salvarDisparoIndividual(formData: FormData): Promise<void> {
-  const endpointUrl = String(formData.get("endpointUrl") ?? "");
+  const endpointsJsonRaw = String(formData.get("endpointsJson") ?? "[]");
+  let endpoints: { id: string; url: string; ativo: boolean }[] = [];
+  try {
+    const parsed = JSON.parse(endpointsJsonRaw);
+    if (Array.isArray(parsed)) {
+      endpoints = parsed
+        .map((e) => ({ id: String(e?.id ?? ""), url: String(e?.url ?? "").trim(), ativo: !!e?.ativo }))
+        .filter((e) => e.url !== "");
+    }
+  } catch {
+    // JSON malformado (não deveria acontecer, o campo é escondido e vem do
+    // próprio componente) — trata como lista vazia em vez de quebrar a
+    // página inteira.
+    endpoints = [];
+  }
   const intervaloRaw = String(formData.get("intervaloSegundos") ?? "").trim();
   const intervaloSegundos = intervaloRaw !== "" ? Number(intervaloRaw) : undefined;
   await adminApiFetch("/admin/integrations/disparo-individual", {
     method: "POST",
-    body: JSON.stringify({ endpointUrl, intervaloSegundos }),
+    body: JSON.stringify({ endpoints, intervaloSegundos }),
   });
   revalidatePath("/integracoes");
 }

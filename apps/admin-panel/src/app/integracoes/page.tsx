@@ -1,6 +1,7 @@
 import { adminApiFetch } from "@/lib/api";
 import { setLimitEnabled, salvarCredenciais, toggleRelatorioPeriodico, salvarRelatorioPeriodico, toggleDisparoIndividual, salvarDisparoIndividual } from "./actions";
 import { formatarDataHora } from "@/lib/data-hora";
+import DisparoIndividualEndpointsEditor from "./DisparoIndividualEndpointsEditor";
 
 export const dynamic = "force-dynamic";
 
@@ -35,9 +36,15 @@ interface RelatorioPeriodicoStatus {
   horaFim: string | null;
 }
 
+export interface DisparoIndividualEndpointStatus {
+  id: string;
+  url: string;
+  ativo: boolean;
+}
+
 interface DisparoIndividualStatus {
   ativo: boolean;
-  endpointUrl: string | null;
+  endpoints: DisparoIndividualEndpointStatus[];
   intervaloSegundos: number | null;
 }
 
@@ -241,12 +248,15 @@ export default async function IntegracoesPage() {
 
       <h1 style={{ marginTop: 40 }}>Disparo individual</h1>
       <p className="subtitle">
-        A cada ciclo, pega no máximo 1 lead aguardando consulta do disparo (o mesmo grupo
-        que já existe hoje pro <code>GET /api/v1/leads/aguardando-disparo</code>) e manda
-        por POST simples pro endpoint cadastrado abaixo — nunca todos de uma vez, sempre 1
-        por ciclo. Assim que escolhido, o lead já é marcado como &quot;disparo
-        consultado&quot; (mesmo comportamento do endpoint GET) — se o envio falhar, ele não
-        volta pra fila sozinho.
+        A cada ciclo, pega até 1 lead aguardando consulta do disparo (o mesmo grupo que já
+        existe hoje pro <code>GET /api/v1/leads/aguardando-disparo</code>){" "}
+        <strong>pra cada endpoint ativo cadastrado abaixo</strong>, e manda todos ao mesmo
+        tempo (em paralelo) — cada endpoint individual continua recebendo só 1 lead por
+        ciclo, mas com vários endpoints ativos o throughput total multiplica (ex.: 5
+        endpoints ativos = até 5 leads por ciclo). Assim que escolhido, o lead já é marcado
+        como &quot;disparo consultado&quot; (mesmo comportamento do endpoint GET) — se um
+        envio específico falhar, só aquele lead fica assim; os outros endpoints não são
+        afetados.
       </p>
 
       {erroDisparoIndividual && <p className="empty-state">Não foi possível carregar: {erroDisparoIndividual}</p>}
@@ -266,22 +276,10 @@ export default async function IntegracoesPage() {
           </div>
 
           <form action={salvarDisparoIndividual} style={{ marginTop: 16 }}>
-            <div style={{ marginBottom: 10 }}>
-              <label htmlFor="disparo-endpointUrl" style={{ display: "block", marginBottom: 4 }}>
-                URL do endpoint (recebe o POST, 1 lead por vez)
-              </label>
-              <input
-                id="disparo-endpointUrl"
-                name="endpointUrl"
-                type="text"
-                defaultValue={disparoIndividual.endpointUrl ?? ""}
-                placeholder="https://seu-sistema.com/webhook/lead"
-                style={{ width: "100%" }}
-              />
-            </div>
-            <div style={{ marginBottom: 10 }}>
+            <DisparoIndividualEndpointsEditor endpointsIniciais={disparoIndividual.endpoints} />
+            <div style={{ marginBottom: 10, marginTop: 16 }}>
               <label htmlFor="disparo-intervaloSegundos" style={{ display: "block", marginBottom: 4 }}>
-                Frequência de envio (em segundos)
+                Frequência do ciclo (em segundos)
               </label>
               <input
                 id="disparo-intervaloSegundos"
