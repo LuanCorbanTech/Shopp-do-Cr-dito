@@ -1,50 +1,48 @@
-# Disparo individual — múltiplos endpoints em paralelo
+# Disparo individual — suporte a múltiplos "modelos" (Hyperflow + Ararahq)
 
 ## O que foi pedido
 
-Aumentar o throughput do Disparo individual (hoje limitado a ~60/min com 1
-endpoint só) permitindo cadastrar **vários endpoints**, cada um recebendo 1
-lead por ciclo, todos enviados **ao mesmo tempo** — multiplicando o total
-pelo número de endpoints ativos.
+Cada endpoint cadastrado no Disparo individual passa a ter um **modelo**
+(Hyperflow ou Ararahq, extensível pra mais no futuro) — o sistema monta a
+requisição no formato certo pra cada um.
 
 ## O que mudou
 
-- **Worker (`worker8-disparo-individual.ts`)**: em vez de pegar 1 lead e
-  mandar pra 1 endpoint, agora pega **até 1 lead pra cada endpoint ativo**
-  (numa única chamada atômica) e manda todos com `Promise.allSettled` — em
-  paralelo de verdade, e a falha de 1 endpoint nunca afeta os outros.
-- **Painel Integrações**: o campo único "URL do endpoint" virou uma lista
-  editável — adicionar quantos endpoints quiser, ativar/desativar cada um
-  individualmente (sem precisar remover), e remover quando não precisar
-  mais.
-- **Migração automática**: sua configuração atual (1 endpoint só, formato
-  antigo) é lida e convertida sozinha pro formato novo na primeira vez que
-  a tela carregar — não precisa fazer nada manual, e assim que salvar pela
-  tela nova já fica gravado no formato novo.
-
-## Sobre duplicidade (o ponto que você levantou)
-
-Confirmado com um teste real, usando 2 conexões simultâneas ao banco de
-dados (não sequenciais) disputando os mesmos registros: **zero
-sobreposição** possível. Isso não depende de nenhuma lógica no worker — é
-uma trava no próprio banco (`FOR UPDATE SKIP LOCKED`), a mesma técnica já
-usada em todo o resto do sistema. Um lead nunca pode ser capturado duas
-vezes, mesmo com múltiplos endpoints disputando ao mesmo tempo.
+- **Cada linha da lista de endpoints** ganhou um seletor "Hyperflow /
+  Ararahq". Migração automática: qualquer endpoint já cadastrado (de antes
+  desse campo existir) vira "Hyperflow" sozinho — era o único formato que
+  existia.
+- **Formato Hyperflow** (sem mudança): corpo completo do lead, sem
+  autenticação.
+- **Formato Ararahq** (novo): corpo simples `{"phone": "+55...", "name":
+  "..."}`, com cabeçalhos `Authorization: Bearer <chave>` e
+  `Idempotency-Key` (UUID novo a cada envio, nunca repete — confirmado como
+  requisito do dev deles).
+- **1 chave de API só**, compartilhada por todos os endpoints Ararahq
+  (confirmado com você — não é por endpoint), mascarada na tela (mesmo
+  padrão da Lemit/CorbanTech), com "deixe em branco pra manter a atual".
+- **Telefone com "+" na frente** só pro formato Ararahq — a Hyperflow
+  continua exatamente igual a antes (sem "+"), nenhum risco de quebrar o
+  que já funciona.
+- Endpoints de modelos diferentes podem coexistir no mesmo ciclo — cada um
+  recebe o formato certo, sem misturar (testado explicitamente).
 
 ## Validação
 
-- **65 testes automatizados** (57 existentes + 8 novos cobrindo múltiplos
-  endpoints: paralelismo de verdade — provado com atrasos diferentes por
-  endpoint —, endpoint desativado não recebe nada, falha isolada não
-  derruba os outros, menos leads que endpoints não quebra), todos passando.
-- Build completo do admin-panel (`next build`) com checagem de tipos,
-  limpo.
-- Testado visualmente com Playwright: migração automática exibida
-  corretamente, adicionar/remover/ativar/desativar endpoints funcionando,
-  payload de salvamento conferido.
-- `tsc --noEmit` sem erros nos workers.
+- **24 testes** no arquivo do worker (16 anteriores + 8 novos específicos
+  da Ararahq): formato do corpo, cabeçalhos corretos, Idempotency-Key
+  sempre diferente a cada envio, formato de UUID válido, e o teste mais
+  importante — Hyperflow e Ararahq no mesmo ciclo, cada um recebendo o
+  formato certo sem contaminação.
+- **73 testes no total** (suíte inteira), todos passando.
+- Migração testada com Node em 3 cenários: formato bem antigo (1 URL),
+  formato intermediário (lista sem modelo), formato novo completo.
+- Build completo do admin-panel (`next build`), limpo.
+- Testado visualmente com Playwright: 2 endpoints (1 Hyperflow, 1 Ararahq)
+  lado a lado, aviso de "preencha a chave" aparecendo corretamente, chave
+  mascarada exibida certinho.
 
-## Arquivos alterados/novos
+## Arquivos alterados
 
 - `apps/workers/src/workers/worker8-disparo-individual.ts`
 - `apps/workers/src/workers/worker8-disparo-individual.test.ts`
@@ -52,8 +50,9 @@ vezes, mesmo com múltiplos endpoints disputando ao mesmo tempo.
 - `apps/api/src/admin/routes.ts`
 - `apps/admin-panel/src/app/integracoes/page.tsx`
 - `apps/admin-panel/src/app/integracoes/actions.ts`
-- `apps/admin-panel/src/app/integracoes/DisparoIndividualEndpointsEditor.tsx` (novo)
+- `apps/admin-panel/src/app/integracoes/DisparoIndividualEndpointsEditor.tsx`
 - `packages/database/src/repositories/admin-repository.ts`
 
-Nenhuma migração de banco — mesma tabela `integration_configs`, só mudou o
-formato do JSON guardado (com migração automática do formato antigo).
+Nenhuma migração de banco — mesma tabela `integration_configs`, com
+migração automática do formato antigo (endpoints sem modelo viram
+"hyperflow" sozinhos, sem precisar reconfigurar nada).

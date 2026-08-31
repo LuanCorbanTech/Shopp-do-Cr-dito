@@ -83,12 +83,17 @@ export async function toggleDisparoIndividual(ativo: boolean): Promise<void> {
 
 export async function salvarDisparoIndividual(formData: FormData): Promise<void> {
   const endpointsJsonRaw = String(formData.get("endpointsJson") ?? "[]");
-  let endpoints: { id: string; url: string; ativo: boolean }[] = [];
+  let endpoints: { id: string; url: string; ativo: boolean; modelo: "hyperflow" | "ararahq" }[] = [];
   try {
     const parsed = JSON.parse(endpointsJsonRaw);
     if (Array.isArray(parsed)) {
       endpoints = parsed
-        .map((e) => ({ id: String(e?.id ?? ""), url: String(e?.url ?? "").trim(), ativo: !!e?.ativo }))
+        .map((e) => ({
+          id: String(e?.id ?? ""),
+          url: String(e?.url ?? "").trim(),
+          ativo: !!e?.ativo,
+          modelo: e?.modelo === "ararahq" ? ("ararahq" as const) : ("hyperflow" as const),
+        }))
         .filter((e) => e.url !== "");
     }
   } catch {
@@ -99,9 +104,10 @@ export async function salvarDisparoIndividual(formData: FormData): Promise<void>
   }
   const intervaloRaw = String(formData.get("intervaloSegundos") ?? "").trim();
   const intervaloSegundos = intervaloRaw !== "" ? Number(intervaloRaw) : undefined;
+  const ararahqApiKey = String(formData.get("ararahqApiKey") ?? "");
   await adminApiFetch("/admin/integrations/disparo-individual", {
     method: "POST",
-    body: JSON.stringify({ endpoints, intervaloSegundos }),
+    body: JSON.stringify({ endpoints, intervaloSegundos, ararahqApiKey }),
   });
   revalidatePath("/integracoes");
 }

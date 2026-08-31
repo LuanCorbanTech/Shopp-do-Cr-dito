@@ -202,25 +202,42 @@ async function resolverIntervaloRelatorioPeriodicoMs(padraoMs: number): Promise<
 // ativar/desativar no painel ("Integrações") vale a partir do ciclo
 // seguinte, sem reiniciar nada. Intervalo em SEGUNDOS (não horas) — o
 // pedido foi "um temporizador", pensado pra rodar com frequência.
-async function resolverConfigDisparoIndividual(): Promise<{ ativo: boolean; endpoints: DisparoIndividualEndpoint[] }> {
+async function resolverConfigDisparoIndividual(): Promise<{
+  ativo: boolean;
+  endpoints: DisparoIndividualEndpoint[];
+  ararahqApiKey: string | null;
+}> {
   try {
     const config = await prisma.integrationConfig.findUnique({ where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" } });
-    const valor = (config?.valor ?? {}) as { endpointUrl?: string; endpoints?: DisparoIndividualEndpoint[] };
-    // Migração automática do formato antigo (1 endpoint só, campo
-    // "endpointUrl") pro novo (lista "endpoints") — só na LEITURA, sem
-    // precisar de nenhum passo manual. Assim que salvar pela tela nova, já
-    // fica gravado no formato novo dali pra frente.
-    let endpoints = valor.endpoints;
-    if ((!endpoints || endpoints.length === 0) && valor.endpointUrl) {
-      endpoints = [{ id: "migrado-automatico", url: valor.endpointUrl, ativo: true }];
+    const valor = (config?.valor ?? {}) as {
+      endpointUrl?: string;
+      endpoints?: Array<Partial<DisparoIndividualEndpoint> & { id: string; url: string; ativo: boolean }>;
+      ararahqApiKey?: string;
+    };
+    // Migração automática, em 2 camadas, só na LEITURA (sem precisar de
+    // nenhum passo manual):
+    // 1) formato bem antigo (1 endpoint só, campo "endpointUrl") vira lista;
+    // 2) qualquer endpoint (antigo ou já em lista, de antes do campo
+    //    "modelo" existir) que não tenha "modelo" definido vira "hyperflow"
+    //    — era o único formato que existia antes desse campo ser criado.
+    let endpointsBrutos = valor.endpoints;
+    if ((!endpointsBrutos || endpointsBrutos.length === 0) && valor.endpointUrl) {
+      endpointsBrutos = [{ id: "migrado-automatico", url: valor.endpointUrl, ativo: true }];
     }
+    const endpoints: DisparoIndividualEndpoint[] = (endpointsBrutos ?? []).map((e) => ({
+      id: e.id,
+      url: e.url,
+      ativo: e.ativo,
+      modelo: e.modelo === "ararahq" ? "ararahq" : "hyperflow",
+    }));
     return {
       ativo: config?.ativo ?? false,
-      endpoints: endpoints ?? [],
+      endpoints,
+      ararahqApiKey: valor.ararahqApiKey || null,
     };
   } catch (error) {
     logger.warn({ error }, "Falha ao ler a config do disparo individual — ciclo será ignorado");
-    return { ativo: false, endpoints: [] };
+    return { ativo: false, endpoints: [], ararahqApiKey: null };
   }
 }
 
@@ -369,8 +386,8 @@ loop(
   "worker8-disparo-individual",
   WORKER8_INTERVAL_MS_PADRAO,
   async () => {
-    const { ativo, endpoints } = await resolverConfigDisparoIndividual();
-    return runDisparoIndividualWorkerOnce({ ativo, endpoints, port: repo });
+    const { ativo, endpoints, ararahqApiKey } = await resolverConfigDisparoIndividual();
+    return runDisparoIndividualWorkerOnce({ ativo, endpoints, ararahqApiKey, port: repo });
   },
   () => resolverIntervaloDisparoIndividualMs(WORKER8_INTERVAL_MS_PADRAO)
 );

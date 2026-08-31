@@ -10,21 +10,33 @@ function gerarIdTemporario() {
 }
 
 // Editor da lista de endpoints do "Disparo individual" — precisa ser client
-// component porque a lista é editada (adicionar/remover/ativar linhas) antes
-// de salvar, o resto da página (Server Component) não consegue fazer isso
-// sozinho. O estado inteiro vai num campo escondido (JSON), que o Server
-// Action (salvarDisparoIndividual, em actions.ts) lê e repassa pra API.
+// component porque a lista é editada (adicionar/remover/ativar/trocar
+// modelo linha por linha) antes de salvar, o resto da página (Server
+// Component) não consegue fazer isso sozinho. O estado inteiro vai num
+// campo escondido (JSON), que o Server Action (salvarDisparoIndividual, em
+// actions.ts) lê e repassa pra API.
+//
+// "Modelo" decide o FORMATO que cada endpoint recebe (corpo e cabeçalhos
+// diferentes) — hoje: Hyperflow (formato original) e Ararahq (corpo
+// simples + autenticação). Endpoints Ararahq usam a chave de API cadastrada
+// mais abaixo na tela (uma só, compartilhada por todos eles).
 export default function DisparoIndividualEndpointsEditor({
   endpointsIniciais,
 }: {
   endpointsIniciais: DisparoIndividualEndpointStatus[];
 }) {
   const [endpoints, setEndpoints] = useState<DisparoIndividualEndpointStatus[]>(
-    endpointsIniciais.length > 0 ? endpointsIniciais : [{ id: gerarIdTemporario(), url: "", ativo: true }]
+    endpointsIniciais.length > 0
+      ? endpointsIniciais
+      : [{ id: gerarIdTemporario(), url: "", ativo: true, modelo: "hyperflow" }]
   );
 
   function atualizarUrl(id: string, url: string) {
     setEndpoints((atual) => atual.map((e) => (e.id === id ? { ...e, url } : e)));
+  }
+
+  function atualizarModelo(id: string, modelo: "hyperflow" | "ararahq") {
+    setEndpoints((atual) => atual.map((e) => (e.id === id ? { ...e, modelo } : e)));
   }
 
   function alternarAtivo(id: string) {
@@ -36,10 +48,11 @@ export default function DisparoIndividualEndpointsEditor({
   }
 
   function adicionar() {
-    setEndpoints((atual) => [...atual, { id: gerarIdTemporario(), url: "", ativo: true }]);
+    setEndpoints((atual) => [...atual, { id: gerarIdTemporario(), url: "", ativo: true, modelo: "hyperflow" }]);
   }
 
   const ativosCount = endpoints.filter((e) => e.ativo && e.url.trim() !== "").length;
+  const temArarahqAtivo = endpoints.some((e) => e.ativo && e.url.trim() !== "" && e.modelo === "ararahq");
 
   return (
     <div>
@@ -48,10 +61,7 @@ export default function DisparoIndividualEndpointsEditor({
         Endpoints (recebem o POST, 1 lead por vez — cada um ativo conta como um &quot;canal&quot; a mais)
       </label>
       {endpoints.map((endpoint, i) => (
-        <div
-          key={endpoint.id}
-          style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}
-        >
+        <div key={endpoint.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
           <input
             type="text"
             value={endpoint.url}
@@ -59,6 +69,15 @@ export default function DisparoIndividualEndpointsEditor({
             placeholder={`https://seu-sistema.com/webhook/lead-${i + 1}`}
             style={{ flex: 1 }}
           />
+          <select
+            value={endpoint.modelo}
+            onChange={(e) => atualizarModelo(endpoint.id, e.target.value as "hyperflow" | "ararahq")}
+            style={{ width: 130 }}
+            title="Formato do corpo e dos cabeçalhos que esse endpoint espera receber"
+          >
+            <option value="hyperflow">Hyperflow</option>
+            <option value="ararahq">Ararahq</option>
+          </select>
           <label
             style={{
               display: "flex",
@@ -92,6 +111,7 @@ export default function DisparoIndividualEndpointsEditor({
         {ativosCount === 0
           ? "Nenhum endpoint ativo com URL preenchida — o disparo individual não vai enviar nada até ter pelo menos 1."
           : `${ativosCount} endpoint(s) ativo(s) — cada ciclo manda até ${ativosCount} lead(s) de uma vez (1 por endpoint, em paralelo).`}
+        {temArarahqAtivo && " Tem endpoint Ararahq ativo — não esqueça de preencher a chave de API da Ararahq mais abaixo."}
       </p>
     </div>
   );

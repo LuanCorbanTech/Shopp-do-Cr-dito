@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { logger } from "@plataforma-ofertas/shared";
 import type { OfferSnapshot } from "@plataforma-ofertas/domain";
 
@@ -15,6 +16,13 @@ import type { OfferSnapshot } from "@plataforma-ofertas/domain";
 // Motivo original do pedido: a Hyperflow aceita até 1000 disparos/min, e
 // com 1 endpoint só o sistema ficava limitado a ~60/min.
 //
+// Cada endpoint tem um "modelo" — o formato de corpo/cabeçalhos que o
+// sistema do outro lado espera receber. Hoje: "hyperflow" (formato
+// original) e "ararahq" (novo — corpo simples {phone, name} + autenticação
+// Bearer + Idempotency-Key). Pensado pra crescer: adicionar um modelo novo
+// no futuro é só um novo "case" na função montarRequisicao, sem mexer no
+// resto do worker.
+//
 // Reaproveita a MESMA claim atômica do endpoint GET
 // (claimOffersAguardandoDisparo — UPDATE...RETURNING com SKIP LOCKED): cada
 // oferta já sai marcada como DISPARO_CONSULTADO no instante em que é
@@ -31,23 +39,33 @@ export interface DisparoIndividualPort {
   claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]>;
 }
 
+export type DisparoIndividualModelo = "hyperflow" | "ararahq";
+
 export interface DisparoIndividualEndpoint {
   id: string;
   url: string;
   ativo: boolean;
+  modelo: DisparoIndividualModelo;
 }
 
 export interface RunDisparoIndividualWorkerOnceParams {
   ativo: boolean;
   endpoints?: DisparoIndividualEndpoint[] | null;
   port: DisparoIndividualPort;
+  /** Chave da Ararahq (Bearer token) — uma só, compartilhada por todos os endpoints desse modelo (confirmado com o cliente: não é por endpoint). Só é usada quando algum endpoint tem modelo "ararahq". */
+  ararahqApiKey?: string | null;
   /** Injeção do fetch — só pra testar sem rede de verdade; em produção usa o fetch global. */
   fetchImpl?: typeof fetch;
+  /** Tempo máximo de espera por endpoint, em ms — padrão 10s. Configurável só pra facilitar teste (produção sempre usa o padrão). */
+  timeoutMsPorEndpoint?: number;
+  /** Gerador do Idempotency-Key da Ararahq — só pra facilitar teste (produção sempre usa um UUID de verdade, aleatório, nunca repete). */
+  gerarIdempotencyKey?: () => string;
 }
 
 // Mesmos campos do GET /api/v1/leads/aguardando-disparo (um objeto, não um
-// array com "leads" — cada endpoint recebe sempre 1 por vez).
-export interface DisparoIndividualBody {
+// array com "leads" — cada endpoint recebe sempre 1 por vez). Formato do
+// modelo "hyperflow".
+export interface DisparoIndividualBodyHyperflow {
   id: string;
   externalId: string | null;
   nome: string | null;
@@ -61,7 +79,14 @@ export interface DisparoIndividualBody {
   parcelas: number | null;
 }
 
-export function montarDisparoIndividualBody(o: OfferSnapshot): DisparoIndividualBody {
+// Formato do modelo "ararahq" — bem mais simples, confirmado com o cliente:
+// só telefone (com "+" na frente, formato internacional) e nome.
+export interface DisparoIndividualBodyAraraHQ {
+  phone: string | null;
+  name: string | null;
+}
+
+export function montarDisparoIndividualBody(o: OfferSnapshot): DisparoIndividualBodyHyperflow {
   return {
     id: o.id,
     externalId: o.externalId,
@@ -77,40 +102,111 @@ export function montarDisparoIndividualBody(o: OfferSnapshot): DisparoIndividual
   };
 }
 
+export function montarDisparoIndividualBodyAraraHQ(o: OfferSnapshot): DisparoIndividualBodyAraraHQ {
+  const telefone = o.telefoneValidado;
+  return {
+    // A Ararahq espera formato internacional com "+" na frente
+    // (ex.: "+5583991768778") — diferente da Hyperflow, que não usa "+".
+    // telefoneValidado já vem sem o "+" (mesmo formato usado hoje pra
+    // Hyperflow), então só adiciona aqui, sem mexer no formato salvo.
+    phone: telefone ? (telefone.startsWith("+") ? telefone : `+${telefone}`) : null,
+    name: o.nome,
+  };
+}
+
+interface RequisicaoMontada {
+  body: unknown;
+  headers: Record<string, string>;
+}
+
+function montarRequisicao(
+  endpoint: DisparoIndividualEndpoint,
+  lead: OfferSnapshot,
+  ararahqApiKey: string | null | undefined,
+  gerarIdempotencyKey: () => string
+): RequisicaoMontada {
+  if (endpoint.modelo === "ararahq") {
+    return {
+      body: montarDisparoIndividualBodyAraraHQ(lead),
+      headers: {
+        "Content-Type": "application/json",
+        // Confirmado com o dev da Ararahq: precisa ser uma chave aleatória
+        // que nunca se repete — gerada nova a cada requisição, não baseada
+        // no id do lead nem em nada fixo.
+        "Idempotency-Key": gerarIdempotencyKey(),
+        Authorization: `Bearer ${ararahqApiKey ?? ""}`,
+      },
+    };
+  }
+  // "hyperflow" (padrão) — formato original, sem mudança nenhuma.
+  return {
+    body: montarDisparoIndividualBody(lead),
+    headers: { "Content-Type": "application/json" },
+  };
+}
+
+// Tempo máximo de espera por UMA chamada (padrão, configurável via
+// timeoutMsPorEndpoint) — sem isso, um endpoint que trava (nunca responde,
+// sem erro nem sucesso) prenderia o ciclo inteiro pra sempre, mesmo com só
+// 1 endpoint problemático entre vários bons. Com o timeout, essa chamada
+// específica falha depois do tempo configurado (contada como falha normal
+// — cai no mesmo tratamento de erro), e o ciclo consegue terminar e seguir
+// pro próximo normalmente.
+
 async function enviarParaEndpoint(
   endpoint: DisparoIndividualEndpoint,
   lead: OfferSnapshot,
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+  ararahqApiKey: string | null | undefined,
+  gerarIdempotencyKey: () => string
 ): Promise<boolean> {
-  const body = montarDisparoIndividualBody(lead);
+  const { body, headers } = montarRequisicao(endpoint, lead, ararahqApiKey, gerarIdempotencyKey);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const resposta = await fetchImpl(endpoint.url, {
       method: "POST",
-      // Só este header, mesmo padrão do relatório periódico — nada de
-      // Authorization aqui (o endpoint é do próprio usuário).
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
     if (!resposta.ok) {
       logger.error(
-        { endpointId: endpoint.id, endpointUrl: endpoint.url, status: resposta.status, offerId: lead.id },
+        { endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo, status: resposta.status, offerId: lead.id },
         "Endpoint do disparo individual respondeu com erro — a oferta já ficou marcada como DISPARO_CONSULTADO mesmo assim"
       );
       return false;
     }
-    logger.info({ endpointId: endpoint.id, endpointUrl: endpoint.url, offerId: lead.id }, "Lead individual enviado");
+    logger.info(
+      { endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo, offerId: lead.id },
+      "Lead individual enviado"
+    );
     return true;
   } catch (error) {
+    const foiTimeout = error instanceof Error && error.name === "AbortError";
     logger.error(
-      { endpointId: endpoint.id, endpointUrl: endpoint.url, error, offerId: lead.id },
-      "Falha ao enviar o lead individual — a oferta já ficou marcada como DISPARO_CONSULTADO mesmo assim"
+      { endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo, error, offerId: lead.id, timeout: foiTimeout },
+      foiTimeout
+        ? `Endpoint não respondeu em ${timeoutMs / 1000}s (timeout) — a oferta já ficou marcada como DISPARO_CONSULTADO mesmo assim`
+        : "Falha ao enviar o lead individual — a oferta já ficou marcada como DISPARO_CONSULTADO mesmo assim"
     );
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
 export async function runDisparoIndividualWorkerOnce(params: RunDisparoIndividualWorkerOnceParams): Promise<number> {
-  const { ativo, endpoints, port, fetchImpl = fetch } = params;
+  const {
+    ativo,
+    endpoints,
+    port,
+    ararahqApiKey,
+    fetchImpl = fetch,
+    timeoutMsPorEndpoint = 10_000,
+    gerarIdempotencyKey = randomUUID,
+  } = params;
 
   if (!ativo) return 0;
   const endpointsAtivos = (endpoints ?? []).filter((e) => e.ativo && e.url);
@@ -128,7 +224,9 @@ export async function runDisparoIndividualWorkerOnce(params: RunDisparoIndividua
 
   const pares = ofertas.map((lead, i) => ({ lead, endpoint: endpointsAtivos[i] }));
   const resultados = await Promise.allSettled(
-    pares.map(({ lead, endpoint }) => enviarParaEndpoint(endpoint, lead, fetchImpl))
+    pares.map(({ lead, endpoint }) =>
+      enviarParaEndpoint(endpoint, lead, fetchImpl, timeoutMsPorEndpoint, ararahqApiKey, gerarIdempotencyKey)
+    )
   );
 
   return resultados.filter((r) => r.status === "fulfilled" && r.value === true).length;

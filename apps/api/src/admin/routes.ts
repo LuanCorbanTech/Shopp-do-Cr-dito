@@ -165,8 +165,9 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       instance.post<{
         Body: {
           ativo?: boolean;
-          endpoints?: { id: string; url: string; ativo: boolean }[];
+          endpoints?: { id: string; url: string; ativo: boolean; modelo?: "hyperflow" | "ararahq" }[];
           intervaloSegundos?: number;
+          ararahqApiKey?: string;
         };
       }>("/integrations/disparo-individual", async (request) => {
         const body = request.body ?? {};
@@ -174,6 +175,7 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           ativo: body.ativo,
           endpoints: body.endpoints,
           intervaloSegundos: body.intervaloSegundos,
+          ararahqApiKey: body.ararahqApiKey,
         });
         return adminRepo.getDisparoIndividualConfig();
       });

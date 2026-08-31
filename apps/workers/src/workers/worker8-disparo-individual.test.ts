@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OfferSnapshot } from "@plataforma-ofertas/domain";
 import {
   montarDisparoIndividualBody,
+  montarDisparoIndividualBodyAraraHQ,
   runDisparoIndividualWorkerOnce,
   type DisparoIndividualEndpoint,
 } from "./worker8-disparo-individual";
@@ -35,8 +36,13 @@ function ofertaFake(overrides: Partial<OfferSnapshot> = {}): OfferSnapshot {
   };
 }
 
-function endpoint(id: string, url: string, ativo = true): DisparoIndividualEndpoint {
-  return { id, url, ativo };
+function endpoint(
+  id: string,
+  url: string,
+  ativo = true,
+  modelo: "hyperflow" | "ararahq" = "hyperflow"
+): DisparoIndividualEndpoint {
+  return { id, url, ativo, modelo };
 }
 
 describe("montarDisparoIndividualBody", () => {
@@ -287,5 +293,167 @@ describe("runDisparoIndividualWorkerOnce", () => {
     });
     expect(resultado).toBe(1);
     expect(urlsChamadas).toEqual(["https://a.com"]); // só o primeiro recebeu
+  });
+
+  it("endpoint que TRAVA (nunca responde) não prende o ciclo pra sempre — timeout isola só ele, os outros terminam normalmente", async () => {
+    const inicioTeste = Date.now();
+    const resultado = await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [endpoint("e1", "https://bom1.com"), endpoint("e2", "https://trava-pra-sempre.com"), endpoint("e3", "https://bom2.com")],
+      timeoutMsPorEndpoint: 200, // curto só pro teste não demorar — produção usa 10s
+      port: {
+        claimOffersAguardandoDisparo: async () => [
+          ofertaFake({ id: "o1" }), ofertaFake({ id: "o2" }), ofertaFake({ id: "o3" }),
+        ],
+      },
+      fetchImpl: (async (url, init) => {
+        if (String(url) === "https://trava-pra-sempre.com") {
+          // Simula um endpoint que NUNCA responde nem dá erro — só o abort
+          // (via signal) consegue destravar essa promise. Sem o timeout no
+          // worker, isso prenderia o Promise.allSettled pra sempre.
+          return new Promise((_resolve, reject) => {
+            const signal = init?.signal as AbortSignal | undefined;
+            signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+          });
+        }
+        return new Response(null, { status: 200 });
+      }) as typeof fetch,
+    });
+    const duracaoMs = Date.now() - inicioTeste;
+
+    // 2 dos 3 tiveram sucesso (o travado conta como falha, mas não impede os outros).
+    expect(resultado).toBe(2);
+    // O ciclo TERMINOU por causa do timeout (200ms configurado), não ficou
+    // pendurado pra sempre — com uma folga generosa pra não ficar flaky.
+    expect(duracaoMs).toBeLessThan(2000);
+  });
+});
+
+describe("montarDisparoIndividualBodyAraraHQ", () => {
+  it("monta o corpo simples da Ararahq — só phone (com +) e name", () => {
+    const body = montarDisparoIndividualBodyAraraHQ(ofertaFake({ telefoneValidado: "5583991768778", nome: "Micael" }));
+    expect(body).toEqual({ phone: "+5583991768778", name: "Micael" });
+  });
+
+  it("não duplica o + se telefoneValidado já vier com ele por algum motivo", () => {
+    const body = montarDisparoIndividualBodyAraraHQ(ofertaFake({ telefoneValidado: "+5583991768778" }));
+    expect(body.phone).toBe("+5583991768778");
+  });
+
+  it("telefone nulo vira null, não quebra", () => {
+    const body = montarDisparoIndividualBodyAraraHQ(ofertaFake({ telefoneValidado: null }));
+    expect(body.phone).toBeNull();
+  });
+});
+
+describe("runDisparoIndividualWorkerOnce — modelo Ararahq", () => {
+  it("manda o corpo no formato da Ararahq (não o da Hyperflow) pra um endpoint desse modelo", async () => {
+    let corpoRecebido: unknown = null;
+    const resultado = await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [endpoint("e1", "https://api.ararahq.com/v1/messages/webhook", true, "ararahq")],
+      ararahqApiKey: "ara_live_segredo123",
+      port: { claimOffersAguardandoDisparo: async () => [ofertaFake({ telefoneValidado: "5583991768778", nome: "Micael" })] },
+      fetchImpl: (async (_url, init) => {
+        corpoRecebido = JSON.parse(init?.body as string);
+        return new Response(null, { status: 200 });
+      }) as typeof fetch,
+    });
+    expect(resultado).toBe(1);
+    expect(corpoRecebido).toEqual({ phone: "+5583991768778", name: "Micael" });
+  });
+
+  it("manda os cabeçalhos certos da Ararahq: Authorization Bearer (chave compartilhada) + Idempotency-Key", async () => {
+    let headersRecebidos: Record<string, string> | null = null;
+    await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [endpoint("e1", "https://api.ararahq.com/v1/messages/webhook", true, "ararahq")],
+      ararahqApiKey: "ara_live_segredo123",
+      port: { claimOffersAguardandoDisparo: async () => [ofertaFake()] },
+      fetchImpl: (async (_url, init) => {
+        headersRecebidos = init?.headers as Record<string, string>;
+        return new Response(null, { status: 200 });
+      }) as typeof fetch,
+    });
+    expect(headersRecebidos).not.toBeNull();
+    expect(headersRecebidos!["Authorization"]).toBe("Bearer ara_live_segredo123");
+    expect(headersRecebidos!["Content-Type"]).toBe("application/json");
+    expect(headersRecebidos!["Idempotency-Key"]).toBeTruthy();
+  });
+
+  it("gera um Idempotency-Key DIFERENTE a cada envio (nunca repete) — confirmado com o dev da Ararahq como requisito", async () => {
+    const chavesUsadas: string[] = [];
+    await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [
+        endpoint("e1", "https://api.ararahq.com/a", true, "ararahq"),
+        endpoint("e2", "https://api.ararahq.com/b", true, "ararahq"),
+        endpoint("e3", "https://api.ararahq.com/c", true, "ararahq"),
+      ],
+      ararahqApiKey: "ara_live_segredo123",
+      port: {
+        claimOffersAguardandoDisparo: async () => [ofertaFake({ id: "o1" }), ofertaFake({ id: "o2" }), ofertaFake({ id: "o3" })],
+      },
+      fetchImpl: (async (_url, init) => {
+        const headers = init?.headers as Record<string, string>;
+        chavesUsadas.push(headers["Idempotency-Key"]);
+        return new Response(null, { status: 200 });
+      }) as typeof fetch,
+    });
+    expect(chavesUsadas.length).toBe(3);
+    expect(new Set(chavesUsadas).size).toBe(3); // as 3 são diferentes entre si
+  });
+
+  it("com o gerador de verdade (produção), o Idempotency-Key é um UUID válido", async () => {
+    let chaveRecebida = "";
+    await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [endpoint("e1", "https://api.ararahq.com/webhook", true, "ararahq")],
+      ararahqApiKey: "ara_live_segredo123",
+      port: { claimOffersAguardandoDisparo: async () => [ofertaFake()] },
+      // Sem "gerarIdempotencyKey" customizado — usa o de produção (randomUUID de verdade).
+      fetchImpl: (async (_url, init) => {
+        chaveRecebida = (init?.headers as Record<string, string>)["Idempotency-Key"];
+        return new Response(null, { status: 200 });
+      }) as typeof fetch,
+    });
+    expect(chaveRecebida).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+
+  it("endpoint Hyperflow e endpoint Ararahq no MESMO ciclo — cada um recebe o formato certo, sem misturar", async () => {
+    const corposRecebidos: Record<string, unknown> = {};
+    const headersRecebidos: Record<string, Record<string, string>> = {};
+    const resultado = await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [
+        endpoint("e1", "https://hyperflow.com/fluxo1", true, "hyperflow"),
+        endpoint("e2", "https://api.ararahq.com/webhook", true, "ararahq"),
+      ],
+      ararahqApiKey: "ara_live_segredo123",
+      port: {
+        claimOffersAguardandoDisparo: async () => [
+          ofertaFake({ id: "lead-hyperflow", nome: "Cliente Hyperflow", telefoneValidado: "5562999999999" }),
+          ofertaFake({ id: "lead-ararahq", nome: "Cliente Ararahq", telefoneValidado: "5583991768778" }),
+        ],
+      },
+      fetchImpl: (async (url, init) => {
+        const urlStr = String(url);
+        corposRecebidos[urlStr] = JSON.parse(init?.body as string);
+        headersRecebidos[urlStr] = init?.headers as Record<string, string>;
+        return new Response(null, { status: 200 });
+      }) as typeof fetch,
+    });
+
+    expect(resultado).toBe(2);
+    // Endpoint Hyperflow recebeu o formato completo (id, cpf, banco, etc.), sem Authorization.
+    const corpoHyperflow = corposRecebidos["https://hyperflow.com/fluxo1"] as Record<string, unknown>;
+    expect(corpoHyperflow.id).toBe("lead-hyperflow");
+    expect(corpoHyperflow.telefoneWhatsapp).toBe("5562999999999");
+    expect(headersRecebidos["https://hyperflow.com/fluxo1"]["Authorization"]).toBeUndefined();
+
+    // Endpoint Ararahq recebeu o formato simples (phone com +, name), com Authorization.
+    const corpoArarahq = corposRecebidos["https://api.ararahq.com/webhook"] as Record<string, unknown>;
+    expect(corpoArarahq).toEqual({ phone: "+5583991768778", name: "Cliente Ararahq" });
+    expect(headersRecebidos["https://api.ararahq.com/webhook"]["Authorization"]).toBe("Bearer ara_live_segredo123");
   });
 });

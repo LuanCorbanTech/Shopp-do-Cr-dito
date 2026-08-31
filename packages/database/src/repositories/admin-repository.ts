@@ -648,49 +648,79 @@ export class AdminRepository {
     const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" } });
     const valor = (config?.valor ?? {}) as {
       endpointUrl?: string;
-      endpoints?: { id: string; url: string; ativo: boolean }[];
+      endpoints?: Array<{ id: string; url: string; ativo: boolean; modelo?: "hyperflow" | "ararahq" }>;
       intervaloSegundos?: number;
+      ararahqApiKey?: string;
     };
-    // Migração automática do formato antigo (1 endpoint só) pro novo (lista)
-    // — só na leitura, sem precisar de passo manual nenhum.
-    let endpoints = valor.endpoints;
-    if ((!endpoints || endpoints.length === 0) && valor.endpointUrl) {
-      endpoints = [{ id: "migrado-automatico", url: valor.endpointUrl, ativo: true }];
+    // Migração automática, em 2 camadas, só na leitura:
+    // 1) formato bem antigo (1 endpoint só) vira lista;
+    // 2) qualquer endpoint sem "modelo" definido (formato de antes desse
+    //    campo existir) vira "hyperflow" — era o único formato que existia.
+    let endpointsBrutos = valor.endpoints;
+    if ((!endpointsBrutos || endpointsBrutos.length === 0) && valor.endpointUrl) {
+      endpointsBrutos = [{ id: "migrado-automatico", url: valor.endpointUrl, ativo: true }];
     }
+    const endpoints = (endpointsBrutos ?? []).map((e) => ({
+      id: e.id,
+      url: e.url,
+      ativo: e.ativo,
+      modelo: e.modelo === "ararahq" ? ("ararahq" as const) : ("hyperflow" as const),
+    }));
+    const apiKey = valor.ararahqApiKey ?? null;
     return {
       ativo: config?.ativo ?? false,
-      endpoints: endpoints ?? [],
+      endpoints,
       intervaloSegundos:
         typeof valor.intervaloSegundos === "number" && valor.intervaloSegundos > 0 ? valor.intervaloSegundos : null,
+      // Mesmo padrão de mascaramento da Lemit/WhatsApp — nunca devolve a
+      // chave em texto puro pro painel, só confirma que está configurada e
+      // os últimos 4 caracteres.
+      ararahqApiKeyConfigurada: Boolean(apiKey),
+      ararahqApiKeyMascarada: apiKey ? `${"•".repeat(Math.max(apiKey.length - 4, 0))}${apiKey.slice(-4)}` : null,
     };
   }
 
   async salvarDisparoIndividualConfig(dados: {
     ativo?: boolean;
-    endpoints?: { id: string; url: string; ativo: boolean }[];
+    endpoints?: { id: string; url: string; ativo: boolean; modelo?: "hyperflow" | "ararahq" }[];
     intervaloSegundos?: number;
+    ararahqApiKey?: string;
   }) {
     const atual = await this.prisma.integrationConfig.findUnique({ where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" } });
     const valorAtual = (atual?.valor ?? {}) as {
       endpointUrl?: string;
-      endpoints?: { id: string; url: string; ativo: boolean }[];
+      endpoints?: { id: string; url: string; ativo: boolean; modelo?: "hyperflow" | "ararahq" }[];
       intervaloSegundos?: number;
+      ararahqApiKey?: string;
     };
     // A lista inteira é substituída de uma vez (a tela manda o estado atual
     // completo a cada "Salvar", não uma alteração incremental) — filtra
     // linhas com URL vazia (descartadas antes de chegar aqui, mas por
-    // segurança) e garante um id em cada uma.
+    // segurança), garante um id em cada uma, e "hyperflow" como modelo
+    // padrão se não vier nenhum.
     const endpoints =
       dados.endpoints !== undefined
         ? dados.endpoints
-            .map((e, i) => ({ id: e.id || `endpoint-${Date.now()}-${i}`, url: (e.url || "").trim(), ativo: !!e.ativo }))
+            .map((e, i) => ({
+              id: e.id || `endpoint-${Date.now()}-${i}`,
+              url: (e.url || "").trim(),
+              ativo: !!e.ativo,
+              modelo: e.modelo === "ararahq" ? ("ararahq" as const) : ("hyperflow" as const),
+            }))
             .filter((e) => e.url !== "")
-        : (valorAtual.endpoints ?? (valorAtual.endpointUrl ? [{ id: "migrado-automatico", url: valorAtual.endpointUrl, ativo: true }] : []));
+        : (valorAtual.endpoints ?? (valorAtual.endpointUrl ? [{ id: "migrado-automatico", url: valorAtual.endpointUrl, ativo: true, modelo: "hyperflow" as const }] : []));
     const intervaloSegundos =
       dados.intervaloSegundos !== undefined && Number.isFinite(dados.intervaloSegundos) && dados.intervaloSegundos > 0
         ? Math.floor(dados.intervaloSegundos)
         : valorAtual.intervaloSegundos ?? null;
-    const novoValor = { endpoints, intervaloSegundos };
+    // Mesma lógica "em branco = mantém a atual" da Lemit/WhatsApp — uma
+    // chave só, compartilhada por todos os endpoints Ararahq (confirmado
+    // com o cliente, não é por endpoint).
+    const ararahqApiKey =
+      dados.ararahqApiKey !== undefined && dados.ararahqApiKey.trim() !== ""
+        ? dados.ararahqApiKey.trim()
+        : valorAtual.ararahqApiKey ?? null;
+    const novoValor = { endpoints, intervaloSegundos, ararahqApiKey };
     const ativo = dados.ativo ?? atual?.ativo ?? false;
     return this.prisma.integrationConfig.upsert({
       where: { chave: "DISPARO_INDIVIDUAL_WEBHOOK" },

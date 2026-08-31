@@ -40,12 +40,15 @@ export interface DisparoIndividualEndpointStatus {
   id: string;
   url: string;
   ativo: boolean;
+  modelo: "hyperflow" | "ararahq";
 }
 
 interface DisparoIndividualStatus {
   ativo: boolean;
   endpoints: DisparoIndividualEndpointStatus[];
   intervaloSegundos: number | null;
+  ararahqApiKeyConfigurada: boolean;
+  ararahqApiKeyMascarada: string | null;
 }
 
 export default async function IntegracoesPage() {
@@ -278,6 +281,36 @@ export default async function IntegracoesPage() {
           <form action={salvarDisparoIndividual} style={{ marginTop: 16 }}>
             <DisparoIndividualEndpointsEditor endpointsIniciais={disparoIndividual.endpoints} />
             <div style={{ marginBottom: 10, marginTop: 16 }}>
+              <label htmlFor="disparo-ararahqApiKey" style={{ display: "block", marginBottom: 4 }}>
+                Chave de API da Ararahq{" "}
+                {disparoIndividual.ararahqApiKeyConfigurada && (
+                  <span className="badge good" style={{ marginLeft: 6 }}>
+                    CHAVE CONFIGURADA
+                  </span>
+                )}
+              </label>
+              {disparoIndividual.ararahqApiKeyConfigurada && (
+                <p className="field-help" style={{ marginTop: 0, marginBottom: 4 }}>
+                  Chave atual termina em: {disparoIndividual.ararahqApiKeyMascarada}
+                </p>
+              )}
+              <input
+                id="disparo-ararahqApiKey"
+                name="ararahqApiKey"
+                type="text"
+                placeholder={
+                  disparoIndividual.ararahqApiKeyConfigurada
+                    ? "deixe em branco para manter a chave atual"
+                    : "ara_live_..."
+                }
+                style={{ width: "100%" }}
+              />
+              <p className="field-help" style={{ marginTop: 4 }}>
+                Uma chave só, usada por todos os endpoints com modelo &quot;Ararahq&quot; acima — não é por
+                endpoint. Ignorada se nenhum endpoint usar esse modelo.
+              </p>
+            </div>
+            <div style={{ marginBottom: 10 }}>
               <label htmlFor="disparo-intervaloSegundos" style={{ display: "block", marginBottom: 4 }}>
                 Frequência do ciclo (em segundos)
               </label>
