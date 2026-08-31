@@ -37,6 +37,20 @@ import type { OfferSnapshot } from "@plataforma-ofertas/domain";
 
 export interface DisparoIndividualPort {
   claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]>;
+  // Grava cada tentativa (sucesso ou falha) pra ficar visível na tela de
+  // detalhes da oferta — nunca lança exceção nem trava o envio em si (ver
+  // uso em enviarParaEndpoint: chamado depois de decidir o resultado, e
+  // qualquer falha AQUI só vira um aviso no log, não desfaz o envio).
+  registrarTentativaDisparoIndividual(dados: {
+    offerId: string;
+    endpointId: string;
+    endpointUrl: string;
+    modelo: string;
+    sucesso: boolean;
+    httpStatus: number | null;
+    timeout: boolean;
+    erro: string | null;
+  }): Promise<void>;
 }
 
 export type DisparoIndividualModelo = "hyperflow" | "ararahq";
@@ -153,13 +167,29 @@ function montarRequisicao(
 // — cai no mesmo tratamento de erro), e o ciclo consegue terminar e seguir
 // pro próximo normalmente.
 
+// Grava a tentativa no banco (pra aparecer na tela da oferta) sem nunca
+// travar o worker por causa disso — se a própria gravação falhar (banco
+// fora do ar num instante ruim, etc.), isso vira só um aviso no log, nunca
+// derruba o envio em si nem o resultado que já foi decidido.
+async function registrarTentativaComSeguranca(
+  port: DisparoIndividualPort,
+  dados: Parameters<DisparoIndividualPort["registrarTentativaDisparoIndividual"]>[0]
+): Promise<void> {
+  try {
+    await port.registrarTentativaDisparoIndividual(dados);
+  } catch (error) {
+    logger.warn({ error, offerId: dados.offerId, endpointId: dados.endpointId }, "Falha ao registrar a tentativa de disparo individual (não afeta o envio em si)");
+  }
+}
+
 async function enviarParaEndpoint(
   endpoint: DisparoIndividualEndpoint,
   lead: OfferSnapshot,
   fetchImpl: typeof fetch,
   timeoutMs: number,
   ararahqApiKey: string | null | undefined,
-  gerarIdempotencyKey: () => string
+  gerarIdempotencyKey: () => string,
+  port: DisparoIndividualPort
 ): Promise<boolean> {
   const { body, headers } = montarRequisicao(endpoint, lead, ararahqApiKey, gerarIdempotencyKey);
   const controller = new AbortController();
@@ -176,12 +206,20 @@ async function enviarParaEndpoint(
         { endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo, status: resposta.status, offerId: lead.id },
         "Endpoint do disparo individual respondeu com erro — a oferta já ficou marcada como DISPARO_CONSULTADO mesmo assim"
       );
+      await registrarTentativaComSeguranca(port, {
+        offerId: lead.id, endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo,
+        sucesso: false, httpStatus: resposta.status, timeout: false, erro: null,
+      });
       return false;
     }
     logger.info(
       { endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo, offerId: lead.id },
       "Lead individual enviado"
     );
+    await registrarTentativaComSeguranca(port, {
+      offerId: lead.id, endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo,
+      sucesso: true, httpStatus: resposta.status, timeout: false, erro: null,
+    });
     return true;
   } catch (error) {
     const foiTimeout = error instanceof Error && error.name === "AbortError";
@@ -191,6 +229,10 @@ async function enviarParaEndpoint(
         ? `Endpoint não respondeu em ${timeoutMs / 1000}s (timeout) — a oferta já ficou marcada como DISPARO_CONSULTADO mesmo assim`
         : "Falha ao enviar o lead individual — a oferta já ficou marcada como DISPARO_CONSULTADO mesmo assim"
     );
+    await registrarTentativaComSeguranca(port, {
+      offerId: lead.id, endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo,
+      sucesso: false, httpStatus: null, timeout: foiTimeout, erro: error instanceof Error ? error.message : String(error),
+    });
     return false;
   } finally {
     clearTimeout(timeout);
@@ -225,7 +267,7 @@ export async function runDisparoIndividualWorkerOnce(params: RunDisparoIndividua
   const pares = ofertas.map((lead, i) => ({ lead, endpoint: endpointsAtivos[i] }));
   const resultados = await Promise.allSettled(
     pares.map(({ lead, endpoint }) =>
-      enviarParaEndpoint(endpoint, lead, fetchImpl, timeoutMsPorEndpoint, ararahqApiKey, gerarIdempotencyKey)
+      enviarParaEndpoint(endpoint, lead, fetchImpl, timeoutMsPorEndpoint, ararahqApiKey, gerarIdempotencyKey, port)
     )
   );
 

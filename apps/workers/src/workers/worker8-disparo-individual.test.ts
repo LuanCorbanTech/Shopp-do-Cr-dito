@@ -75,7 +75,9 @@ describe("runDisparoIndividualWorkerOnce", () => {
     const resultado = await runDisparoIndividualWorkerOnce({
       ativo: false,
       endpoints: [endpoint("e1", "https://exemplo.com/webhook")],
-      port: { claimOffersAguardandoDisparo: async () => { chamouClaim = true; return []; } },
+      port: { claimOffersAguardandoDisparo: async () => { chamouClaim = true; return []; },
+        registrarTentativaDisparoIndividual: async () => {},
+      },
     });
     expect(resultado).toBe(0);
     expect(chamouClaim).toBe(false);
@@ -86,7 +88,9 @@ describe("runDisparoIndividualWorkerOnce", () => {
     const resultado = await runDisparoIndividualWorkerOnce({
       ativo: true,
       endpoints: [],
-      port: { claimOffersAguardandoDisparo: async () => { chamouClaim = true; return []; } },
+      port: { claimOffersAguardandoDisparo: async () => { chamouClaim = true; return []; },
+        registrarTentativaDisparoIndividual: async () => {},
+      },
     });
     expect(resultado).toBe(0);
     expect(chamouClaim).toBe(false);
@@ -97,7 +101,9 @@ describe("runDisparoIndividualWorkerOnce", () => {
     const resultado = await runDisparoIndividualWorkerOnce({
       ativo: true,
       endpoints: [endpoint("e1", "https://exemplo.com/a", false), endpoint("e2", "https://exemplo.com/b", false)],
-      port: { claimOffersAguardandoDisparo: async () => { chamouClaim = true; return []; } },
+      port: { claimOffersAguardandoDisparo: async () => { chamouClaim = true; return []; },
+        registrarTentativaDisparoIndividual: async () => {},
+      },
     });
     expect(resultado).toBe(0);
     expect(chamouClaim).toBe(false);
@@ -108,7 +114,9 @@ describe("runDisparoIndividualWorkerOnce", () => {
     const resultado = await runDisparoIndividualWorkerOnce({
       ativo: true,
       endpoints: [endpoint("e1", "https://exemplo.com/webhook")],
-      port: { claimOffersAguardandoDisparo: async () => [] },
+      port: { claimOffersAguardandoDisparo: async () => [],
+        registrarTentativaDisparoIndividual: async () => {},
+      },
       fetchImpl: (async () => { chamouFetch = true; return new Response(null, { status: 200 }); }) as typeof fetch,
     });
     expect(resultado).toBe(0);
@@ -122,6 +130,7 @@ describe("runDisparoIndividualWorkerOnce", () => {
       endpoints: [endpoint("e1", "https://exemplo.com/webhook")],
       port: {
         claimOffersAguardandoDisparo: async (limit) => { limitPedido = limit; return [ofertaFake()]; },
+        registrarTentativaDisparoIndividual: async () => {},
       },
       fetchImpl: (async () => new Response(null, { status: 200 })) as typeof fetch,
     });
@@ -137,7 +146,9 @@ describe("runDisparoIndividualWorkerOnce", () => {
     const resultado = await runDisparoIndividualWorkerOnce({
       ativo: true,
       endpoints: [endpoint("e1", "https://parceiro.com/receber-lead")],
-      port: { claimOffersAguardandoDisparo: async () => [ofertaFake({ id: "offer-xyz" })] },
+      port: { claimOffersAguardandoDisparo: async () => [ofertaFake({ id: "offer-xyz" })],
+        registrarTentativaDisparoIndividual: async () => {},
+      },
       fetchImpl: (async (url, init) => {
         urlChamada = String(url);
         metodoChamado = init?.method ?? null;
@@ -159,7 +170,9 @@ describe("runDisparoIndividualWorkerOnce", () => {
     const resultado = await runDisparoIndividualWorkerOnce({
       ativo: true,
       endpoints: [endpoint("e1", "https://parceiro.com/fora-do-ar")],
-      port: { claimOffersAguardandoDisparo: async () => [ofertaFake()] },
+      port: { claimOffersAguardandoDisparo: async () => [ofertaFake()],
+        registrarTentativaDisparoIndividual: async () => {},
+      },
       fetchImpl: (async () => new Response(null, { status: 500 })) as typeof fetch,
     });
     expect(resultado).toBe(0);
@@ -169,7 +182,9 @@ describe("runDisparoIndividualWorkerOnce", () => {
     const resultado = await runDisparoIndividualWorkerOnce({
       ativo: true,
       endpoints: [endpoint("e1", "https://parceiro.com/nao-resolve")],
-      port: { claimOffersAguardandoDisparo: async () => [ofertaFake()] },
+      port: { claimOffersAguardandoDisparo: async () => [ofertaFake()],
+        registrarTentativaDisparoIndividual: async () => {},
+      },
       fetchImpl: (async () => { throw new Error("ECONNREFUSED"); }) as typeof fetch,
     });
     expect(resultado).toBe(0);
@@ -187,6 +202,7 @@ describe("runDisparoIndividualWorkerOnce", () => {
           limitPedido = limit;
           return [ofertaFake({ id: "o1" }), ofertaFake({ id: "o2" }), ofertaFake({ id: "o3" })];
         },
+        registrarTentativaDisparoIndividual: async () => {},
       },
       fetchImpl: (async () => new Response(null, { status: 200 })) as typeof fetch,
     });
@@ -207,6 +223,7 @@ describe("runDisparoIndividualWorkerOnce", () => {
           ofertaFake({ id: "offer-B" }),
           ofertaFake({ id: "offer-C" }),
         ],
+        registrarTentativaDisparoIndividual: async () => {},
       },
       fetchImpl: (async (url, init) => {
         const urlStr = String(url);
@@ -252,6 +269,7 @@ describe("runDisparoIndividualWorkerOnce", () => {
           limitPedido = limit;
           return [ofertaFake({ id: "o1" }), ofertaFake({ id: "o2" })];
         },
+        registrarTentativaDisparoIndividual: async () => {},
       },
       fetchImpl: (async (url) => { urlsChamadas.push(String(url)); return new Response(null, { status: 200 }); }) as typeof fetch,
     });
@@ -270,6 +288,7 @@ describe("runDisparoIndividualWorkerOnce", () => {
         claimOffersAguardandoDisparo: async () => [
           ofertaFake({ id: "o1" }), ofertaFake({ id: "o2" }), ofertaFake({ id: "o3" }),
         ],
+        registrarTentativaDisparoIndividual: async () => {},
       },
       fetchImpl: (async (url) => {
         if (String(url) === "https://ruim.com") throw new Error("ECONNREFUSED");
@@ -288,6 +307,7 @@ describe("runDisparoIndividualWorkerOnce", () => {
       port: {
         // Só 1 lead disponível, mesmo com 3 endpoints ativos pedindo limit=3
         claimOffersAguardandoDisparo: async () => [ofertaFake({ id: "unico" })],
+        registrarTentativaDisparoIndividual: async () => {},
       },
       fetchImpl: (async (url) => { urlsChamadas.push(String(url)); return new Response(null, { status: 200 }); }) as typeof fetch,
     });
@@ -305,6 +325,7 @@ describe("runDisparoIndividualWorkerOnce", () => {
         claimOffersAguardandoDisparo: async () => [
           ofertaFake({ id: "o1" }), ofertaFake({ id: "o2" }), ofertaFake({ id: "o3" }),
         ],
+        registrarTentativaDisparoIndividual: async () => {},
       },
       fetchImpl: (async (url, init) => {
         if (String(url) === "https://trava-pra-sempre.com") {
@@ -353,7 +374,9 @@ describe("runDisparoIndividualWorkerOnce — modelo Ararahq", () => {
       ativo: true,
       endpoints: [endpoint("e1", "https://api.ararahq.com/v1/messages/webhook", true, "ararahq")],
       ararahqApiKey: "ara_live_segredo123",
-      port: { claimOffersAguardandoDisparo: async () => [ofertaFake({ telefoneValidado: "5583991768778", nome: "Micael" })] },
+      port: { claimOffersAguardandoDisparo: async () => [ofertaFake({ telefoneValidado: "5583991768778", nome: "Micael" })],
+        registrarTentativaDisparoIndividual: async () => {},
+      },
       fetchImpl: (async (_url, init) => {
         corpoRecebido = JSON.parse(init?.body as string);
         return new Response(null, { status: 200 });
@@ -369,7 +392,9 @@ describe("runDisparoIndividualWorkerOnce — modelo Ararahq", () => {
       ativo: true,
       endpoints: [endpoint("e1", "https://api.ararahq.com/v1/messages/webhook", true, "ararahq")],
       ararahqApiKey: "ara_live_segredo123",
-      port: { claimOffersAguardandoDisparo: async () => [ofertaFake()] },
+      port: { claimOffersAguardandoDisparo: async () => [ofertaFake()],
+        registrarTentativaDisparoIndividual: async () => {},
+      },
       fetchImpl: (async (_url, init) => {
         headersRecebidos = init?.headers as Record<string, string>;
         return new Response(null, { status: 200 });
@@ -393,6 +418,7 @@ describe("runDisparoIndividualWorkerOnce — modelo Ararahq", () => {
       ararahqApiKey: "ara_live_segredo123",
       port: {
         claimOffersAguardandoDisparo: async () => [ofertaFake({ id: "o1" }), ofertaFake({ id: "o2" }), ofertaFake({ id: "o3" })],
+        registrarTentativaDisparoIndividual: async () => {},
       },
       fetchImpl: (async (_url, init) => {
         const headers = init?.headers as Record<string, string>;
@@ -410,7 +436,9 @@ describe("runDisparoIndividualWorkerOnce — modelo Ararahq", () => {
       ativo: true,
       endpoints: [endpoint("e1", "https://api.ararahq.com/webhook", true, "ararahq")],
       ararahqApiKey: "ara_live_segredo123",
-      port: { claimOffersAguardandoDisparo: async () => [ofertaFake()] },
+      port: { claimOffersAguardandoDisparo: async () => [ofertaFake()],
+        registrarTentativaDisparoIndividual: async () => {},
+      },
       // Sem "gerarIdempotencyKey" customizado — usa o de produção (randomUUID de verdade).
       fetchImpl: (async (_url, init) => {
         chaveRecebida = (init?.headers as Record<string, string>)["Idempotency-Key"];
@@ -435,6 +463,7 @@ describe("runDisparoIndividualWorkerOnce — modelo Ararahq", () => {
           ofertaFake({ id: "lead-hyperflow", nome: "Cliente Hyperflow", telefoneValidado: "5562999999999" }),
           ofertaFake({ id: "lead-ararahq", nome: "Cliente Ararahq", telefoneValidado: "5583991768778" }),
         ],
+        registrarTentativaDisparoIndividual: async () => {},
       },
       fetchImpl: (async (url, init) => {
         const urlStr = String(url);
@@ -455,5 +484,112 @@ describe("runDisparoIndividualWorkerOnce — modelo Ararahq", () => {
     const corpoArarahq = corposRecebidos["https://api.ararahq.com/webhook"] as Record<string, unknown>;
     expect(corpoArarahq).toEqual({ phone: "+5583991768778", name: "Cliente Ararahq" });
     expect(headersRecebidos["https://api.ararahq.com/webhook"]["Authorization"]).toBe("Bearer ara_live_segredo123");
+  });
+});
+
+describe("runDisparoIndividualWorkerOnce — registro da tentativa (pra aparecer na tela da oferta)", () => {
+  it("registra uma tentativa de SUCESSO com os dados certos", async () => {
+    const registradas: unknown[] = [];
+    await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [endpoint("e1", "https://hyperflow.com/fluxo1", true, "hyperflow")],
+      port: {
+        claimOffersAguardandoDisparo: async () => [ofertaFake({ id: "offer-xyz" })],
+        registrarTentativaDisparoIndividual: async (dados) => { registradas.push(dados); },
+      },
+      fetchImpl: (async () => new Response(null, { status: 200 })) as typeof fetch,
+    });
+    expect(registradas).toEqual([
+      {
+        offerId: "offer-xyz",
+        endpointId: "e1",
+        endpointUrl: "https://hyperflow.com/fluxo1",
+        modelo: "hyperflow",
+        sucesso: true,
+        httpStatus: 200,
+        timeout: false,
+        erro: null,
+      },
+    ]);
+  });
+
+  it("registra uma tentativa de FALHA (endpoint respondeu com erro) com o status HTTP certo", async () => {
+    const registradas: unknown[] = [];
+    await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [endpoint("e1", "https://parceiro.com/fora-do-ar", true, "hyperflow")],
+      port: {
+        claimOffersAguardandoDisparo: async () => [ofertaFake({ id: "offer-xyz" })],
+        registrarTentativaDisparoIndividual: async (dados) => { registradas.push(dados); },
+      },
+      fetchImpl: (async () => new Response(null, { status: 500 })) as typeof fetch,
+    });
+    expect(registradas).toEqual([
+      {
+        offerId: "offer-xyz",
+        endpointId: "e1",
+        endpointUrl: "https://parceiro.com/fora-do-ar",
+        modelo: "hyperflow",
+        sucesso: false,
+        httpStatus: 500,
+        timeout: false,
+        erro: null,
+      },
+    ]);
+  });
+
+  it("registra uma tentativa de FALHA por TIMEOUT com timeout=true e a mensagem de erro", async () => {
+    const registradas: any[] = [];
+    await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [endpoint("e1", "https://trava.com", true, "hyperflow")],
+      timeoutMsPorEndpoint: 100,
+      port: {
+        claimOffersAguardandoDisparo: async () => [ofertaFake({ id: "offer-xyz" })],
+        registrarTentativaDisparoIndividual: async (dados) => { registradas.push(dados); },
+      },
+      fetchImpl: (async (_url, init) => new Promise((_resolve, reject) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      })) as typeof fetch,
+    });
+    expect(registradas).toHaveLength(1);
+    expect(registradas[0].sucesso).toBe(false);
+    expect(registradas[0].timeout).toBe(true);
+    expect(registradas[0].httpStatus).toBeNull();
+    expect(registradas[0].erro).toBeTruthy();
+  });
+
+  it("uma FALHA ao gravar a tentativa (banco fora do ar) não afeta o resultado do envio em si", async () => {
+    const resultado = await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [endpoint("e1", "https://hyperflow.com/fluxo1", true, "hyperflow")],
+      port: {
+        claimOffersAguardandoDisparo: async () => [ofertaFake()],
+        registrarTentativaDisparoIndividual: async () => { throw new Error("banco fora do ar"); },
+      },
+      fetchImpl: (async () => new Response(null, { status: 200 })) as typeof fetch,
+    });
+    // O envio em si continua contando como sucesso, mesmo a gravação do
+    // registro tendo falhado — são coisas independentes.
+    expect(resultado).toBe(1);
+  });
+
+  it("com vários endpoints, registra uma tentativa PRA CADA um", async () => {
+    const registradas: unknown[] = [];
+    await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [
+        endpoint("e1", "https://a.com", true, "hyperflow"),
+        endpoint("e2", "https://api.ararahq.com/webhook", true, "ararahq"),
+      ],
+      ararahqApiKey: "ara_live_x",
+      port: {
+        claimOffersAguardandoDisparo: async () => [ofertaFake({ id: "o1" }), ofertaFake({ id: "o2" })],
+        registrarTentativaDisparoIndividual: async (dados) => { registradas.push(dados); },
+      },
+      fetchImpl: (async () => new Response(null, { status: 200 })) as typeof fetch,
+    });
+    expect(registradas).toHaveLength(2);
   });
 });

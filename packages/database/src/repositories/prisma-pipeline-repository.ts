@@ -715,6 +715,41 @@ export class PrismaPipelineRepository
     return this.claimByStatus(["AGUARDANDO_DISPARO"], "DISPARO_CONSULTADO", limit);
   }
 
+  // Registra CADA tentativa do Disparo individual (worker8) — sucesso ou
+  // falha — pra ficar visível na tela de detalhes da oferta. Antes disso só
+  // existia como log de sistema (console), sem nenhum jeito de ver depois
+  // sem entrar no log bruto do servidor.
+  async registrarTentativaDisparoIndividual(dados: {
+    offerId: string;
+    endpointId: string;
+    endpointUrl: string;
+    modelo: string;
+    sucesso: boolean;
+    httpStatus: number | null;
+    timeout: boolean;
+    erro: string | null;
+  }): Promise<void> {
+    await this.prisma.disparoIndividualTentativa.create({
+      data: {
+        offerId: dados.offerId,
+        endpointId: dados.endpointId,
+        endpointUrl: dados.endpointUrl,
+        modelo: dados.modelo,
+        sucesso: dados.sucesso,
+        httpStatus: dados.httpStatus,
+        timeout: dados.timeout,
+        erro: dados.erro,
+      },
+    });
+  }
+
+  async listarTentativasDisparoIndividual(offerId: string) {
+    return this.prisma.disparoIndividualTentativa.findMany({
+      where: { offerId },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
   // Chamado pelo endpoint POST /api/v1/leads/status — busca por id (nosso) OU
   // externalId (do parceiro), o que vier preenchido. Devolve null se não
   // achou a oferta (o endpoint traduz isso pra 404). De propósito NÃO valida

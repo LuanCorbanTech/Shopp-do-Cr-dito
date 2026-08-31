@@ -825,12 +825,15 @@ export class AdminRepository {
       include: { webhook: true, endpoint: true, routingRule: true },
     });
     if (!offer) return null;
-    const [processingEvents, dispatches, phoneValidations] = await Promise.all([
+    const [processingEvents, dispatches, phoneValidations, disparoIndividualTentativas] = await Promise.all([
       this.prisma.offerProcessing.findMany({ where: { offerId }, orderBy: { createdAt: "asc" } }),
       this.prisma.dispatch.findMany({ where: { offerId }, orderBy: { createdAt: "asc" } }),
       this.prisma.phoneValidation.findMany({ where: { offerId }, orderBy: { createdAt: "asc" } }),
+      // Disparo individual (worker8) — diferente de "dispatches" acima, que
+      // é do mecanismo de roteamento mais antigo (RoutingRule/Endpoint).
+      this.prisma.disparoIndividualTentativa.findMany({ where: { offerId }, orderBy: { createdAt: "asc" } }),
     ]);
-    return { offer, processingEvents, dispatches, phoneValidations };
+    return { offer, processingEvents, dispatches, phoneValidations, disparoIndividualTentativas };
   }
 
   // -- Usuários do painel / autenticação -------------------------------------------

@@ -30,6 +30,16 @@ interface OfferTimeline {
     response: { erro?: string; message?: string } | Record<string, unknown> | null;
   }>;
   dispatches: Array<{ id: string; status: string; httpStatus: number | null; createdAt: string }>;
+  disparoIndividualTentativas: Array<{
+    id: string;
+    endpointUrl: string;
+    modelo: string;
+    sucesso: boolean;
+    httpStatus: number | null;
+    timeout: boolean;
+    erro: string | null;
+    createdAt: string;
+  }>;
 }
 
 export default async function OfertaDetailPage({ params }: { params: { id: string } }) {
@@ -46,7 +56,7 @@ export default async function OfertaDetailPage({ params }: { params: { id: strin
   }
   if (!data) return null;
 
-  const { offer, processingEvents } = data;
+  const { offer, processingEvents, disparoIndividualTentativas } = data;
 
   return (
     <div>
@@ -161,6 +171,36 @@ export default async function OfertaDetailPage({ params }: { params: { id: strin
         })}
         {processingEvents.length === 0 && (
           <li className="empty-state">Nenhum evento de processamento registrado ainda.</li>
+        )}
+      </ul>
+
+      <h2>Disparo individual</h2>
+      <p className="subtitle">
+        Cada tentativa de envio pra um endpoint configurado em Integrações (Hyperflow ou Ararahq) — sucesso ou
+        falha, incluindo se foi por timeout.
+      </p>
+      <ul className="timeline">
+        {disparoIndividualTentativas.map((t) => (
+          <li key={t.id}>
+            <span className="ts">{formatarDataHora(t.createdAt, { second: "2-digit" })}</span>
+            <span
+              style={{
+                color: t.sucesso ? "var(--status-good)" : "var(--status-critical)",
+                fontWeight: 600,
+              }}
+            >
+              {t.sucesso ? "Enviado" : "Falhou"}
+            </span>{" "}
+            — {t.endpointUrl} ({t.modelo === "ararahq" ? "Ararahq" : "Hyperflow"})
+            {t.httpStatus !== null && <> · HTTP {t.httpStatus}</>}
+            {t.timeout && <> · não respondeu a tempo (timeout)</>}
+            {t.erro && (
+              <div style={{ color: "var(--status-critical)", fontSize: 13, marginTop: 4 }}>Motivo: {t.erro}</div>
+            )}
+          </li>
+        ))}
+        {disparoIndividualTentativas.length === 0 && (
+          <li className="empty-state">Nenhuma tentativa de disparo individual registrada ainda pra essa oferta.</li>
         )}
       </ul>
     </div>

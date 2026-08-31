@@ -245,6 +245,7 @@ model Offer {
   dispatchQueueEntries DispatchQueue[]
   dispatches       Dispatch[]
   logs             LogEntry[]
+  disparoIndividualTentativas DisparoIndividualTentativa[]
 
   @@unique([webhookId, idempotencyKey], map: "uq_offer_idempotency")
   @@index([status], map: "idx_offers_status")
@@ -408,6 +409,36 @@ model Dispatch {
   @@index([endpointId], map: "idx_dispatches_endpoint_id")
   @@index([offerId], map: "idx_dispatches_offer_id")
   @@map("dispatches")
+}
+
+// ---------------------------------------------------------------------------
+// Tentativas do "Disparo individual" (worker8) — diferente da tabela
+// "dispatches" acima, que é ligada à tabela "endpoints" (um mecanismo de
+// roteamento mais antigo/separado, com RoutingRule etc.). Os endpoints do
+// Disparo individual são configurados como uma lista simples (JSON) no
+// painel Integrações, não como linhas na tabela "endpoints" — por isso
+// precisa de uma tabela própria, sem FK pra "endpoints".
+//
+// Guarda toda tentativa (sucesso ou falha) — antes disso só existia como
+// log de sistema, sem ficar visível em lugar nenhum da tela pro usuário.
+model DisparoIndividualTentativa {
+  id          String   @id @default(uuid())
+  offerId     String   @map("offer_id")
+  offer       Offer    @relation(fields: [offerId], references: [id])
+
+  endpointId  String   @map("endpoint_id") // id do endpoint dentro do JSON de config — não é FK
+  endpointUrl String   @map("endpoint_url")
+  modelo      String   // "hyperflow" | "ararahq"
+
+  sucesso     Boolean
+  httpStatus  Int?     @map("http_status")
+  timeout     Boolean  @default(false)
+  erro        String?
+
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([offerId], map: "idx_disparo_individual_tentativas_offer_id")
+  @@map("disparo_individual_tentativas")
 }
 
 // ---------------------------------------------------------------------------
