@@ -67,10 +67,13 @@ export class AdminRepository {
   //
   // Quando o filtro de status está ativo, cada card que já é baseado em
   // status específico (aguardandoProcessamento, aguardandoConsultaDisparo,
-  // disparoConsultado) faz a INTERSEÇÃO entre seus status "naturais" e os
-  // selecionados pelo usuário — ex.: se o usuário desmarcar
-  // AGUARDANDO_DISPARO no filtro, esse card correspondente zera. Os cards que
-  // não são baseados em status (totalRecebidas, limiteValidado,
+  // disparoConsultado — esse último considera DISPARO_CONSULTADO e também
+  // os status seguintes do funil, DISPARO_ENVIADO/DISPARO_RESPONDIDO, já
+  // que quem chegou até ali "passou" por consultado mesmo tendo avançado —
+  // ver STATUS_CONSULTADO_OU_ALEM abaixo) faz a INTERSEÇÃO entre seus
+  // status "naturais" e os selecionados pelo usuário — ex.: se o usuário
+  // desmarcar AGUARDANDO_DISPARO no filtro, esse card correspondente zera.
+  // Os cards que não são baseados em status (totalRecebidas, limiteValidado,
   // whatsappValidado) só recebem o filtro como uma condição A MAIS (E lógico).
   // Cards de KPI + comparativo com o período anterior de igual duração (item
   // "delta ▲/▼ vs. período anterior" do redesign do Dashboard) — só calcula o
@@ -127,6 +130,16 @@ export class AdminRepository {
     }
 
     const STATUS_PROCESSAMENTO = ["RECEBIDO", "PROCESSANDO_TELEFONE", "TELEFONE_ATUALIZADO", "VALIDANDO_WHATSAPP"];
+    // "Consultado" precisa contar quem CHEGOU a esse status, não só quem
+    // está exatamente nele agora — o pipeline anda rápido, uma oferta pode
+    // avançar de "consultado" pra "enviado"/"respondido" quase na hora, e
+    // antes isso fazia o card cair artificialmente mesmo sem nenhum
+    // problema real (mesma filosofia cumulativa que "enviado"/"respondido"
+    // já usam, ver disparoEnviadoEm/disparoRespondidoEm abaixo — só que
+    // esses 2 têm coluna de data própria, e "consultado" não tem, então a
+    // forma de tornar cumulativo aqui é incluir os status seguintes do
+    // funil na mesma contagem).
+    const STATUS_CONSULTADO_OU_ALEM = ["DISPARO_CONSULTADO", "DISPARO_ENVIADO", "DISPARO_RESPONDIDO"];
     const filtroExtra = filtroAtivo ? { status: { in: filtroAtivo as never[] } } : {};
 
     const [
@@ -150,7 +163,7 @@ export class AdminRepository {
       }),
       this.prisma.offer.count({ where: { ...createdAt, possuiWhatsapp: true, ...filtroExtra } }),
       this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["AGUARDANDO_DISPARO"]) as never[] } } }),
-      this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(["DISPARO_CONSULTADO"]) as never[] } } }),
+      this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(STATUS_CONSULTADO_OU_ALEM) as never[] } } }),
       this.prisma.offer.count({
         where: {
           ...(params.from || params.to
