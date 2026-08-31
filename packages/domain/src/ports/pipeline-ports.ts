@@ -318,4 +318,14 @@ export interface DispatchPollPort {
     externalId?: string;
     novoStatus: "DISPARO_ENVIADO" | "DISPARO_RESPONDIDO";
   }): Promise<OfferSnapshot | null>;
+
+  /**
+   * Busca a oferta MAIS RECENTE com esse telefone (já normalizado — mesma
+   * regra de comparação usada no resto do sistema: dígitos só, com DDI).
+   * Compara contra telefoneValidado e telefoneAtualizado (os campos que o
+   * pipeline efetivamente usa/confirma, diferente de telefoneOriginal, que
+   * é o valor cru recebido do parceiro, sem nenhuma normalização
+   * garantida). Devolve null se não achou nenhuma.
+   */
+  buscarOfertaMaisRecentePorTelefone(telefoneNormalizado: string): Promise<OfferSnapshot | null>;
 }

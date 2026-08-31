@@ -7,6 +7,7 @@ import { registerWhatsappValidacaoWebhookRoutes } from "./webhooks/whatsapp-vali
 import { registerAdminRoutes } from "./admin/routes";
 import { registerAguardandoDisparoRoutes } from "./leads/aguardando-disparo-routes";
 import { registerAtualizarStatusDisparoRoutes } from "./leads/atualizar-status-disparo-routes";
+import { registerBuscarPorTelefoneRoutes } from "./leads/buscar-por-telefone-routes";
 import { collectMetrics } from "./observability/metrics";
 
 const app = Fastify({ logger: false });
@@ -40,6 +41,7 @@ registerWhatsappValidacaoWebhookRoutes(app, pipelineRepo, pipelineRepo, whatsapp
 registerAdminRoutes(app, adminRepo);
 registerAguardandoDisparoRoutes(app, pipelineRepo, dispatchApiToken);
 registerAtualizarStatusDisparoRoutes(app, pipelineRepo, dispatchApiToken);
+registerBuscarPorTelefoneRoutes(app, pipelineRepo, dispatchApiToken);
 
 // Cria o primeiro usuário admin (se ainda não existir nenhum) a partir de
 // variáveis de ambiente — sem isso, ninguém conseguiria logar num sistema que

@@ -56,4 +56,14 @@ export class FakeDispatchPollPort implements DispatchPollPort {
     this.ofertasPorChave.set(chave, atualizada);
     return atualizada;
   }
+
+  // Pra teste: procura em ofertasDisponiveis + ofertasPorChave. A garantia
+  // de "pega a mais recente de verdade" (ORDER BY created_at DESC) é do SQL
+  // real da implementação Prisma, testada à parte contra Postgres real — aqui
+  // só precisa achar QUALQUER correspondência, pra testar o comportamento da
+  // rota (auth, formato da resposta, 404 quando não acha).
+  async buscarOfertaMaisRecentePorTelefone(telefoneNormalizado: string): Promise<OfferSnapshot | null> {
+    const todas = [...this.ofertasDisponiveis, ...this.ofertasPorChave.values()];
+    return todas.find((o) => o.telefoneValidado === telefoneNormalizado || o.telefoneAtualizado === telefoneNormalizado) ?? null;
+  }
 }

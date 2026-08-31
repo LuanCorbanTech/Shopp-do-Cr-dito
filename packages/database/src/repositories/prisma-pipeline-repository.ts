@@ -779,6 +779,22 @@ export class PrismaPipelineRepository
     `;
     return rows.length > 0 ? mapRow(rows[0]) : null;
   }
+
+  async buscarOfertaMaisRecentePorTelefone(telefoneNormalizado: string): Promise<OfferSnapshot | null> {
+    // Compara contra os dois campos "confiáveis" (telefoneValidado é o
+    // preferido — já passou pela validação de WhatsApp; telefoneAtualizado é
+    // o fallback, pra achar ofertas que pararam antes dessa etapa). Não
+    // compara telefoneOriginal — é o valor cru do parceiro, sem garantia de
+    // formato, comparar contra ele daria falso-negativo na maioria dos casos.
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      SELECT ${OFFER_COLUMNS_SQL}
+      FROM offers
+      WHERE telefone_validado = ${telefoneNormalizado} OR telefone_atualizado = ${telefoneNormalizado}
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    return rows.length > 0 ? mapRow(rows[0]) : null;
+  }
 }
 
 function toJsonInput(value: unknown): Prisma.InputJsonValue | undefined {
