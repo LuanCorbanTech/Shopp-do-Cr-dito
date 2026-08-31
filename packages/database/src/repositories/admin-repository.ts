@@ -78,6 +78,24 @@ export class AdminRepository {
   // período aberto ("todo o histórico") não existe um "anterior" bem
   // definido, então fica null e o front-end simplesmente não mostra o selo de
   // variação nesse caso.
+  // Diagnóstico SÓ LEITURA: pra responder "se validou WhatsApp, deveria ter
+  // sido disparado — por que os números não fecham?". Mostra, pra QUALQUER
+  // oferta com possuiWhatsapp=true, em qual status ela está PARADA agora —
+  // revela na hora se tem gente presa em algum lugar inesperado (ex.: ainda
+  // em WHATSAPP_VALIDADO sem nunca ter avançado, ou travada num status de
+  // roteamento antigo), em vez de estar espalhada nos status esperados do
+  // funil de disparo (AGUARDANDO_DISPARO, DISPARO_CONSULTADO, etc.).
+  async diagnosticoWhatsappValidadoPorStatus() {
+    const rows = await this.prisma.offer.groupBy({
+      by: ["status"],
+      where: { possuiWhatsapp: true },
+      _count: { _all: true },
+    });
+    return rows
+      .map((r) => ({ status: r.status, total: r._count._all }))
+      .sort((a, b) => b.total - a.total);
+  }
+
   async dashboardKpis(params: { from?: Date; to?: Date; statuses?: string[] }) {
     const atual = await this.contarKpis(params);
 

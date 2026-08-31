@@ -304,6 +304,17 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         async (request) => adminRepo.updateRoutingRule(request.params.id, request.body as never)
       );
 
+      // Diagnóstico SÓ LEITURA: responde "por que os números do funil não
+      // fecham" mostrando em qual status EXATAMENTE estão paradas as ofertas
+      // que já validaram WhatsApp — revela na hora se tem gente presa em
+      // algum lugar inesperado, sem precisar adivinhar pelos totais do
+      // dashboard.
+      instance.get("/offers/diagnostico-whatsapp-validado", async () => {
+        const porStatus = await adminRepo.diagnosticoWhatsappValidadoPorStatus();
+        const total = porStatus.reduce((s: number, r: { total: number }) => s + r.total, 0);
+        return { total, porStatus };
+      });
+
       instance.get<{ Querystring: { status?: string; cpf?: string; limit?: string; offset?: string } }>(
         "/offers",
         async (request) => {
