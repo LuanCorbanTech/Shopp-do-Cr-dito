@@ -21,10 +21,14 @@ export interface RawWebhookPayload {
   cpf: string;
   telefone?: string;
   // Formato alternativo (ex.: parceiro de leilão de crédito, 02/09) — o
-  // payload não manda um campo "telefone" simples, manda essas 2 listas.
-  // "whatsapps" são números já confirmados com WhatsApp pelo PRÓPRIO
-  // parceiro — usamos o primeiro dessa lista como telefone de captação
-  // quando "telefone" não vier (ver extrairTelefoneOriginal abaixo).
+  // payload não manda um campo "telefone" simples, manda um objeto
+  // "cadastro" com uma lista "celulares" (cada um com "ranking" — 1 é o
+  // mais confiável/relevante segundo o parceiro) e, à parte, uma lista
+  // "whatsapps" já confirmados. Ver extrairTelefoneOriginal abaixo pra
+  // prioridade entre eles.
+  cadastro?: {
+    celulares?: Array<{ numero?: string; ddd?: number; ranking?: number; whatsapp?: boolean }>;
+  };
   whatsapps?: string[];
   telefones?: string[];
   banco_autorizado?: string;
@@ -45,20 +49,33 @@ export interface EnvelopeWebhookPayload {
   leads: RawWebhookPayload[];
 }
 
-// Alguns parceiros não mandam um campo "telefone" simples — mandam listas
-// (formato de retorno de enriquecimento de CPF, tipo leilão de crédito).
-// Prioridade: 1) campo "telefone" direto (formato mais comum); 2) primeiro
-// número da lista "whatsapps" (já confirmado com WhatsApp pelo parceiro —
-// pedido explícito: usar esse como telefone de captação quando não tiver
-// o campo simples). Não usa "telefones" (não confirmados) como fallback
-// além desses dois — se nenhum dos dois vier, fica null mesmo (mesmo
-// comportamento de antes pra parceiros que genuinamente não mandam nada).
+// Alguns parceiros não mandam um campo "telefone" simples — mandam a
+// informação em outro formato (retorno de enriquecimento de CPF, tipo
+// leilão de crédito). Prioridade, na ordem:
+// 1) campo "telefone" direto (formato mais comum);
+// 2) "cadastro.celulares", pegando o de ranking 1 (pedido explícito — é o
+//    número que o parceiro considera mais confiável, não necessariamente
+//    o mesmo que está marcado como "whatsapp: true" dentro da própria lista);
+// 3) primeiro número de "whatsapps" (formato mais simples do mesmo
+//    parceiro, mantido como alternativa a mais caso "cadastro.celulares"
+//    não venha nesse payload específico).
+// Não usa "telefones" (lista de números não confirmados) em nenhum ponto —
+// se nenhuma das 3 fontes acima vier, fica null mesmo (mesmo comportamento
+// de antes pra parceiros que genuinamente não mandam telefone nenhum).
 export function extrairTelefoneOriginal(body: RawWebhookPayload): string | null {
   if (body.telefone && String(body.telefone).trim() !== "") return String(body.telefone).trim();
+
+  const celulares = body.cadastro?.celulares;
+  if (Array.isArray(celulares)) {
+    const ranking1 = celulares.find((c) => c.ranking === 1);
+    if (ranking1?.numero && String(ranking1.numero).trim() !== "") return String(ranking1.numero).trim();
+  }
+
   if (Array.isArray(body.whatsapps) && body.whatsapps.length > 0) {
     const primeiro = body.whatsapps[0];
     if (primeiro && String(primeiro).trim() !== "") return String(primeiro).trim();
   }
+
   return null;
 }
 

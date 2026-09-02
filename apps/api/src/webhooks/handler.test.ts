@@ -434,34 +434,68 @@ describe("handleWebhookRequest — CPF repetido no mesmo webhook (reset, nunca d
 });
 
 describe("extrairTelefoneOriginal — parceiro que manda listas em vez de campo simples (ex.: leilão de crédito, 02/09)", () => {
-  it("usa o primeiro número de 'whatsapps' quando não tem campo 'telefone' (payload real da Karina, com os dados sensíveis trocados)", () => {
+  it("usa cadastro.celulares com ranking 1 quando não tem campo 'telefone' (payload real da Karina, com os dados sensíveis trocados)", () => {
     const payload: RawWebhookPayload = {
       cpf: "00000000000",
       nome: "Nome Exemplo",
+      cadastro: {
+        celulares: [
+          { ddd: 11, numero: "11933333333", ranking: 1, whatsapp: true },
+          { ddd: 11, numero: "11911111111", ranking: 2, whatsapp: false },
+          { ddd: 11, numero: "11922222222", ranking: 3, whatsapp: false },
+        ],
+      },
       telefones: ["11911111111", "11922222222"],
       whatsapps: ["11933333333"],
     };
     expect(extrairTelefoneOriginal(payload)).toBe("11933333333");
   });
 
-  it("prioriza o campo 'telefone' simples quando ele vier, mesmo com 'whatsapps' também presente", () => {
+  it("segue o RANKING, não a flag 'whatsapp' — pega o de ranking 1 mesmo que não seja o marcado como whatsapp:true", () => {
+    const payload: RawWebhookPayload = {
+      cpf: "00000000000",
+      cadastro: {
+        celulares: [
+          { numero: "11900000001", ranking: 2, whatsapp: true },
+          { numero: "11900000002", ranking: 1, whatsapp: false },
+        ],
+      },
+    };
+    expect(extrairTelefoneOriginal(payload)).toBe("11900000002");
+  });
+
+  it("prioriza o campo 'telefone' simples quando ele vier, mesmo com 'cadastro.celulares' também presente", () => {
     const payload: RawWebhookPayload = {
       cpf: "00000000000",
       telefone: "11900000000",
-      whatsapps: ["11933333333"],
+      cadastro: { celulares: [{ numero: "11933333333", ranking: 1, whatsapp: true }] },
     };
     expect(extrairTelefoneOriginal(payload)).toBe("11900000000");
   });
 
-  it("devolve null quando não tem 'telefone' nem 'whatsapps' (parceiro genuinamente não mandou nenhum)", () => {
+  it("cai pra 'whatsapps' quando 'cadastro.celulares' não vem nesse payload (formato mais simples do mesmo parceiro)", () => {
+    const payload: RawWebhookPayload = { cpf: "00000000000", whatsapps: ["11933333333"] };
+    expect(extrairTelefoneOriginal(payload)).toBe("11933333333");
+  });
+
+  it("cai pra 'whatsapps' quando 'cadastro.celulares' vem mas nenhum item tem ranking 1", () => {
+    const payload: RawWebhookPayload = {
+      cpf: "00000000000",
+      cadastro: { celulares: [{ numero: "11900000002", ranking: 2, whatsapp: false }] },
+      whatsapps: ["11933333333"],
+    };
+    expect(extrairTelefoneOriginal(payload)).toBe("11933333333");
+  });
+
+  it("devolve null quando não tem nenhuma das 3 fontes (parceiro genuinamente não mandou telefone nenhum)", () => {
     expect(extrairTelefoneOriginal({ cpf: "00000000000" })).toBeNull();
   });
 
-  it("devolve null quando 'whatsapps' existe mas é uma lista vazia", () => {
+  it("devolve null quando 'whatsapps' existe mas é uma lista vazia, e não tem celulares nem telefone", () => {
     expect(extrairTelefoneOriginal({ cpf: "00000000000", whatsapps: [] })).toBeNull();
   });
 
-  it("não usa 'telefones' (não confirmados com WhatsApp) como fallback — só 'telefone' e 'whatsapps'", () => {
+  it("não usa 'telefones' (lista de números não confirmados) em nenhum ponto da prioridade", () => {
     const payload: RawWebhookPayload = { cpf: "00000000000", telefones: ["11911111111"] };
     expect(extrairTelefoneOriginal(payload)).toBeNull();
   });
