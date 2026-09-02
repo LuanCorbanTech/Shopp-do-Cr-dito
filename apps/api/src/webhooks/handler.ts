@@ -32,6 +32,12 @@ export interface RawWebhookPayload {
   whatsapps?: string[];
   telefones?: string[];
   banco_autorizado?: string;
+  // Mesmo parceiro do "cadastro" acima — o banco aprovado vem dentro desse
+  // objeto "leilao", não no campo simples "banco_autorizado". Ver
+  // extrairBancoAutorizado abaixo.
+  leilao?: {
+    bancoAprovado?: string;
+  };
   external_id?: string;
   idempotency_key?: string;
   produto?: string;
@@ -76,6 +82,19 @@ export function extrairTelefoneOriginal(body: RawWebhookPayload): string | null 
     if (primeiro && String(primeiro).trim() !== "") return String(primeiro).trim();
   }
 
+  return null;
+}
+
+// Mesma ideia de extrairTelefoneOriginal, pro banco aprovado: campo simples
+// "banco_autorizado" tem prioridade (outros parceiros); esse parceiro
+// específico manda dentro de "leilao.bancoAprovado".
+export function extrairBancoAutorizado(body: RawWebhookPayload): string | null {
+  if (body.banco_autorizado && String(body.banco_autorizado).trim() !== "") {
+    return String(body.banco_autorizado).trim();
+  }
+  if (body.leilao?.bancoAprovado && String(body.leilao.bancoAprovado).trim() !== "") {
+    return String(body.leilao.bancoAprovado).trim();
+  }
   return null;
 }
 
@@ -177,7 +196,7 @@ async function processOfferItem(
     nome: body.nome ?? null,
     cpf: body.cpf,
     telefoneOriginal: extrairTelefoneOriginal(body),
-    bancoAutorizado: body.banco_autorizado ?? null,
+    bancoAutorizado: extrairBancoAutorizado(body),
     produto: body.produto ?? null,
     valor: body.valor ?? null,
     parcelas: body.parcelas ?? null,

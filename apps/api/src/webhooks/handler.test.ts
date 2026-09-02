@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { handleWebhookRequest, extrairTelefoneOriginal, type RawWebhookPayload } from "./handler";
+import { handleWebhookRequest, extrairTelefoneOriginal, extrairBancoAutorizado, type RawWebhookPayload } from "./handler";
 import { computeSignature, computeSimpleHmac } from "./hmac";
 import { createFakeOffersPort } from "./test-support/fake-offers-port";
 
@@ -498,5 +498,32 @@ describe("extrairTelefoneOriginal — parceiro que manda listas em vez de campo 
   it("não usa 'telefones' (lista de números não confirmados) em nenhum ponto da prioridade", () => {
     const payload: RawWebhookPayload = { cpf: "00000000000", telefones: ["11911111111"] };
     expect(extrairTelefoneOriginal(payload)).toBeNull();
+  });
+});
+
+describe("extrairBancoAutorizado — mesmo parceiro de leilão, o banco vem em 'leilao.bancoAprovado'", () => {
+  it("usa 'leilao.bancoAprovado' quando não tem campo 'banco_autorizado' simples (payload real da Karina)", () => {
+    const payload: RawWebhookPayload = {
+      cpf: "00000000000",
+      leilao: { bancoAprovado: "Presenca" },
+    };
+    expect(extrairBancoAutorizado(payload)).toBe("Presenca");
+  });
+
+  it("prioriza 'banco_autorizado' simples quando ele vier, mesmo com 'leilao.bancoAprovado' também presente", () => {
+    const payload: RawWebhookPayload = {
+      cpf: "00000000000",
+      banco_autorizado: "C6",
+      leilao: { bancoAprovado: "Outro Banco" },
+    };
+    expect(extrairBancoAutorizado(payload)).toBe("C6");
+  });
+
+  it("devolve null quando não tem nenhuma das 2 fontes", () => {
+    expect(extrairBancoAutorizado({ cpf: "00000000000" })).toBeNull();
+  });
+
+  it("devolve null quando 'leilao' vem mas sem o campo 'bancoAprovado'", () => {
+    expect(extrairBancoAutorizado({ cpf: "00000000000", leilao: {} })).toBeNull();
   });
 });
