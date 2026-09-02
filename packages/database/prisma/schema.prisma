@@ -124,8 +124,42 @@ model Webhook {
   updatedAt  DateTime @updatedAt @map("updated_at")
 
   offers Offer[]
+  tarefas Tarefa[]
 
   @@map("webhooks")
+}
+
+// ---------------------------------------------------------------------------
+// Tarefas agendadas de recebimento (31/08) — liga/desliga o recebimento de
+// ofertas de um fornecedor (hoje só Odysseia, desenhado pra caber mais no
+// futuro) numa data/horário marcados, até bater uma meta de quantidade.
+//
+// Fila por fornecedor: se já tem uma tarefa RODANDO pra esse mesmo webhook,
+// as outras pendentes esperam a vez (confirmado com o cliente) — nunca duas
+// rodando ao mesmo tempo pro mesmo fornecedor. Depois de concluída, o
+// recebimento fica desligado até a próxima tarefa da fila ligar de novo
+// (também confirmado).
+model Tarefa {
+  id                String   @id @default(uuid())
+  nome              String
+  fornecedor        String   // "odysseia" por enquanto — decide qual API de ligar/desligar chamar
+  webhookId         String   @map("webhook_id") // qual webhook conta as ofertas recebidas (pode ter mais de um do mesmo fornecedor)
+  webhook           Webhook  @relation(fields: [webhookId], references: [id])
+
+  dataHoraExecucao  DateTime @map("data_hora_execucao")
+  quantidadeOfertas Int      @map("quantidade_ofertas")
+
+  status            String   @default("PENDENTE") // PENDENTE | RODANDO | CONCLUIDA | ERRO | CANCELADA
+  ofertasRecebidas  Int      @default(0) @map("ofertas_recebidas")
+  iniciadoEm        DateTime? @map("iniciado_em")
+  concluidoEm       DateTime? @map("concluido_em")
+  erro              String?
+
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([webhookId, status], map: "idx_tarefas_webhook_status")
+  @@index([status, dataHoraExecucao], map: "idx_tarefas_status_data")
+  @@map("tarefas")
 }
 
 // ---------------------------------------------------------------------------
