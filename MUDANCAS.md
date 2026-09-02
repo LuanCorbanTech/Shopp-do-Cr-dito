@@ -1,69 +1,51 @@
-# Novo endpoint: buscar dados de um lead pelo telefone
+# Ajustes na tela de Tarefas: chave na aba certa + modal
 
-## O que foi pedido
+## O que mudou
 
-Um `GET` que recebe um telefone, procura nas ofertas, e devolve os dados
-que já temos daquele lead (CPF, nome, etc.) — pra um sistema externo saber
-"quem é esse número" quando recebe uma mensagem.
+1. **Chave de API da Odysseia movida pra Integrações** — antes ficava
+   dentro da tela de Tarefas, agora fica junto das outras credenciais
+   (Lemit, WhatsApp, Ararahq), no final da página de Integrações. A tela de
+   Tarefas só usa essa chave (não mostra mais o campo pra editá-la) — tem
+   um link direto pra "Integrações" no texto de ajuda, caso precise
+   configurar.
 
-## Decisões confirmadas com você antes de implementar
+2. **"Criar tarefa" agora abre um modal** — em vez do formulário abrir
+   embutido na própria página (empurrando a lista pra baixo), agora abre
+   como uma janela sobreposta, centralizada, com fundo escurecido — mesmo
+   padrão visual já usado no modal de detalhes de Webhook.
 
-1. **Autenticação**: mesmo token dos outros 2 endpoints de disparo
-   (`DISPATCH_API_TOKEN`, `Authorization: Bearer ...`) — não é uma chave
-   por time, é o mesmo sistema externo único que já usa
-   `/aguardando-disparo` e `/status`.
-2. **Telefone com mais de uma oferta**: devolve só a **mais recente**.
+## Nota técnica pro deploy
 
-## Como usar
+O endpoint da chave da Odysseia mudou de rota (só isso — nenhum dado
+muda de lugar, é só o caminho da API):
+- Antes: `/admin/tarefas/odysseia-config`
+- Agora: `/admin/integrations/odysseia`
 
-```
-GET /api/v1/leads/buscar-por-telefone?telefone=5562993718537
-Authorization: Bearer <DISPATCH_API_TOKEN>
-```
-
-Aceita o telefone em qualquer formato razoável — com ou sem `+`, com ou sem
-DDI, com espaços/parênteses/traço (`+55 (62) 99371-8537` funciona igual a
-`5562993718537`).
-
-**Resposta (200)** — mesmo formato de campos do `/aguardando-disparo`, mais
-o `status` atual:
-```json
-{
-  "id": "...", "externalId": "...", "nome": "...", "cpf": "...",
-  "dataNascimento": "...", "telefoneWhatsapp": "...", "possuiWhatsapp": true,
-  "bancoAutorizado": "...", "produto": "...", "valor": 5000, "parcelas": 12,
-  "status": "DISPARO_RESPONDIDO"
-}
-```
-
-**Se não achar nada**: `404 {"error": "nao_encontrado"}`
-
-## Como a busca funciona
-
-Compara contra `telefoneValidado` e `telefoneAtualizado` (os campos que o
-pipeline efetivamente confirma) — não compara `telefoneOriginal` (valor cru
-recebido do parceiro, sem garantia de formato).
+Isso é só interno (o painel já chama a rota certa) — não precisa de nenhum
+ajuste manual, só estou documentando a mudança.
 
 ## Validação
 
-- **7 testes novos** (encontra oferta, telefone sem DDI, telefone com
-  formatação solta, 404 quando não acha, 400 sem telefone, 401 token
-  errado, 503 token não configurado).
-- **69 testes no total** (suíte inteira da API), todos passando.
-- Testei a query SQL exata (mais recente entre várias, ignorando telefone
-  diferente) com **Postgres real**, do zero: 3 ofertas com o mesmo
-  telefone em datas diferentes — confirmou que pega certinho a mais
-  recente.
-- `tsc --noEmit` limpo (precisei recompilar o pacote `domain` pra API
-  enxergar a interface nova).
+- Build completo do admin-panel (`next build`), com checagem de tipos,
+  limpo (achei e corrigi um erro de sintaxe que introduzi durante a edição
+  — uma linha da declaração de outra função tinha sido apagada sem
+  querer; o build pegou isso na hora).
+- **89 + 69 testes** (workers + api), todos continuam passando — essa
+  mudança foi só de interface, não mexeu em nenhuma lógica de backend além
+  do caminho da rota.
+- Testado visualmente com Playwright: modal abrindo corretamente sobre a
+  lista, e a seção "Odysseia" aparecendo certinho no final da página de
+  Integrações, com a chave mascarada.
 
 ## Arquivos alterados
 
-- `apps/api/src/leads/buscar-por-telefone-routes.ts` (novo)
-- `apps/api/src/leads/buscar-por-telefone-routes.test.ts` (novo)
-- `apps/api/src/leads/fake-dispatch-poll-port.ts`
-- `apps/api/src/server.ts`
-- `packages/domain/src/ports/pipeline-ports.ts`
-- `packages/database/src/repositories/prisma-pipeline-repository.ts`
+- `packages/database/src/repositories/admin-repository.ts` (só comentário)
+- `apps/api/src/admin/routes.ts` (rota renomeada)
+- `apps/admin-panel/src/app/integracoes/page.tsx` (seção nova)
+- `apps/admin-panel/src/app/integracoes/actions.ts` (action nova)
+- `apps/admin-panel/src/app/tarefas/page.tsx` (não busca mais a config)
+- `apps/admin-panel/src/app/tarefas/TarefasClient.tsx` (modal + sem card da Odysseia)
+- `apps/admin-panel/src/app/tarefas/actions.ts` (action removida)
 
-Nenhuma migração de banco — usa colunas e índice que já existiam.
+Nenhuma migração de banco nessa entrega (é a mesma tabela `tarefas` já
+criada antes).

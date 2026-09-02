@@ -99,6 +99,127 @@ export class AdminRepository {
       .sort((a, b) => b.total - a.total);
   }
 
+  // ---------------------------------------------------------------------
+  // Tarefas de recebimento (liga/desliga fornecedor numa data/hora
+  // marcada, até bater uma meta de ofertas) — CRUD pro painel + métodos
+  // que o worker9-tarefas usa pra decidir o que fazer a cada ciclo.
+  // ---------------------------------------------------------------------
+
+  async listarTarefas() {
+    return this.prisma.tarefa.findMany({
+      include: { webhook: { select: { id: true, identificador: true, origem: true } } },
+      orderBy: { dataHoraExecucao: "desc" },
+    });
+  }
+
+  async criarTarefa(dados: {
+    nome: string;
+    fornecedor: string;
+    webhookId: string;
+    dataHoraExecucao: Date;
+    quantidadeOfertas: number;
+  }) {
+    return this.prisma.tarefa.create({ data: dados });
+  }
+
+  async cancelarTarefa(id: string) {
+    // Só cancela se ainda estiver PENDENTE — não faz sentido "cancelar" uma
+    // que já está rodando ou já terminou (pra isso, desligar o fornecedor
+    // manualmente na tela dele, se for o caso).
+    const tarefa = await this.prisma.tarefa.findUnique({ where: { id } });
+    if (!tarefa || tarefa.status !== "PENDENTE") return null;
+    return this.prisma.tarefa.update({ where: { id }, data: { status: "CANCELADA" } });
+  }
+
+  // ---- Métodos usados pelo worker9-tarefas (via TarefaPort) ----
+
+  async listarWebhooksComTarefasAtivas(): Promise<string[]> {
+    const rows = await this.prisma.tarefa.findMany({
+      where: { status: { in: ["PENDENTE", "RODANDO"] } },
+      select: { webhookId: true },
+      distinct: ["webhookId"],
+    });
+    return rows.map((r) => r.webhookId);
+  }
+
+  async buscarTarefaRodando(webhookId: string) {
+    const t = await this.prisma.tarefa.findFirst({ where: { webhookId, status: "RODANDO" } });
+    if (!t) return null;
+    return {
+      id: t.id,
+      nome: t.nome,
+      fornecedor: t.fornecedor,
+      webhookId: t.webhookId,
+      quantidadeOfertas: t.quantidadeOfertas,
+      iniciadoEm: t.iniciadoEm,
+    };
+  }
+
+  async buscarProximaTarefaPendente(webhookId: string, agora: Date) {
+    const t = await this.prisma.tarefa.findFirst({
+      where: { webhookId, status: "PENDENTE", dataHoraExecucao: { lte: agora } },
+      orderBy: { dataHoraExecucao: "asc" },
+    });
+    if (!t) return null;
+    return {
+      id: t.id,
+      nome: t.nome,
+      fornecedor: t.fornecedor,
+      webhookId: t.webhookId,
+      quantidadeOfertas: t.quantidadeOfertas,
+      iniciadoEm: t.iniciadoEm,
+    };
+  }
+
+  async contarOfertasDesde(webhookId: string, desde: Date): Promise<number> {
+    return this.prisma.offer.count({ where: { webhookId, createdAt: { gte: desde } } });
+  }
+
+  async marcarTarefaRodando(id: string, iniciadoEm: Date): Promise<void> {
+    await this.prisma.tarefa.update({ where: { id }, data: { status: "RODANDO", iniciadoEm, erro: null } });
+  }
+
+  async marcarTarefaConcluida(id: string, ofertasRecebidas: number, concluidoEm: Date): Promise<void> {
+    await this.prisma.tarefa.update({
+      where: { id },
+      data: { status: "CONCLUIDA", ofertasRecebidas, concluidoEm, erro: null },
+    });
+  }
+
+  async marcarTarefaErro(id: string, erro: string): Promise<void> {
+    await this.prisma.tarefa.update({ where: { id }, data: { status: "ERRO", erro } });
+  }
+
+  // ---- Chave de API por fornecedor (hoje só Odysseia) — mesmo padrão de
+  // mascaramento da Lemit/WhatsApp/Ararahq. Aparece na tela de Integrações
+  // (não na de Tarefas, que só CONSOME essa chave via worker9). ----
+
+  async getOdysseiaConfig() {
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "ODYSSEIA_API_KEY" } });
+    const valor = (config?.valor ?? {}) as { apiKey?: string };
+    const apiKey = valor.apiKey ?? null;
+    return {
+      apiKeyConfigurada: Boolean(apiKey),
+      apiKeyMascarada: apiKey ? `${"•".repeat(Math.max(apiKey.length - 4, 0))}${apiKey.slice(-4)}` : null,
+    };
+  }
+
+  async salvarOdysseiaApiKey(apiKey: string): Promise<void> {
+    if (!apiKey || apiKey.trim() === "") return; // "em branco" = mantém a atual, mesmo padrão dos outros
+    await this.prisma.integrationConfig.upsert({
+      where: { chave: "ODYSSEIA_API_KEY" },
+      update: { valor: { apiKey: apiKey.trim() }, ativo: true },
+      create: { chave: "ODYSSEIA_API_KEY", valor: { apiKey: apiKey.trim() }, ativo: true },
+    });
+  }
+
+  async buscarApiKeyFornecedor(fornecedor: string): Promise<string | null> {
+    if (fornecedor !== "odysseia") return null; // só esse suportado por enquanto
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "ODYSSEIA_API_KEY" } });
+    const valor = (config?.valor ?? {}) as { apiKey?: string };
+    return valor.apiKey ?? null;
+  }
+
   async dashboardKpis(params: { from?: Date; to?: Date; statuses?: string[] }) {
     const atual = await this.contarKpis(params);
 

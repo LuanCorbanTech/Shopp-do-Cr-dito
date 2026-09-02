@@ -231,6 +231,72 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         }
       });
 
+      // ---- Tarefas de recebimento (liga/desliga fornecedor numa data/hora
+      // marcada, até bater uma meta de ofertas) ----
+
+      instance.get("/tarefas", async () => adminRepo.listarTarefas());
+
+      instance.post<{
+        Body: {
+          nome?: string;
+          fornecedor?: string;
+          webhookId?: string;
+          dataHoraExecucao?: string;
+          quantidadeOfertas?: number;
+        };
+      }>("/tarefas", async (request, reply) => {
+        const body = request.body ?? {};
+        if (!body.nome || !body.fornecedor || !body.webhookId || !body.dataHoraExecucao || !body.quantidadeOfertas) {
+          reply.code(400);
+          return {
+            error: "campos_obrigatorios",
+            mensagem: "Informe nome, fornecedor, webhookId, dataHoraExecucao e quantidadeOfertas.",
+          };
+        }
+        if (body.fornecedor !== "odysseia") {
+          reply.code(400);
+          return { error: "fornecedor_nao_suportado", mensagem: 'Só "odysseia" é suportado por enquanto.' };
+        }
+        const quantidade = Number(body.quantidadeOfertas);
+        if (!Number.isFinite(quantidade) || quantidade <= 0) {
+          reply.code(400);
+          return { error: "quantidade_invalida" };
+        }
+        const dataHora = new Date(body.dataHoraExecucao);
+        if (Number.isNaN(dataHora.getTime())) {
+          reply.code(400);
+          return { error: "data_hora_invalida" };
+        }
+        const tarefa = await adminRepo.criarTarefa({
+          nome: body.nome,
+          fornecedor: body.fornecedor,
+          webhookId: body.webhookId,
+          dataHoraExecucao: dataHora,
+          quantidadeOfertas: Math.floor(quantidade),
+        });
+        reply.code(201);
+        return tarefa;
+      });
+
+      instance.delete<{ Params: { id: string } }>("/tarefas/:id", async (request, reply) => {
+        const cancelada = await adminRepo.cancelarTarefa(request.params.id);
+        if (!cancelada) {
+          reply.code(409);
+          return {
+            error: "nao_cancelavel",
+            mensagem: "Só é possível cancelar tarefas que ainda estão PENDENTE (aguardando a hora chegar).",
+          };
+        }
+        return cancelada;
+      });
+
+      instance.get("/integrations/odysseia", async () => adminRepo.getOdysseiaConfig());
+
+      instance.post<{ Body: { apiKey?: string } }>("/integrations/odysseia", async (request) => {
+        await adminRepo.salvarOdysseiaApiKey(request.body?.apiKey ?? "");
+        return adminRepo.getOdysseiaConfig();
+      });
+
       instance.patch<{
         Params: { id: string };
         Body: {

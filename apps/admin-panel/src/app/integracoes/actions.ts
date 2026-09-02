@@ -111,3 +111,12 @@ export async function salvarDisparoIndividual(formData: FormData): Promise<void>
   });
   revalidatePath("/integracoes");
 }
+
+export async function salvarOdysseiaApiKey(formData: FormData): Promise<void> {
+  const apiKey = String(formData.get("apiKey") ?? "");
+  await adminApiFetch("/admin/integrations/odysseia", {
+    method: "POST",
+    body: JSON.stringify({ apiKey }),
+  });
+  revalidatePath("/integracoes");
+}

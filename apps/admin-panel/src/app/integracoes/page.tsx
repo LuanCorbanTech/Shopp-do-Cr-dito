@@ -1,5 +1,5 @@
 import { adminApiFetch } from "@/lib/api";
-import { setLimitEnabled, salvarCredenciais, toggleRelatorioPeriodico, salvarRelatorioPeriodico, toggleDisparoIndividual, salvarDisparoIndividual } from "./actions";
+import { setLimitEnabled, salvarCredenciais, toggleRelatorioPeriodico, salvarRelatorioPeriodico, toggleDisparoIndividual, salvarDisparoIndividual, salvarOdysseiaApiKey } from "./actions";
 import { formatarDataHora } from "@/lib/data-hora";
 import DisparoIndividualEndpointsEditor from "./DisparoIndividualEndpointsEditor";
 
@@ -51,6 +51,11 @@ interface DisparoIndividualStatus {
   ararahqApiKeyMascarada: string | null;
 }
 
+interface OdysseiaStatus {
+  apiKeyConfigurada: boolean;
+  apiKeyMascarada: string | null;
+}
+
 export default async function IntegracoesPage() {
   let status: LimitStatus | null = null;
   let error: string | null = null;
@@ -82,6 +87,14 @@ export default async function IntegracoesPage() {
     disparoIndividual = await adminApiFetch<DisparoIndividualStatus>("/admin/integrations/disparo-individual");
   } catch (e) {
     erroDisparoIndividual = e instanceof Error ? e.message : String(e);
+  }
+
+  let odysseia: OdysseiaStatus | null = null;
+  let erroOdysseia: string | null = null;
+  try {
+    odysseia = await adminApiFetch<OdysseiaStatus>("/admin/integrations/odysseia");
+  } catch (e) {
+    erroOdysseia = e instanceof Error ? e.message : String(e);
   }
 
   return (
@@ -324,6 +337,40 @@ export default async function IntegracoesPage() {
                 style={{ width: "100%" }}
               />
             </div>
+            <button type="submit">Salvar</button>
+          </form>
+        </div>
+      )}
+
+      <h1 style={{ marginTop: 40 }}>Odysseia</h1>
+      <p className="subtitle">
+        Chave usada pelas Tarefas (ver menu &quot;Tarefas&quot;) pra ligar/desligar o recebimento de leads da
+        Odysseia numa data/horário marcados.
+      </p>
+      {erroOdysseia && <p className="empty-state">Não foi possível carregar: {erroOdysseia}</p>}
+      {odysseia && (
+        <div className="card">
+          <label htmlFor="odysseia-apiKey" style={{ display: "block", marginBottom: 4 }}>
+            Chave de API{" "}
+            {odysseia.apiKeyConfigurada && (
+              <span className="badge good" style={{ marginLeft: 6 }}>
+                CHAVE CONFIGURADA
+              </span>
+            )}
+          </label>
+          {odysseia.apiKeyConfigurada && (
+            <p className="field-help" style={{ marginTop: 0, marginBottom: 8 }}>
+              Chave atual termina em: {odysseia.apiKeyMascarada}
+            </p>
+          )}
+          <form action={salvarOdysseiaApiKey}>
+            <input
+              id="odysseia-apiKey"
+              name="apiKey"
+              type="text"
+              placeholder={odysseia.apiKeyConfigurada ? "deixe em branco para manter a chave atual" : "ody_..."}
+              style={{ width: "100%", marginBottom: 12 }}
+            />
             <button type="submit">Salvar</button>
           </form>
         </div>
