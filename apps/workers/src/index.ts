@@ -12,6 +12,8 @@ import { runRetryWorkerOnce } from "./workers/worker5-retry";
 import { runReconciliationWorkerOnce } from "./workers/worker6-reconciliation";
 import { runRelatorioPeriodicoWorkerOnce } from "./workers/worker7-relatorio-periodico";
 import { runDisparoIndividualWorkerOnce, type DisparoIndividualEndpoint } from "./workers/worker8-disparo-individual";
+import { runTarefasWorkerOnce } from "./workers/worker9-tarefas";
+import { definirAtivoOdysseia } from "./fornecedores/odysseia";
 
 // Entry point dos 6 workers do pipeline (seção 6.1 do doc de arquitetura). Cada um é
 // um polling loop simples (setInterval) — roda tudo em um único processo Node por
@@ -391,6 +393,23 @@ loop(
   },
   () => resolverIntervaloDisparoIndividualMs(WORKER8_INTERVAL_MS_PADRAO)
 );
+
+// Worker9 — tarefas de recebimento (31/08): a cada ciclo, checa as tarefas
+// agendadas de cada webhook — liga o fornecedor quando chega a hora,
+// desliga quando bate a meta de ofertas. Roda a cada 30s por padrão (não
+// precisa ser tão frequente quanto os outros, é só liga/desliga por
+// data/hora e contagem).
+const WORKER9_INTERVAL_MS = Number(process.env.WORKER9_INTERVAL_MS ?? 30_000);
+
+loop("worker9-tarefas", WORKER9_INTERVAL_MS, async () => {
+  const resultado = await runTarefasWorkerOnce({
+    port: adminRepo,
+    ativadores: {
+      odysseia: definirAtivoOdysseia,
+    },
+  });
+  return resultado.iniciadas + resultado.concluidas;
+});
 
 process.on("SIGTERM", async () => {
   logger.info("Encerrando workers...");
