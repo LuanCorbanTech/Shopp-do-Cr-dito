@@ -20,6 +20,13 @@ export interface RawWebhookPayload {
   nome?: string;
   cpf: string;
   telefone?: string;
+  // Formato alternativo (ex.: parceiro de leilão de crédito, 02/09) — o
+  // payload não manda um campo "telefone" simples, manda essas 2 listas.
+  // "whatsapps" são números já confirmados com WhatsApp pelo PRÓPRIO
+  // parceiro — usamos o primeiro dessa lista como telefone de captação
+  // quando "telefone" não vier (ver extrairTelefoneOriginal abaixo).
+  whatsapps?: string[];
+  telefones?: string[];
   banco_autorizado?: string;
   external_id?: string;
   idempotency_key?: string;
@@ -36,6 +43,23 @@ export interface RawWebhookPayload {
 export interface EnvelopeWebhookPayload {
   teste?: boolean;
   leads: RawWebhookPayload[];
+}
+
+// Alguns parceiros não mandam um campo "telefone" simples — mandam listas
+// (formato de retorno de enriquecimento de CPF, tipo leilão de crédito).
+// Prioridade: 1) campo "telefone" direto (formato mais comum); 2) primeiro
+// número da lista "whatsapps" (já confirmado com WhatsApp pelo parceiro —
+// pedido explícito: usar esse como telefone de captação quando não tiver
+// o campo simples). Não usa "telefones" (não confirmados) como fallback
+// além desses dois — se nenhum dos dois vier, fica null mesmo (mesmo
+// comportamento de antes pra parceiros que genuinamente não mandam nada).
+export function extrairTelefoneOriginal(body: RawWebhookPayload): string | null {
+  if (body.telefone && String(body.telefone).trim() !== "") return String(body.telefone).trim();
+  if (Array.isArray(body.whatsapps) && body.whatsapps.length > 0) {
+    const primeiro = body.whatsapps[0];
+    if (primeiro && String(primeiro).trim() !== "") return String(primeiro).trim();
+  }
+  return null;
 }
 
 export interface HandleWebhookRequestParams {
@@ -135,7 +159,7 @@ async function processOfferItem(
     externalId: body.external_id ?? null,
     nome: body.nome ?? null,
     cpf: body.cpf,
-    telefoneOriginal: body.telefone ?? null,
+    telefoneOriginal: extrairTelefoneOriginal(body),
     bancoAutorizado: body.banco_autorizado ?? null,
     produto: body.produto ?? null,
     valor: body.valor ?? null,

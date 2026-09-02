@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { handleWebhookRequest, type RawWebhookPayload } from "./handler";
+import { handleWebhookRequest, extrairTelefoneOriginal, type RawWebhookPayload } from "./handler";
 import { computeSignature, computeSimpleHmac } from "./hmac";
 import { createFakeOffersPort } from "./test-support/fake-offers-port";
 
@@ -430,5 +430,39 @@ describe("handleWebhookRequest — CPF repetido no mesmo webhook (reset, nunca d
     if (primeira.kind === "single") expect(primeira.resultado.kind).toBe("created");
     if (segunda.kind === "single") expect(segunda.resultado.kind).toBe("created"); // não é "reset"
     expect(offersByCpf.size).toBe(2); // 2 ofertas separadas, uma por webhook
+  });
+});
+
+describe("extrairTelefoneOriginal — parceiro que manda listas em vez de campo simples (ex.: leilão de crédito, 02/09)", () => {
+  it("usa o primeiro número de 'whatsapps' quando não tem campo 'telefone' (payload real da Karina, com os dados sensíveis trocados)", () => {
+    const payload: RawWebhookPayload = {
+      cpf: "00000000000",
+      nome: "Nome Exemplo",
+      telefones: ["11911111111", "11922222222"],
+      whatsapps: ["11933333333"],
+    };
+    expect(extrairTelefoneOriginal(payload)).toBe("11933333333");
+  });
+
+  it("prioriza o campo 'telefone' simples quando ele vier, mesmo com 'whatsapps' também presente", () => {
+    const payload: RawWebhookPayload = {
+      cpf: "00000000000",
+      telefone: "11900000000",
+      whatsapps: ["11933333333"],
+    };
+    expect(extrairTelefoneOriginal(payload)).toBe("11900000000");
+  });
+
+  it("devolve null quando não tem 'telefone' nem 'whatsapps' (parceiro genuinamente não mandou nenhum)", () => {
+    expect(extrairTelefoneOriginal({ cpf: "00000000000" })).toBeNull();
+  });
+
+  it("devolve null quando 'whatsapps' existe mas é uma lista vazia", () => {
+    expect(extrairTelefoneOriginal({ cpf: "00000000000", whatsapps: [] })).toBeNull();
+  });
+
+  it("não usa 'telefones' (não confirmados com WhatsApp) como fallback — só 'telefone' e 'whatsapps'", () => {
+    const payload: RawWebhookPayload = { cpf: "00000000000", telefones: ["11911111111"] };
+    expect(extrairTelefoneOriginal(payload)).toBeNull();
   });
 });
