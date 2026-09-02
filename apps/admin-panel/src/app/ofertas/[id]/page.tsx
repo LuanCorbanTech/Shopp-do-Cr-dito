@@ -20,6 +20,7 @@ interface OfferTimeline {
     webhook: { identificador: string; origem: string };
     endpoint: { nome: string } | null;
     routingRule: { nome: string } | null;
+    payloadOriginal: unknown;
   };
   processingEvents: Array<{
     id: string;
@@ -203,6 +204,24 @@ export default async function OfertaDetailPage({ params }: { params: { id: strin
           <li className="empty-state">Nenhuma tentativa de disparo individual registrada ainda pra essa oferta.</li>
         )}
       </ul>
+
+      <h2>Dado bruto recebido do parceiro</h2>
+      <p className="subtitle">
+        Exatamente o que o webhook do parceiro mandou pra essa oferta, sem nenhum processamento — útil pra
+        conferir se algum campo (como telefone) veio com outro nome do que o sistema espera.
+      </p>
+      <pre
+        style={{
+          background: "var(--surface-2, #f5f5f5)",
+          padding: 16,
+          borderRadius: 8,
+          overflowX: "auto",
+          fontSize: 13,
+          border: "1px solid var(--border)",
+        }}
+      >
+        {JSON.stringify(offer.payloadOriginal, null, 2)}
+      </pre>
     </div>
   );
 }
