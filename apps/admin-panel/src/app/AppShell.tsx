@@ -68,6 +68,14 @@ function IconChart() {
   );
 }
 
+function IconClock() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" />
+    </svg>
+  );
+}
+
 const NAV_GROUPS: NavGroup[] = [
   { titulo: "Visão geral", items: [{ href: "/", label: "Dashboard", icon: <IconGrid /> }] },
   {
@@ -75,6 +83,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/ofertas", label: "Ofertas", icon: <IconList /> },
       { href: "/relatorios", label: "Relatórios", icon: <IconChart /> },
+      { href: "/tarefas", label: "Tarefas", icon: <IconClock /> },
     ],
   },
   {
