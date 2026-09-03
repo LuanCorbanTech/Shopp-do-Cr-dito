@@ -99,6 +99,41 @@ export class AdminRepository {
       .sort((a, b) => b.total - a.total);
   }
 
+  // Diagnóstico SÓ LEITURA (03/09) — responde "por que 'Com Lemit validado'
+  // está maior que 'Com WhatsApp validado', com a Lemit desativada?".
+  // "Lemit validado" conta quem tem dataNascimento OU telefoneLemit
+  // preenchidos — campos que SÓ são escritos numa consulta de verdade à
+  // Lemit (nunca no recebimento do webhook em si, mesmo pra parceiros que
+  // já mandam esses dados no payload deles). Com a Lemit desativada, a
+  // ÚNICA forma de consultar de verdade é a "segunda chance" (worker1,
+  // 02/09) — pra ofertas que ficaram SEM_WHATSAPP com o telefone original.
+  // Esse diagnóstico separa: quantas ofertas têm esses campos Lemit
+  // preenchidos, quebrado por terem ou não possuiWhatsapp=true — se o
+  // número "sem WhatsApp mesmo depois da consulta Lemit" for muito alto,
+  // pode indicar que a segunda chance está dando gatilho até em quem já
+  // tinha WhatsApp de verdade (um bug na extração do telefone original,
+  // por exemplo), não só em quem realmente precisava.
+  async diagnosticoLemitVsWhatsapp() {
+    const [
+      lemitTotal,
+      lemitComWhatsapp,
+      lemitSemWhatsapp,
+      whatsappSemLemit,
+    ] = await Promise.all([
+      this.prisma.offer.count({ where: { OR: [{ dataNascimento: { not: null } }, { telefoneLemit: { not: null } }] } }),
+      this.prisma.offer.count({
+        where: { OR: [{ dataNascimento: { not: null } }, { telefoneLemit: { not: null } }], possuiWhatsapp: true },
+      }),
+      this.prisma.offer.count({
+        where: { OR: [{ dataNascimento: { not: null } }, { telefoneLemit: { not: null } }], possuiWhatsapp: { not: true } },
+      }),
+      this.prisma.offer.count({
+        where: { possuiWhatsapp: true, dataNascimento: null, telefoneLemit: null },
+      }),
+    ]);
+    return { lemitTotal, lemitComWhatsapp, lemitSemWhatsapp, whatsappSemLemit };
+  }
+
   // ---------------------------------------------------------------------
   // Tarefas de recebimento (liga/desliga fornecedor numa data/hora
   // marcada, até bater uma meta de ofertas) — CRUD pro painel + métodos
@@ -124,26 +159,58 @@ export class AdminRepository {
 
   async cancelarTarefa(id: string) {
     // Só cancela se ainda estiver PENDENTE — não faz sentido "cancelar" uma
-    // que já está rodando ou já terminou (pra isso, desligar o fornecedor
-    // manualmente na tela dele, se for o caso).
+    // que já está rodando ou já terminou (pra isso, tem os botões de
+    // pausar/tentar de novo, ou desligar manualmente na tela do fornecedor).
     const tarefa = await this.prisma.tarefa.findUnique({ where: { id } });
     if (!tarefa || tarefa.status !== "PENDENTE") return null;
     return this.prisma.tarefa.update({ where: { id }, data: { status: "CANCELADA" } });
+  }
+
+  // ---- Ações do usuário na tela (efeito IMEDIATO no status, o efeito
+  // real no fornecedor — ligar/desligar de verdade — acontece no próximo
+  // ciclo do worker9, que é quem tem a lógica de chamar a API externa).
+
+  async retentarTarefa(id: string) {
+    // Só faz sentido pra quem está em ERRO — volta pra PENDENTE, o worker
+    // pega ela nas próximas ~30s (a data/hora marcada já passou, então
+    // conta como vencida de novo).
+    const tarefa = await this.prisma.tarefa.findUnique({ where: { id } });
+    if (!tarefa || tarefa.status !== "ERRO") return null;
+    return this.prisma.tarefa.update({ where: { id }, data: { status: "PENDENTE", erro: null } });
+  }
+
+  async solicitarPausa(id: string) {
+    // Só pra quem está RODANDO — o worker confirma no próximo ciclo
+    // (desliga o fornecedor de verdade e só então marca PAUSADA).
+    const tarefa = await this.prisma.tarefa.findUnique({ where: { id } });
+    if (!tarefa || tarefa.status !== "RODANDO") return null;
+    return this.prisma.tarefa.update({ where: { id }, data: { status: "PAUSANDO" } });
+  }
+
+  async solicitarReativacao(id: string) {
+    // Só pra quem está PAUSADA — o worker confirma no próximo ciclo (liga
+    // o fornecedor de novo e só então marca RODANDO, sem resetar a
+    // contagem já feita).
+    const tarefa = await this.prisma.tarefa.findUnique({ where: { id } });
+    if (!tarefa || tarefa.status !== "PAUSADA") return null;
+    return this.prisma.tarefa.update({ where: { id }, data: { status: "REATIVANDO" } });
   }
 
   // ---- Métodos usados pelo worker9-tarefas (via TarefaPort) ----
 
   async listarWebhooksComTarefasAtivas(): Promise<string[]> {
     const rows = await this.prisma.tarefa.findMany({
-      where: { status: { in: ["PENDENTE", "RODANDO"] } },
+      where: { status: { in: ["PENDENTE", "RODANDO", "PAUSADA", "PAUSANDO", "REATIVANDO"] } },
       select: { webhookId: true },
       distinct: ["webhookId"],
     });
     return rows.map((r) => r.webhookId);
   }
 
-  async buscarTarefaRodando(webhookId: string) {
-    const t = await this.prisma.tarefa.findFirst({ where: { webhookId, status: "RODANDO" } });
+  async buscarTarefaOcupante(webhookId: string) {
+    const t = await this.prisma.tarefa.findFirst({
+      where: { webhookId, status: { in: ["RODANDO", "PAUSADA", "PAUSANDO", "REATIVANDO"] } },
+    });
     if (!t) return null;
     return {
       id: t.id,
@@ -152,6 +219,7 @@ export class AdminRepository {
       webhookId: t.webhookId,
       quantidadeOfertas: t.quantidadeOfertas,
       iniciadoEm: t.iniciadoEm,
+      status: t.status as "RODANDO" | "PAUSADA" | "PAUSANDO" | "REATIVANDO",
     };
   }
 
@@ -167,7 +235,6 @@ export class AdminRepository {
       fornecedor: t.fornecedor,
       webhookId: t.webhookId,
       quantidadeOfertas: t.quantidadeOfertas,
-      iniciadoEm: t.iniciadoEm,
     };
   }
 
@@ -188,6 +255,16 @@ export class AdminRepository {
 
   async marcarTarefaErro(id: string, erro: string): Promise<void> {
     await this.prisma.tarefa.update({ where: { id }, data: { status: "ERRO", erro } });
+  }
+
+  async marcarTarefaPausada(id: string): Promise<void> {
+    await this.prisma.tarefa.update({ where: { id }, data: { status: "PAUSADA", erro: null } });
+  }
+
+  async marcarTarefaReativada(id: string): Promise<void> {
+    // Não mexe em iniciadoEm — a contagem de ofertas continua de onde já
+    // estava, não reinicia do zero.
+    await this.prisma.tarefa.update({ where: { id }, data: { status: "RODANDO", erro: null } });
   }
 
   // ---- Chave de API por fornecedor (hoje só Odysseia) — mesmo padrão de
