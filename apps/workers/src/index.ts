@@ -32,16 +32,22 @@ const redis = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { m
 // nenhuma das duas fontes tiver valor, a consulta daquele item falha e entra no fluxo
 // normal de retry/backoff — não derruba o worker inteiro como antes.
 
-async function resolverCredenciaisLemit(): Promise<{ apiKey: string; baseUrl?: string }> {
+async function resolverCredenciaisLemit(): Promise<{ apiKey: string; baseUrl?: string; urlConsulta?: string }> {
   const config = await prisma.integrationConfig.findUnique({ where: { chave: "LEMIT_CREDENCIAIS" } });
-  const valor = (config?.valor ?? {}) as { apiKey?: string; baseUrl?: string };
+  const valor = (config?.valor ?? {}) as { apiKey?: string; baseUrl?: string; urlConsulta?: string };
   const apiKey = valor.apiKey || process.env.LIMIT_API_KEY;
   if (!apiKey) {
     throw new Error(
       "Credenciais da Lemit não configuradas (painel Integrações, ou LIMIT_API_KEY no .env como alternativa)"
     );
   }
-  return { apiKey, baseUrl: valor.baseUrl || process.env.LIMIT_API_BASE_URL || undefined };
+  return {
+    apiKey,
+    baseUrl: valor.baseUrl || process.env.LIMIT_API_BASE_URL || undefined,
+    // Editável no painel (03/09) — se preenchida, o pacote de integração usa
+    // ela direto, ignorando baseUrl + o caminho padrão embutido no código.
+    urlConsulta: valor.urlConsulta || process.env.LIMIT_API_URL_CONSULTA || undefined,
+  };
 }
 
 async function resolverCredenciaisWhatsapp(): Promise<{ apiKey: string; baseUrl: string }> {
