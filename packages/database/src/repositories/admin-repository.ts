@@ -8,6 +8,7 @@ function mascararCredencial(valor: unknown): {
   apiKeyConfigurada: boolean;
   apiKeyMascarada: string | null;
   baseUrl: string | null;
+  urlConsulta: string | null;
   intervaloSegundos: number | null;
   limiteRequisicoesPorCiclo: number | null;
   loteMinimo: number | null;
@@ -17,6 +18,7 @@ function mascararCredencial(valor: unknown): {
   const v = (valor ?? {}) as {
     apiKey?: string;
     baseUrl?: string;
+    urlConsulta?: string;
     intervaloSegundos?: number;
     limiteRequisicoesPorCiclo?: number;
     loteMinimo?: number;
@@ -28,6 +30,9 @@ function mascararCredencial(valor: unknown): {
     apiKeyConfigurada: Boolean(apiKey),
     apiKeyMascarada: apiKey ? `${"•".repeat(Math.max(apiKey.length - 4, 0))}${apiKey.slice(-4)}` : null,
     baseUrl: v.baseUrl ?? null,
+    // Não é segredo (é só um endereço), então aparece em texto puro na tela
+    // — diferente da apiKey, que só mostra os últimos 4 caracteres.
+    urlConsulta: v.urlConsulta ?? null,
     intervaloSegundos: typeof v.intervaloSegundos === "number" && v.intervaloSegundos > 0 ? v.intervaloSegundos : null,
     limiteRequisicoesPorCiclo:
       typeof v.limiteRequisicoesPorCiclo === "number" && v.limiteRequisicoesPorCiclo > 0 ? v.limiteRequisicoesPorCiclo : null,
@@ -113,6 +118,116 @@ export class AdminRepository {
   // consultas bem antigas, de quando a Lemit podia estar ATIVADA (fluxo
   // normal, nada a ver com a segunda chance), misturando os dois cenários
   // e inflando o total sem revelar o efeito real da mudança nova.
+
+  // ---------------------------------------------------------------------
+  // Reprocessagem do bug do DDI no lote (03/09) — pra ofertas que ficaram
+  // SEM_WHATSAPP incorretamente por causa da comparação sem DDI (ver
+  // worker2-whatsapp.ts, comentário no topo). Busca de novo (SÓ LEITURA na
+  // CorbanTech — sem gastar crédito de novo, a CorbanTech guarda os
+  // resultados por 14 dias) o resultado do MESMO lote já pago, aplica a
+  // comparação CORRIGIDA (com DDI), e corrige quem realmente tinha
+  // WhatsApp e tinha sido classificado errado.
+  private normalizarComDDIParaReprocessar(telefone: string): string {
+    const digits = telefone.replace(/\D/g, "");
+    if (digits.length >= 12 && digits.startsWith("55")) return digits;
+    return `55${digits}`;
+  }
+
+  async reprocessarLotesDDI(webhookIdentificador: string): Promise<{
+    lotesEncontrados: number;
+    lotesComErro: string[];
+    ofertasVerificadas: number;
+    ofertasCorrigidas: number;
+    ofertasContinuamSemWhatsapp: number;
+  }> {
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "WHATSAPP_VALIDACAO_CREDENCIAIS" } });
+    const valorConfig = (config?.valor ?? {}) as { apiKey?: string; baseUrl?: string };
+    const corbanApiKey = valorConfig.apiKey;
+    const corbanBaseUrl = valorConfig.baseUrl || "http://localhost:9902";
+    if (!corbanApiKey) throw new Error("Credenciais da CorbanTech não configuradas (painel Integrações).");
+
+    const webhook = await this.prisma.webhook.findUnique({ where: { identificador: webhookIdentificador } });
+    if (!webhook) throw new Error(`Webhook "${webhookIdentificador}" não encontrado.`);
+
+    const ofertasAfetadas = await this.prisma.offer.findMany({
+      where: { webhookId: webhook.id, status: "SEM_WHATSAPP", whatsappLoteId: { not: null } },
+      select: { id: true, telefoneAtualizado: true, telefoneOriginal: true, whatsappLoteId: true },
+    });
+
+    const loteIds = [...new Set(ofertasAfetadas.map((o) => o.whatsappLoteId as string))];
+    const lotesComErro: string[] = [];
+    let ofertasVerificadas = 0;
+    let ofertasCorrigidas = 0;
+    let ofertasContinuamSemWhatsapp = 0;
+
+    for (const loteId of loteIds) {
+      try {
+        const resposta = await fetch(
+          `${corbanBaseUrl.replace(/\/$/, "")}/api/v1/whatsapp/check-lote/${encodeURIComponent(loteId)}`,
+          { method: "GET", headers: { "X-API-Key": corbanApiKey } }
+        );
+        if (!resposta.ok) {
+          lotesComErro.push(`${loteId} (HTTP ${resposta.status} — provavelmente expirou, a CorbanTech só guarda 14 dias)`);
+          continue;
+        }
+        const body = (await resposta.json()) as { status: string; resultados?: { telefone: string; possui_whatsapp: boolean }[] };
+        if (body.status !== "done" || !body.resultados) {
+          lotesComErro.push(`${loteId} (status "${body.status}", sem resultados prontos)`);
+          continue;
+        }
+
+        const porTelefone = new Map(body.resultados.map((r) => [r.telefone, r.possui_whatsapp]));
+        const ofertasDesseLote = ofertasAfetadas.filter((o) => o.whatsappLoteId === loteId);
+
+        for (const oferta of ofertasDesseLote) {
+          ofertasVerificadas += 1;
+          const telefoneUsado = (oferta.telefoneAtualizado ?? oferta.telefoneOriginal) as string;
+          const possuiWhatsappCorrigido = porTelefone.get(this.normalizarComDDIParaReprocessar(telefoneUsado)) ?? false;
+
+          if (possuiWhatsappCorrigido) {
+            await this.prisma.offer.update({
+              where: { id: oferta.id },
+              data: { status: "AGUARDANDO_DISPARO", possuiWhatsapp: true, telefoneValidado: telefoneUsado },
+            });
+            ofertasCorrigidas += 1;
+          } else {
+            ofertasContinuamSemWhatsapp += 1;
+          }
+        }
+      } catch (error) {
+        lotesComErro.push(`${loteId} (erro: ${error instanceof Error ? error.message : String(error)})`);
+      }
+    }
+
+    return {
+      lotesEncontrados: loteIds.length,
+      lotesComErro,
+      ofertasVerificadas,
+      ofertasCorrigidas,
+      ofertasContinuamSemWhatsapp,
+    };
+  }
+
+  // Diagnóstico SÓ LEITURA (03/09) — responde "até ontem batia certo, então
+  // esse bug do DDI é novo ou só ficou visível agora?". Mostra, por
+  // webhook (parceiro), a distribuição do TAMANHO do telefone usado nas
+  // ofertas que passaram pelo caminho de LOTE — se os parceiros antigos
+  // sempre mandaram telefone JÁ com DDI (13 dígitos) e só esse novo (o de
+  // leilão) manda sem (11 dígitos), isso explica por que só agora o bug
+  // virou um problema visível: por coincidência de formato, a comparação
+  // batia certo antes, não porque a lógica estivesse certa.
+  async diagnosticoTamanhoTelefonePorWebhook() {
+    const rows = await this.prisma.$queryRaw<{ webhookId: string; origem: string; tamanho: number; total: bigint }[]>`
+      SELECT o.webhook_id AS "webhookId", w.origem, LENGTH(REGEXP_REPLACE(COALESCE(o.telefone_atualizado, o.telefone_original), '\D', '', 'g')) AS tamanho, count(*) AS total
+      FROM offers o
+      JOIN webhooks w ON w.id = o.webhook_id
+      WHERE o.whatsapp_lote_id IS NOT NULL
+      GROUP BY o.webhook_id, w.origem, tamanho
+      ORDER BY w.origem, tamanho
+    `;
+    return rows.map((r) => ({ webhookId: r.webhookId, origem: r.origem, tamanho: r.tamanho, total: Number(r.total) }));
+  }
+
   async diagnosticoLemitVsWhatsapp(desde: Date) {
     const [
       lemitTotal,
@@ -746,6 +861,7 @@ export class AdminRepository {
     dados: {
       apiKey?: string;
       baseUrl?: string;
+      urlConsulta?: string;
       intervaloSegundos?: number;
       limiteRequisicoesPorCiclo?: number;
       loteMinimo?: number;
@@ -757,6 +873,7 @@ export class AdminRepository {
     const valorAtual = (atual?.valor ?? {}) as {
       apiKey?: string;
       baseUrl?: string;
+      urlConsulta?: string;
       intervaloSegundos?: number;
       limiteRequisicoesPorCiclo?: number;
       loteMinimo?: number;
@@ -767,6 +884,15 @@ export class AdminRepository {
       dados.apiKey !== undefined && dados.apiKey.trim() !== "" ? dados.apiKey.trim() : valorAtual.apiKey ?? null;
     const baseUrl =
       dados.baseUrl !== undefined ? (dados.baseUrl.trim() === "" ? null : dados.baseUrl.trim()) : valorAtual.baseUrl ?? null;
+    // Editável no painel (03/09) — igual à baseUrl, não é segredo, então
+    // "em branco = mantém a atual" também vale aqui (não precisa reescrever
+    // toda vez que salva outra coisa no mesmo formulário).
+    const urlConsulta =
+      dados.urlConsulta !== undefined
+        ? dados.urlConsulta.trim() === ""
+          ? null
+          : dados.urlConsulta.trim()
+        : valorAtual.urlConsulta ?? null;
     // Só troca o intervalo se vier um número válido e positivo — mesma lógica
     // "em branco = mantém o que já estava" das outras credenciais.
     const intervaloSegundos =
@@ -802,6 +928,7 @@ export class AdminRepository {
     const novoValor = {
       apiKey,
       baseUrl,
+      urlConsulta,
       intervaloSegundos,
       limiteRequisicoesPorCiclo,
       loteMinimo,
