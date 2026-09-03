@@ -101,6 +101,7 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
           integracao?: string;
           apiKey?: string;
           baseUrl?: string;
+          urlConsulta?: string;
           intervaloSegundos?: number;
           limiteRequisicoesPorCiclo?: number;
           loteMinimo?: number;
@@ -121,6 +122,7 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         await adminRepo.salvarCredenciaisIntegracao(chave, {
           apiKey: body.apiKey,
           baseUrl: body.baseUrl,
+          urlConsulta: body.urlConsulta,
           intervaloSegundos: body.intervaloSegundos,
           limiteRequisicoesPorCiclo: body.limiteRequisicoesPorCiclo,
           loteMinimo: body.loteMinimo,
@@ -427,6 +429,26 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       // Versão sem filtro de data (todo o histórico) — só pra comparação,
       // caso precise ver o total acumulado desde sempre.
       instance.get("/offers/diagnostico-lemit-vs-whatsapp-tudo", async () => adminRepo.diagnosticoLemitVsWhatsappTudo());
+
+      // Diagnóstico SÓ LEITURA (03/09): distribuição do tamanho do telefone
+      // usado, por parceiro (webhook) — responde "esse bug do DDI afetava
+      // outros parceiros também, ou só o novo (leilão)?".
+      instance.get("/offers/diagnostico-tamanho-telefone-por-webhook", async () => adminRepo.diagnosticoTamanhoTelefonePorWebhook());
+
+      // Reprocessa (03/09) as ofertas que ficaram SEM_WHATSAPP incorretamente
+      // por causa do bug do DDI na comparação do lote — busca de novo (SÓ
+      // LEITURA na CorbanTech, sem gastar crédito) o resultado do MESMO
+      // lote já pago, e corrige quem realmente tinha WhatsApp. GET (não
+      // POST) de propósito, pra dar pra disparar colando a URL direto no
+      // navegador — é uma ação pontual de recuperação, não algo recorrente.
+      // ?webhook=identificador-do-webhook (obrigatório).
+      instance.get<{ Querystring: { webhook?: string } }>("/offers/reprocessar-lotes-ddi", async (request, reply) => {
+        if (!request.query.webhook) {
+          reply.code(400);
+          return { error: "webhook_obrigatorio", mensagem: "Informe ?webhook=identificador-do-webhook." };
+        }
+        return adminRepo.reprocessarLotesDDI(request.query.webhook);
+      });
 
       instance.get<{ Querystring: { status?: string; cpf?: string; limit?: string; offset?: string } }>(
         "/offers",
