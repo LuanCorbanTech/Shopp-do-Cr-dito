@@ -468,6 +468,12 @@ model DisparoIndividualTentativa {
   httpStatus  Int?     @map("http_status")
   timeout     Boolean  @default(false)
   erro        String?
+  // Payload EXATO mandado pro endpoint nessa tentativa (03/09, pedido pra
+  // poder conferir na tela — não é o mesmo dado noutro lugar, formato
+  // muda conforme o modelo: hyperflow manda o lead completo, ararahq só
+  // {phone, name}). Não guarda os headers (a chave da Ararahq, por
+  // exemplo, não deve ficar salva em texto puro aqui).
+  payloadEnviado Json?  @map("payload_enviado")
 
   createdAt   DateTime @default(now()) @map("created_at")
 
