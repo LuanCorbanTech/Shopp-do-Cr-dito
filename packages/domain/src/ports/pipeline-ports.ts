@@ -342,5 +342,7 @@ export interface DispatchPollPort {
    * é o valor cru recebido do parceiro, sem nenhuma normalização
    * garantida). Devolve null se não achou nenhuma.
    */
-  buscarOfertaMaisRecentePorTelefone(telefoneNormalizado: string): Promise<OfferSnapshot | null>;
+  buscarOfertaMaisRecentePorTelefone(
+    telefoneNormalizado: string
+  ): Promise<(OfferSnapshot & { origemWebhook: string | null }) | null>;
 }
