@@ -106,6 +106,21 @@ export interface PhoneProcessingPort {
    * de novo nunca "acha" um CPF que não existe na base da Lemit).
    */
   markPhoneCpfInvalido(offerId: string, respostaBruta?: unknown): Promise<void>;
+
+  /**
+   * Segunda chance (02/09, pedido explícito) — ofertas que ficaram
+   * SEM_WHATSAPP usando o telefone original (cenário: Lemit estava
+   * desativada, ou o lead não tinha CPF na hora) e AINDA não tiveram uma
+   * consulta de verdade à Lemit (telefoneAtualizado nulo). Reserva
+   * SEM_WHATSAPP -> PROCESSANDO_TELEFONE pra tentar de novo, agora
+   * consultando a Lemit de verdade (ignorando o interruptor "desativado"
+   * pra esse caso específico — é uma segunda chance direcionada, não uma
+   * volta ao "consultar todo mundo"). Só telefoneAtualizado nulo entra
+   * aqui — se a Lemit já foi consultada uma vez pra esse CPF e mesmo assim
+   * não achou WhatsApp, não adianta consultar de novo esperando resultado
+   * diferente.
+   */
+  claimOffersSemWhatsappParaRetentarLemit(limit: number): Promise<OfferSnapshot[]>;
 }
 
 // ---------------------------------------------------------------------------
