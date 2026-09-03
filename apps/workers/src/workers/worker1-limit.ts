@@ -62,13 +62,31 @@ export async function runLimitWorkerOnce(params: RunLimitWorkerOnceParams): Prom
   const offersSegundaChance = await phonePort.claimOffersSemWhatsappParaRetentarLemit(batchSize);
 
   async function processarOferta(offer: OfferSnapshot, forcarConsultaLemit: boolean): Promise<void> {
-    if (!forcarConsultaLemit && !limitEnabled) {
+    // Mesmo raciocínio da "segunda chance" (ver claimOffersSemWhatsappParaRetentarLemit
+    // acima) — mas aqui pra quem NUNCA teve telefone nenhum desde o começo
+    // (nem veio na captação). Com a Lemit desativada, o normal é pular a
+    // consulta pra economizar — MAS só faz sentido pular quando já existe
+    // um telefone de fallback (o original). Sem telefone nenhum, pular
+    // significa a oferta ser cancelada direto no Worker 2 por falta de
+    // telefone, sem nunca ter tido chance nenhuma — então, pra esse caso
+    // específico, consulta a Lemit de verdade mesmo com o interruptor
+    // desativado (04/09, pedido explícito, payload real confirmado sem
+    // nenhum campo de telefone: nem "telefone", nem "cadastro.celulares",
+    // nem "whatsapps").
+    const semNenhumTelefone = !offer.telefoneOriginal;
+    if (!forcarConsultaLemit && !limitEnabled && !semNenhumTelefone) {
       await phonePort.markPhoneSkippedLimitDisabled(offer.id);
       logger.info(
         { offerId: offer.id, telefone: maskPhone(offer.telefoneOriginal) },
         "Consulta Lemit ignorada: integração desativada no painel. Telefone original mantido."
       );
       return;
+    }
+    if (!forcarConsultaLemit && !limitEnabled && semNenhumTelefone) {
+      logger.info(
+        { offerId: offer.id },
+        "Consulta Lemit forçada mesmo desativada: lead sem telefone nenhum na captação — sem isso, seria cancelado sem nunca ter tido chance."
+      );
     }
 
     if (!offer.cpf) {

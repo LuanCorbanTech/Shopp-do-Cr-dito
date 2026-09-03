@@ -340,3 +340,58 @@ describe("runLimitWorkerOnce — segunda chance pra quem ficou SEM_WHATSAPP com 
     expect(total).toBe(2);
   });
 });
+
+describe("runLimitWorkerOnce — lead SEM telefone nenhum na captação, mesmo com a Lemit desativada (04/09)", () => {
+  it("BUG REAL: consulta a Lemit DE VERDADE (mesmo desativada) quando a oferta não tem telefoneOriginal nenhum — payload real confirmado (Fábio, sem cadastro/telefones/whatsapps)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", false); // desativada
+    const offer = repo.addOffer({ telefoneOriginal: null, cpf: "07851703751" });
+
+    let chamouLemit = false;
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: {
+        lookupPhone: async () => {
+          chamouLemit = true;
+          return { telefoneAtualizado: "5511999999999", possuiWhatsappSegundoLemit: true, dadosPessoa: null, respostaBruta: null };
+        },
+      },
+    });
+
+    expect(chamouLemit).toBe(true);
+    expect(repo.offers.get(offer.id)?.status).toBe("TELEFONE_ATUALIZADO");
+    expect(repo.offers.get(offer.id)?.telefoneAtualizado).toBe("5511999999999");
+  });
+
+  it("continua PULANDO a Lemit normalmente (comportamento de sempre) quando a oferta TEM telefone original, mesmo desativada", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", false);
+    repo.addOffer({ telefoneOriginal: "62999999999", cpf: "07851703751" });
+
+    let chamouLemit = false;
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: { lookupPhone: async () => { chamouLemit = true; return { telefoneAtualizado: null, possuiWhatsappSegundoLemit: null, dadosPessoa: null, respostaBruta: null }; } },
+    });
+
+    expect(chamouLemit).toBe(false); // continua economizando quando já tem telefone de fallback
+  });
+
+  it("se a oferta sem telefone TAMBÉM não tiver CPF, cai no caminho normal de 'sem documento' (não força Lemit à toa, já que não tem como consultar)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", false);
+    const offer = repo.addOffer({ telefoneOriginal: null, cpf: null });
+
+    let chamouLemit = false;
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: { lookupPhone: async () => { chamouLemit = true; return { telefoneAtualizado: null, possuiWhatsappSegundoLemit: null, dadosPessoa: null, respostaBruta: null }; } },
+    });
+
+    expect(chamouLemit).toBe(false);
+    expect(repo.offers.get(offer.id)?.status).toBe("TELEFONE_ATUALIZADO"); // segue via "sem documento", não trava
+  });
+});
