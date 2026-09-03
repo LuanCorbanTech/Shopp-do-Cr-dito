@@ -34,6 +34,9 @@ export class FakeDispatchPollPort implements DispatchPollPort {
   ultimoLimitPedido: number | null = null;
   // chave: id ou externalId usado na chamada -> a oferta "existente" nesse fake
   ofertasPorChave: Map<string, OfferSnapshot> = new Map();
+  // Origem (nome do webhook/parceiro) por id de oferta — pros testes que
+  // precisam de um valor específico; sem entrada aqui, usa um padrão.
+  origemPorOfertaId: Map<string, string> = new Map();
 
   async claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]> {
     this.ultimoLimitPedido = limit;
@@ -62,8 +65,14 @@ export class FakeDispatchPollPort implements DispatchPollPort {
   // real da implementação Prisma, testada à parte contra Postgres real — aqui
   // só precisa achar QUALQUER correspondência, pra testar o comportamento da
   // rota (auth, formato da resposta, 404 quando não acha).
-  async buscarOfertaMaisRecentePorTelefone(telefoneNormalizado: string): Promise<OfferSnapshot | null> {
+  async buscarOfertaMaisRecentePorTelefone(
+    telefoneNormalizado: string
+  ): Promise<(OfferSnapshot & { origemWebhook: string | null }) | null> {
     const todas = [...this.ofertasDisponiveis, ...this.ofertasPorChave.values()];
-    return todas.find((o) => o.telefoneValidado === telefoneNormalizado || o.telefoneAtualizado === telefoneNormalizado) ?? null;
+    const encontrada = todas.find(
+      (o) => o.telefoneValidado === telefoneNormalizado || o.telefoneAtualizado === telefoneNormalizado
+    );
+    if (!encontrada) return null;
+    return { ...encontrada, origemWebhook: this.origemPorOfertaId.get(encontrada.id) ?? "Origem Teste" };
   }
 }
