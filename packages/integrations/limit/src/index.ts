@@ -7,10 +7,15 @@
 //
 // Contrato real (exemplo de requisição/resposta fornecido no chat — ainda sem
 // documentação formal em PDF, diferente da CorbanTech):
-//   POST https://api.lemit.com.br/api/v1/consulta/pessoa
+//   POST https://api.lemit.com.br/api/v1/consulta/pessoa/simples
 //   Headers: { Authorization: "Bearer <token>" }
 //   Body:    { documento: "<CPF, só dígitos>" }
 //   Resposta 200: { data_consulta, pessoa: { cpf, nome, celulares: [...], ... } }
+//
+// URL trocada em 03/09 (endpoint "/simples" novo) — ainda não confirmado se o
+// FORMATO da resposta mudou (por segurança, aceita ambos os formatos vistos
+// antes — ver extractPessoa abaixo — mas vale conferir um exemplo real desse
+// endpoint específico assim que possível).
 //
 // A escolha de QUAL celular usar como telefoneAtualizado é lógica pura e fica em
 // @plataforma-ofertas/domain (escolherMelhorTelefoneLemit) — testável e reaproveitável
@@ -37,6 +42,14 @@ export interface LimitLookupResult {
 export interface LimitServiceConfig {
   /** Raiz do serviço. Padrão: a própria Lemit — só precisa mudar em teste/mocks. */
   baseUrl?: string;
+  /**
+   * URL completa do endpoint de consulta (03/09, editável no painel Integrações,
+   * pedido explícito depois do endpoint ter mudado de "/pessoa" pra
+   * "/pessoa/simples" sem aviso prévio) — se vier preenchida, usa ela direto,
+   * IGNORANDO baseUrl + o caminho padrão abaixo. Só cai no padrão
+   * (baseUrl + LEMIT_CAMINHO_PADRAO) se estiver vazia.
+   */
+  urlConsulta?: string;
   /** Header Authorization: Bearer <apiKey> — obrigatório, a Lemit sempre exige. */
   apiKey: string;
   timeoutMs?: number;
@@ -58,17 +71,20 @@ export class LimitServiceError extends Error {
 }
 
 const LEMIT_DEFAULT_BASE_URL = "https://api.lemit.com.br";
+const LEMIT_CAMINHO_PADRAO = "/api/v1/consulta/pessoa/simples";
 
 export function createLimitService(config: LimitServiceConfig): LimitService {
   const timeoutMs = config.timeoutMs ?? 10_000;
-  const baseUrl = (config.baseUrl || LEMIT_DEFAULT_BASE_URL).replace(/\/$/, "");
+  const urlConsulta =
+    config.urlConsulta?.trim() ||
+    `${(config.baseUrl || LEMIT_DEFAULT_BASE_URL).replace(/\/$/, "")}${LEMIT_CAMINHO_PADRAO}`;
 
   return {
     async lookupPhone({ documento }: LimitLookupParams): Promise<LimitLookupResult> {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await fetch(`${baseUrl}/api/v1/consulta/pessoa`, {
+        const response = await fetch(urlConsulta, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
