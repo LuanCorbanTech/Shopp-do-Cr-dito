@@ -16,6 +16,7 @@ interface CredencialStatus {
   apiKeyConfigurada: boolean;
   apiKeyMascarada: string | null;
   baseUrl: string | null;
+  urlConsulta: string | null;
   intervaloSegundos: number | null;
   limiteRequisicoesPorCiclo: number | null;
   loteMinimo: number | null;
@@ -436,6 +437,27 @@ function CredencialForm({
             style={{ width: "100%" }}
           />
         </div>
+
+        {integracao === "lemit" && (
+          <div style={{ marginBottom: 10 }}>
+            <label htmlFor="lemit-urlConsulta" style={{ display: "block", marginBottom: 4 }}>
+              URL completa da consulta (opcional — sobrepõe a "URL base" acima)
+            </label>
+            <input
+              id="lemit-urlConsulta"
+              name="urlConsulta"
+              type="text"
+              defaultValue={status.urlConsulta ?? ""}
+              placeholder="https://api.lemit.com.br/api/v1/consulta/pessoa/simples"
+              style={{ width: "100%" }}
+            />
+            <p className="field-help" style={{ marginTop: 4 }}>
+              Preenchida, usa exatamente essa URL (ignora a &quot;URL base&quot; acima) — útil se a Lemit trocar o
+              caminho do endpoint de novo no futuro, sem precisar de um novo deploy. Em branco, usa o padrão
+              embutido no código.
+            </p>
+          </div>
+        )}
         <div style={{ marginBottom: 10 }}>
           <label htmlFor={`${integracao}-intervaloSegundos`} style={{ display: "block", marginBottom: 4 }}>
             {labelIntervalo}

@@ -19,6 +19,7 @@ export async function setLimitEnabled(ativo: boolean): Promise<void> {
 export async function salvarCredenciais(integracao: "lemit" | "whatsapp", formData: FormData): Promise<void> {
   const apiKey = String(formData.get("apiKey") ?? "");
   const baseUrl = String(formData.get("baseUrl") ?? "");
+  const urlConsulta = String(formData.get("urlConsulta") ?? "");
   const intervaloRaw = String(formData.get("intervaloSegundos") ?? "").trim();
   const intervaloSegundos = intervaloRaw !== "" ? Number(intervaloRaw) : undefined;
   const limiteRaw = String(formData.get("limiteRequisicoesPorCiclo") ?? "").trim();
@@ -35,6 +36,7 @@ export async function salvarCredenciais(integracao: "lemit" | "whatsapp", formDa
       integracao,
       apiKey,
       baseUrl,
+      urlConsulta,
       intervaloSegundos,
       limiteRequisicoesPorCiclo,
       loteMinimo,
