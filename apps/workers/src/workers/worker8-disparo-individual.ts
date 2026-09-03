@@ -117,14 +117,26 @@ export function montarDisparoIndividualBody(o: OfferSnapshot): DisparoIndividual
   };
 }
 
+// BUG REAL corrigido em 04/09 — só adicionava o "+" na frente, mas nunca
+// verificava se faltava o DDI (55). telefoneValidado normalmente vem SEM
+// DDI (ex.: "45999701663", DDD 45 + número — o mesmo formato usado sempre
+// pra Hyperflow), e mandar isso direto com "+" na frente vira
+// "+45999701663" — que é interpretado como um número da DINAMARCA (+45 é
+// o código do país deles), não Brasil com DDD 45! Detectado porque o
+// parceiro reportou números chegando errados do lado da Ararahq.
+function formatarTelefoneInternacionalAraraHQ(telefone: string): string {
+  if (telefone.startsWith("+")) return telefone;
+  const digitos = telefone.replace(/\D/g, "");
+  const comDDI = digitos.length >= 12 && digitos.startsWith("55") ? digitos : `55${digitos}`;
+  return `+${comDDI}`;
+}
+
 export function montarDisparoIndividualBodyAraraHQ(o: OfferSnapshot): DisparoIndividualBodyAraraHQ {
   const telefone = o.telefoneValidado;
   return {
-    // A Ararahq espera formato internacional com "+" na frente
-    // (ex.: "+5583991768778") — diferente da Hyperflow, que não usa "+".
-    // telefoneValidado já vem sem o "+" (mesmo formato usado hoje pra
-    // Hyperflow), então só adiciona aqui, sem mexer no formato salvo.
-    phone: telefone ? (telefone.startsWith("+") ? telefone : `+${telefone}`) : null,
+    // A Ararahq espera formato internacional com "+" na frente e o DDI do
+    // Brasil incluso (ex.: "+5545999701663").
+    phone: telefone ? formatarTelefoneInternacionalAraraHQ(telefone) : null,
     name: o.nome,
   };
 }

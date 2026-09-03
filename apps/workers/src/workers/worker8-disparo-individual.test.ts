@@ -351,9 +351,19 @@ describe("runDisparoIndividualWorkerOnce", () => {
 });
 
 describe("montarDisparoIndividualBodyAraraHQ", () => {
-  it("monta o corpo simples da Ararahq — só phone (com +) e name", () => {
-    const body = montarDisparoIndividualBodyAraraHQ(ofertaFake({ telefoneValidado: "5583991768778", nome: "Micael" }));
+  it("BUG REAL corrigido em 04/09: adiciona o DDI (55) quando telefoneValidado não tem — esse é o formato NORMAL (telefoneValidado normalmente vem sem DDI, mesmo formato usado pra Hyperflow). Antes da correção, isso virava um número da Dinamarca (+45...) em vez do Brasil.", () => {
+    const body = montarDisparoIndividualBodyAraraHQ(ofertaFake({ telefoneValidado: "45999701663", nome: "Cliente Real" }));
+    expect(body).toEqual({ phone: "+5545999701663", name: "Cliente Real" });
+  });
+
+  it("monta o corpo simples da Ararahq — só phone (com + e DDI) e name", () => {
+    const body = montarDisparoIndividualBodyAraraHQ(ofertaFake({ telefoneValidado: "83991768778", nome: "Micael" }));
     expect(body).toEqual({ phone: "+5583991768778", name: "Micael" });
+  });
+
+  it("não duplica o 55 se telefoneValidado já vier com o DDI incluso", () => {
+    const body = montarDisparoIndividualBodyAraraHQ(ofertaFake({ telefoneValidado: "5583991768778" }));
+    expect(body.phone).toBe("+5583991768778");
   });
 
   it("não duplica o + se telefoneValidado já vier com ele por algum motivo", () => {
