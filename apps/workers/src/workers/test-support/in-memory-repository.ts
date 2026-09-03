@@ -155,6 +155,18 @@ export class InMemoryPipelineRepository
     return this.claimByStatus(["RECEBIDO"], "PROCESSANDO_TELEFONE", limit);
   }
 
+  async claimOffersSemWhatsappParaRetentarLemit(limit: number): Promise<OfferSnapshot[]> {
+    const candidates = [...this.offers.values()]
+      .filter((o) => o.status === "SEM_WHATSAPP" && o.telefoneAtualizado === null)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, limit);
+    for (const o of candidates) {
+      o.status = "PROCESSANDO_TELEFONE";
+      o.reservedAt = new Date();
+    }
+    return candidates.map((o) => this.snapshot(o));
+  }
+
   async markPhoneSkippedLimitDisabled(offerId: string): Promise<void> {
     const offer = this.require(offerId);
     offer.status = "TELEFONE_ATUALIZADO";
