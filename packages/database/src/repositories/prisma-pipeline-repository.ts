@@ -748,6 +748,7 @@ export class PrismaPipelineRepository
     httpStatus: number | null;
     timeout: boolean;
     erro: string | null;
+    payloadEnviado: unknown;
   }): Promise<void> {
     await this.prisma.disparoIndividualTentativa.create({
       data: {
@@ -759,6 +760,7 @@ export class PrismaPipelineRepository
         httpStatus: dados.httpStatus,
         timeout: dados.timeout,
         erro: dados.erro,
+        payloadEnviado: dados.payloadEnviado as Prisma.InputJsonValue,
       },
     });
   }
