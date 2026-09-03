@@ -40,6 +40,7 @@ interface OfferTimeline {
     timeout: boolean;
     erro: string | null;
     createdAt: string;
+    payloadEnviado: unknown;
   }>;
 }
 
@@ -197,6 +198,26 @@ export default async function OfertaDetailPage({ params }: { params: { id: strin
             {t.timeout && <> · não respondeu a tempo (timeout)</>}
             {t.erro && (
               <div style={{ color: "var(--status-critical)", fontSize: 13, marginTop: 4 }}>Motivo: {t.erro}</div>
+            )}
+            {t.payloadEnviado != null && (
+              <details style={{ marginTop: 6 }}>
+                <summary style={{ cursor: "pointer", fontSize: 13, color: "var(--text-secondary)" }}>
+                  Ver payload enviado
+                </summary>
+                <pre
+                  style={{
+                    background: "var(--surface-2, #f5f5f5)",
+                    padding: 12,
+                    borderRadius: 6,
+                    overflowX: "auto",
+                    fontSize: 12,
+                    marginTop: 6,
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  {JSON.stringify(t.payloadEnviado, null, 2)}
+                </pre>
+              </details>
             )}
           </li>
         ))}
