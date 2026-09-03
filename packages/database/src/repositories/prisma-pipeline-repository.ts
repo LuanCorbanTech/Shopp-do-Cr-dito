@@ -143,6 +143,26 @@ export class PrismaPipelineRepository
     return this.claimByStatus(["RECEBIDO"], "PROCESSANDO_TELEFONE", limit);
   }
 
+  // Segunda chance (02/09) — mesmo padrão atômico de claimByStatus
+  // (SKIP LOCKED), mas com um filtro extra que o método genérico não
+  // suporta (telefone_atualizado IS NULL), por isso precisa de SQL próprio
+  // em vez de reusar claimByStatus.
+  async claimOffersSemWhatsappParaRetentarLemit(limit: number): Promise<OfferSnapshot[]> {
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      UPDATE offers
+      SET status = 'PROCESSANDO_TELEFONE'::"OfferStatus", reserved_at = now(), updated_at = now()
+      WHERE id IN (
+        SELECT id FROM offers
+        WHERE status = 'SEM_WHATSAPP'::"OfferStatus" AND telefone_atualizado IS NULL
+        ORDER BY created_at
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING ${OFFER_COLUMNS_SQL}
+    `;
+    return rows.map(mapRow);
+  }
+
   async markPhoneSkippedLimitDisabled(offerId: string): Promise<void> {
     await this.prisma.$transaction([
       this.prisma.offer.update({
