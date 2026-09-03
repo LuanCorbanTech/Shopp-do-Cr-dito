@@ -7,6 +7,7 @@ import {
   DEFAULT_MAX_TENTATIVAS,
   type PhoneProcessingPort,
   type IntegrationConfigPort,
+  type OfferSnapshot,
 } from "@plataforma-ofertas/domain";
 
 // Worker 1 — Processamento inicial (itens 5-11 do escopo original).
@@ -16,6 +17,19 @@ import {
 // sem CPF não há como consultar, então esse caso também usa o telefone original
 // direto, sem contar como falha/retry. Falhas de fato (erro de rede, API fora do
 // ar) entram em retry com backoff, nunca infinito (item 28).
+//
+// Segunda chance (02/09, pedido explícito) — além da fila normal (RECEBIDO),
+// esse worker também processa uma SEGUNDA fila: ofertas que ficaram
+// SEM_WHATSAPP usando o telefone original (porque a Lemit estava desativada,
+// ou o lead não tinha CPF na hora) e que NUNCA tiveram uma consulta de
+// verdade à Lemit ainda (telefoneAtualizado nulo). Pra essas, o worker
+// consulta a Lemit DE VERDADE mesmo que o interruptor geral esteja
+// desativado — é uma segunda chance direcionada só pra quem falhou, não uma
+// volta a consultar todo mundo. Se a Lemit devolver um telefone novo, a
+// oferta volta pra TELEFONE_ATUALIZADO e o Worker 2 valida esse número novo
+// no próximo ciclo. Se a Lemit também não achar WhatsApp pra esse número,
+// telefoneAtualizado já não fica mais nulo (foi consultado), então essa
+// oferta não entra de novo nessa segunda fila — sem loop infinito.
 
 export interface LimitLookup {
   lookupPhone(params: { documento: string }): Promise<{
@@ -44,16 +58,17 @@ export async function runLimitWorkerOnce(params: RunLimitWorkerOnceParams): Prom
     ? (config!.valor.backoffSecondsSchedule as number[])
     : DEFAULT_BACKOFF_SCHEDULE_SECONDS;
 
-  const offers = await phonePort.claimOffersReceived(batchSize);
+  const offersRecebidas = await phonePort.claimOffersReceived(batchSize);
+  const offersSegundaChance = await phonePort.claimOffersSemWhatsappParaRetentarLemit(batchSize);
 
-  for (const offer of offers) {
-    if (!limitEnabled) {
+  async function processarOferta(offer: OfferSnapshot, forcarConsultaLemit: boolean): Promise<void> {
+    if (!forcarConsultaLemit && !limitEnabled) {
       await phonePort.markPhoneSkippedLimitDisabled(offer.id);
       logger.info(
         { offerId: offer.id, telefone: maskPhone(offer.telefoneOriginal) },
         "Consulta Lemit ignorada: integração desativada no painel. Telefone original mantido."
       );
-      continue;
+      return;
     }
 
     if (!offer.cpf) {
@@ -62,7 +77,7 @@ export async function runLimitWorkerOnce(params: RunLimitWorkerOnceParams): Prom
         { offerId: offer.id, telefone: maskPhone(offer.telefoneOriginal) },
         "Consulta Lemit ignorada: lead sem CPF. Telefone original mantido."
       );
-      continue;
+      return;
     }
 
     const tentativa = offer.tentativasTelefone + 1;
@@ -76,6 +91,12 @@ export async function runLimitWorkerOnce(params: RunLimitWorkerOnceParams): Prom
         possuiWhatsappSegundoLemit: result.possuiWhatsappSegundoLemit,
         tentativa,
       });
+      if (forcarConsultaLemit) {
+        logger.info(
+          { offerId: offer.id },
+          "Segunda chance: Lemit consultada de verdade pra lead que tinha ficado sem WhatsApp — telefone atualizado, vai validar de novo"
+        );
+      }
     } catch (error) {
       // Duck-typing de propósito (não importa LimitServiceError direto aqui,
       // mantém esse worker desacoplado do pacote de integração concreto,
@@ -96,7 +117,7 @@ export async function runLimitWorkerOnce(params: RunLimitWorkerOnceParams): Prom
           { offerId: offer.id, telefone: maskPhone(offer.telefoneOriginal) },
           "Lemit não encontrou registro pra esse CPF (404) — marcado como CPF inválido, sem retry."
         );
-        continue;
+        return;
       }
 
       const cancelar = hasExceededMaxAttempts(tentativa, maxTentativas);
@@ -114,5 +135,12 @@ export async function runLimitWorkerOnce(params: RunLimitWorkerOnceParams): Prom
     }
   }
 
-  return offers.length;
+  for (const offer of offersRecebidas) {
+    await processarOferta(offer, false);
+  }
+  for (const offer of offersSegundaChance) {
+    await processarOferta(offer, true);
+  }
+
+  return offersRecebidas.length + offersSegundaChance.length;
 }

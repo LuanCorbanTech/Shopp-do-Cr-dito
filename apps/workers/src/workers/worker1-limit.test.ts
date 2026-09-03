@@ -229,3 +229,114 @@ describe("runLimitWorkerOnce", () => {
     expect(registro?.respostaBruta).toBeUndefined();
   });
 });
+
+describe("runLimitWorkerOnce — segunda chance pra quem ficou SEM_WHATSAPP com o telefone original (02/09)", () => {
+  it("consulta a Lemit DE VERDADE pra uma oferta SEM_WHATSAPP, mesmo com a Lemit desativada no painel", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", false); // desativada no geral
+    const offer = repo.addOffer({
+      telefoneOriginal: "62999999999",
+      cpf: "85868388372",
+      status: "SEM_WHATSAPP",
+      telefoneAtualizado: null,
+    });
+
+    let chamouComDocumento: string | null = null;
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: {
+        lookupPhone: async ({ documento }) => {
+          chamouComDocumento = documento;
+          return { telefoneAtualizado: "5562988888888", possuiWhatsappSegundoLemit: true, dadosPessoa: null, respostaBruta: null };
+        },
+      },
+    });
+
+    // Mesmo desativada no geral, ESSA oferta específica (segunda chance) foi consultada de verdade.
+    expect(chamouComDocumento).toBe("85868388372");
+    expect(repo.offers.get(offer.id)?.status).toBe("TELEFONE_ATUALIZADO");
+    expect(repo.offers.get(offer.id)?.telefoneAtualizado).toBe("5562988888888");
+  });
+
+  it("NÃO pega de novo uma oferta SEM_WHATSAPP que JÁ teve telefoneAtualizado preenchido (Lemit já foi consultada uma vez pra ela)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", false);
+    const offer = repo.addOffer({
+      telefoneOriginal: "62999999999",
+      cpf: "85868388372",
+      status: "SEM_WHATSAPP",
+      telefoneAtualizado: "5562988888888", // JÁ foi consultada antes
+    });
+
+    let chamouLemit = false;
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: { lookupPhone: async () => { chamouLemit = true; return { telefoneAtualizado: null, possuiWhatsappSegundoLemit: null, dadosPessoa: null, respostaBruta: null }; } },
+    });
+
+    expect(chamouLemit).toBe(false);
+    expect(repo.offers.get(offer.id)?.status).toBe("SEM_WHATSAPP"); // continua parada, sem loop
+  });
+
+  it("não mexe em ofertas RECEBIDO normais quando processa a fila de segunda chance — as duas filas são independentes", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", false);
+    const offerRecebida = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" }); // RECEBIDO normal
+    const offerSegundaChance = repo.addOffer({
+      telefoneOriginal: "62988888888", cpf: "11111111111", status: "SEM_WHATSAPP", telefoneAtualizado: null,
+    });
+
+    const chamadas: string[] = [];
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: {
+        lookupPhone: async ({ documento }) => {
+          chamadas.push(documento);
+          return { telefoneAtualizado: "5562977777777", possuiWhatsappSegundoLemit: true, dadosPessoa: null, respostaBruta: null };
+        },
+      },
+    });
+
+    // A RECEBIDA normal foi só "pulada" (Lemit desativada) -- não gerou consulta.
+    expect(repo.offers.get(offerRecebida.id)?.status).toBe("TELEFONE_ATUALIZADO");
+    expect(repo.offers.get(offerRecebida.id)?.telefoneAtualizado).toBeNull();
+    // A de segunda chance SIM gerou uma consulta de verdade.
+    expect(chamadas).toEqual(["11111111111"]);
+    expect(repo.offers.get(offerSegundaChance.id)?.telefoneAtualizado).toBe("5562977777777");
+  });
+
+  it("se a Lemit falhar na segunda chance, entra no mesmo fluxo de retry/erro normal (não trava, não perde a oferta)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", false);
+    const offer = repo.addOffer({
+      telefoneOriginal: "62999999999", cpf: "85868388372", status: "SEM_WHATSAPP", telefoneAtualizado: null,
+    });
+
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: { lookupPhone: async () => { throw new Error("Lemit fora do ar"); } },
+    });
+
+    const registro = repo.processingLog.find((p) => p.offerId === offer.id && p.etapa === "LIMIT" && p.resultado === "FALHA");
+    expect(registro).toBeTruthy();
+  });
+
+  it("processa as 2 filas no MESMO ciclo (recebidas + segunda chance), contando as duas no total devolvido", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", true);
+    repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+    repo.addOffer({ telefoneOriginal: "62988888888", cpf: "11111111111", status: "SEM_WHATSAPP", telefoneAtualizado: null });
+
+    const total = await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: { lookupPhone: async () => ({ telefoneAtualizado: "5562977777777", possuiWhatsappSegundoLemit: true, dadosPessoa: null, respostaBruta: null }) },
+    });
+
+    expect(total).toBe(2);
+  });
+});
