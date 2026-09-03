@@ -50,6 +50,7 @@ export interface DisparoIndividualPort {
     httpStatus: number | null;
     timeout: boolean;
     erro: string | null;
+    payloadEnviado: unknown;
   }): Promise<void>;
 }
 
@@ -208,7 +209,7 @@ async function enviarParaEndpoint(
       );
       await registrarTentativaComSeguranca(port, {
         offerId: lead.id, endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo,
-        sucesso: false, httpStatus: resposta.status, timeout: false, erro: null,
+        sucesso: false, httpStatus: resposta.status, timeout: false, erro: null, payloadEnviado: body,
       });
       return false;
     }
@@ -218,7 +219,7 @@ async function enviarParaEndpoint(
     );
     await registrarTentativaComSeguranca(port, {
       offerId: lead.id, endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo,
-      sucesso: true, httpStatus: resposta.status, timeout: false, erro: null,
+      sucesso: true, httpStatus: resposta.status, timeout: false, erro: null, payloadEnviado: body,
     });
     return true;
   } catch (error) {
@@ -231,7 +232,7 @@ async function enviarParaEndpoint(
     );
     await registrarTentativaComSeguranca(port, {
       offerId: lead.id, endpointId: endpoint.id, endpointUrl: endpoint.url, modelo: endpoint.modelo,
-      sucesso: false, httpStatus: null, timeout: foiTimeout, erro: error instanceof Error ? error.message : String(error),
+      sucesso: false, httpStatus: null, timeout: foiTimeout, erro: error instanceof Error ? error.message : String(error), payloadEnviado: body,
     });
     return false;
   } finally {

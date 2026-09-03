@@ -509,6 +509,7 @@ describe("runDisparoIndividualWorkerOnce — registro da tentativa (pra aparecer
         httpStatus: 200,
         timeout: false,
         erro: null,
+        payloadEnviado: expect.objectContaining({ id: "offer-xyz" }),
       },
     ]);
   });
@@ -534,8 +535,35 @@ describe("runDisparoIndividualWorkerOnce — registro da tentativa (pra aparecer
         httpStatus: 500,
         timeout: false,
         erro: null,
+        payloadEnviado: expect.objectContaining({ id: "offer-xyz" }),
       },
     ]);
+  });
+
+  it("BUG REAL corrigido em 03/09: guarda o payload EXATO enviado (igual ao que a tela mostra em 'Ver payload enviado') — testa os 2 modelos", async () => {
+    const registradas: Array<{ modelo: string; payloadEnviado: unknown }> = [];
+    await runDisparoIndividualWorkerOnce({
+      ativo: true,
+      endpoints: [
+        endpoint("e1", "https://hyperflow.com/fluxo1", true, "hyperflow"),
+        endpoint("e2", "https://api.ararahq.com/webhook", true, "ararahq"),
+      ],
+      ararahqApiKey: "ara_live_x",
+      port: {
+        claimOffersAguardandoDisparo: async () => [
+          ofertaFake({ id: "lead-hf", nome: "Cliente Hyperflow", telefoneValidado: "5562999999999" }),
+          ofertaFake({ id: "lead-ara", nome: "Cliente Ararahq", telefoneValidado: "5583991768778" }),
+        ],
+        registrarTentativaDisparoIndividual: async (dados) => { registradas.push(dados); },
+      },
+      fetchImpl: (async () => new Response(null, { status: 200 })) as typeof fetch,
+    });
+
+    const hf = registradas.find((r) => r.modelo === "hyperflow");
+    const ara = registradas.find((r) => r.modelo === "ararahq");
+    // O payload salvo é o MESMO objeto (mesmo formato) que de fato foi mandado.
+    expect(hf?.payloadEnviado).toMatchObject({ id: "lead-hf", nome: "Cliente Hyperflow", telefoneWhatsapp: "5562999999999" });
+    expect(ara?.payloadEnviado).toEqual({ phone: "+5583991768778", name: "Cliente Ararahq" });
   });
 
   it("registra uma tentativa de FALHA por TIMEOUT com timeout=true e a mensagem de erro", async () => {
