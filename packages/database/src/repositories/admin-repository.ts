@@ -107,13 +107,36 @@ export class AdminRepository {
   // já mandam esses dados no payload deles). Com a Lemit desativada, a
   // ÚNICA forma de consultar de verdade é a "segunda chance" (worker1,
   // 02/09) — pra ofertas que ficaram SEM_WHATSAPP com o telefone original.
-  // Esse diagnóstico separa: quantas ofertas têm esses campos Lemit
-  // preenchidos, quebrado por terem ou não possuiWhatsapp=true — se o
-  // número "sem WhatsApp mesmo depois da consulta Lemit" for muito alto,
-  // pode indicar que a segunda chance está dando gatilho até em quem já
-  // tinha WhatsApp de verdade (um bug na extração do telefone original,
-  // por exemplo), não só em quem realmente precisava.
-  async diagnosticoLemitVsWhatsapp() {
+  //
+  // IMPORTANTE: filtra pela data da CONSULTA em si (phone_validations.
+  // created_at), não pela data da oferta — sem isso, o número soma junto
+  // consultas bem antigas, de quando a Lemit podia estar ATIVADA (fluxo
+  // normal, nada a ver com a segunda chance), misturando os dois cenários
+  // e inflando o total sem revelar o efeito real da mudança nova.
+  async diagnosticoLemitVsWhatsapp(desde: Date) {
+    const [
+      lemitTotal,
+      lemitComWhatsapp,
+      lemitSemWhatsapp,
+      whatsappSemLemitNoPeriodo,
+    ] = await Promise.all([
+      this.prisma.phoneValidation.count({
+        where: { limitAtivoNoMomento: true, createdAt: { gte: desde } },
+      }),
+      this.prisma.phoneValidation.count({
+        where: { limitAtivoNoMomento: true, createdAt: { gte: desde }, offer: { possuiWhatsapp: true } },
+      }),
+      this.prisma.phoneValidation.count({
+        where: { limitAtivoNoMomento: true, createdAt: { gte: desde }, offer: { possuiWhatsapp: { not: true } } },
+      }),
+      this.prisma.offer.count({
+        where: { possuiWhatsapp: true, dataNascimento: null, telefoneLemit: null, createdAt: { gte: desde } },
+      }),
+    ]);
+    return { desde, lemitTotal, lemitComWhatsapp, lemitSemWhatsapp, whatsappSemLemitNoPeriodo };
+  }
+
+  async diagnosticoLemitVsWhatsappTudo() {
     const [
       lemitTotal,
       lemitComWhatsapp,
