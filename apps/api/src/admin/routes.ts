@@ -290,6 +290,38 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         return cancelada;
       });
 
+      // Ações do usuário na tela — só mudam o status pra um estado
+      // "transitório" (PENDENTE de novo, PAUSANDO, REATIVANDO); o worker9
+      // é quem confirma de verdade (liga/desliga o fornecedor) no próximo
+      // ciclo, dentro de ~30s.
+
+      instance.post<{ Params: { id: string } }>("/tarefas/:id/retentar", async (request, reply) => {
+        const tarefa = await adminRepo.retentarTarefa(request.params.id);
+        if (!tarefa) {
+          reply.code(409);
+          return { error: "nao_retentavel", mensagem: 'Só é possível tentar de novo tarefas que estão com status "Erro".' };
+        }
+        return tarefa;
+      });
+
+      instance.post<{ Params: { id: string } }>("/tarefas/:id/pausar", async (request, reply) => {
+        const tarefa = await adminRepo.solicitarPausa(request.params.id);
+        if (!tarefa) {
+          reply.code(409);
+          return { error: "nao_pausavel", mensagem: 'Só é possível pausar tarefas que estão "Recebendo" agora.' };
+        }
+        return tarefa;
+      });
+
+      instance.post<{ Params: { id: string } }>("/tarefas/:id/reativar", async (request, reply) => {
+        const tarefa = await adminRepo.solicitarReativacao(request.params.id);
+        if (!tarefa) {
+          reply.code(409);
+          return { error: "nao_reativavel", mensagem: 'Só é possível reativar tarefas que estão "Pausada".' };
+        }
+        return tarefa;
+      });
+
       instance.get("/integrations/odysseia", async () => adminRepo.getOdysseiaConfig());
 
       instance.post<{ Body: { apiKey?: string } }>("/integrations/odysseia", async (request) => {
@@ -380,6 +412,10 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         const total = porStatus.reduce((s: number, r: { total: number }) => s + r.total, 0);
         return { total, porStatus };
       });
+
+      // Diagnóstico SÓ LEITURA (03/09): responde "por que 'Lemit validado'
+      // está maior que 'WhatsApp validado', com a Lemit desativada?".
+      instance.get("/offers/diagnostico-lemit-vs-whatsapp", async () => adminRepo.diagnosticoLemitVsWhatsapp());
 
       instance.get<{ Querystring: { status?: string; cpf?: string; limit?: string; offset?: string } }>(
         "/offers",
