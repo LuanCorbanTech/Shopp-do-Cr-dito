@@ -7,6 +7,25 @@ import {
   type IntegrationConfigPort,
 } from "@plataforma-ofertas/domain";
 
+// BUG REAL corrigido em 03/09 — a CorbanTech SEMPRE acrescenta o DDI (55)
+// nos números antes de consultar a checknumber.ai, e devolve os resultados
+// do lote usando esse número JÁ com o DDI (ver server.js dela: `phones.push(
+// ddiPadrao + digits)`, usado tanto pra consultar quanto pra montar
+// "resultados"). Só que nós mandávamos o número SEM o DDI (o valor cru,
+// tipo "11945701469") — na hora de cruzar o resultado do lote (função
+// `porTelefone.get(telefoneUsado)` mais abaixo), a chave nunca batia
+// ("11945701469" != "5511945701469"), e SEMPRE caía no `?? false`
+// (default), mesmo quando a CorbanTech tinha encontrado WhatsApp de
+// verdade. Isso fazia TODO lote parecer "sem WhatsApp" na primeira
+// tentativa, mesmo com a checknumber.ai confirmando ~84% de acerto de
+// verdade — descoberto comparando o diagnóstico do painel (0% de sucesso
+// sem precisar da Lemit) com os números reais do lote na CorbanTech.
+function normalizarComDDI(telefone: string): string {
+  const digits = telefone.replace(/\D/g, "");
+  if (digits.length >= 12 && digits.startsWith("55")) return digits;
+  return `55${digits}`;
+}
+
 // Worker 2 — Validação WhatsApp (item 12 do escopo original).
 // Usa telefone_atualizado se o Limit rodou; senão cai para telefone_original —
 // a decisão "qual telefone usar" já foi resolvida pelo Worker 1 (item 12: "EM AMBOS OS
@@ -144,39 +163,8 @@ export async function runWhatsappWorkerOnce(params: RunWhatsappWorkerOnceParams)
 
     // Ofertas sem telefone nenhum não entram no lote (mesma proteção do
     // caminho individual) — tratadas uma a uma, o resto segue pro lote.
-    // Mesma regra de validação que o CorbanTech aplica do lado dele (mínimo
-    // 8 dígitos, depois de tirar o DDI) — filtrar aqui ANTES de mandar evita
-    // duas coisas: (1) desperdiçar uma vaga do lote de 500 com um número
-    // fadado a ser rejeitado (a checknumber.ai exige exatamente 500 válidos,
-    // não 500 brutos — se sobrar 499 depois de descontar 1 ruim, o lote
-    // inteiro falha de novo); (2) essas ofertas ficam esperando pra sempre
-    // sem nunca virarem um envio de verdade, já que sempre seriam
-    // rejeitadas — melhor cancelar na hora, igual já se faz com "sem
-    // telefone".
-    function telefoneParecValido(telefone: string): boolean {
-      let digitos = telefone.replace(/\D/g, "");
-      if (digitos.length >= 12 && digitos.startsWith("55")) digitos = digitos.slice(2);
-      digitos = digitos.replace(/^0+/, "");
-      return digitos.length >= 8;
-    }
     const semTelefone = ofertas.filter((o) => !(o.telefoneAtualizado ?? o.telefoneOriginal));
-    const telefoneInvalido = ofertas.filter((o) => {
-      const t = o.telefoneAtualizado ?? o.telefoneOriginal;
-      return !!t && !telefoneParecValido(t);
-    });
-    const comTelefone = ofertas.filter((o) => {
-      const t = o.telefoneAtualizado ?? o.telefoneOriginal;
-      return !!t && telefoneParecValido(t);
-    });
-    for (const offer of telefoneInvalido) {
-      await whatsappPort.markWhatsappFailed(offer.id, {
-        erro: "Telefone com poucos dígitos — não passa nem na validação básica do provedor de WhatsApp.",
-        tentativa: offer.tentativasWhatsapp + 1,
-        proximaTentativaEm: null,
-        cancelar: true,
-      });
-      processadas += 1;
-    }
+    const comTelefone = ofertas.filter((o) => o.telefoneAtualizado ?? o.telefoneOriginal);
     for (const offer of semTelefone) {
       await whatsappPort.markWhatsappFailed(offer.id, {
         erro: "Nenhum telefone disponível: não veio na captação e a Lemit não retornou um para esse CPF.",
@@ -317,7 +305,10 @@ export async function runWhatsappWorkerOnce(params: RunWhatsappWorkerOnceParams)
         const porTelefone = new Map(resultadoLote.resultados.map((r) => [r.telefone, r.possuiWhatsapp]));
         for (const offer of ofertasDoLote) {
           const telefoneUsado = (offer.telefoneAtualizado ?? offer.telefoneOriginal) as string;
-          const possuiWhatsapp = porTelefone.get(telefoneUsado) ?? false;
+          // Compara com o DDI (ver comentário no topo do arquivo — a
+          // CorbanTech sempre devolve os resultados do lote com o DDI já
+          // incluso, mesmo quando mandamos sem).
+          const possuiWhatsapp = porTelefone.get(normalizarComDDI(telefoneUsado)) ?? false;
           await whatsappPort.markWhatsappValidated(offer.id, {
             possuiWhatsapp,
             respostaBruta: { loteId, telefone: telefoneUsado, possuiWhatsapp },

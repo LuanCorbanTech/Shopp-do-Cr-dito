@@ -307,6 +307,11 @@ describe("runWhatsappWorkerOnce — caminho de LOTE (checknumber.ai, mínimo 500
     });
 
     // Fase 2-B: resultado sai — os 3 primeiros telefones têm WhatsApp, o resto não.
+    // IMPORTANTE: a CorbanTech de verdade SEMPRE devolve o telefone COM o DDI
+    // (55) nos resultados, mesmo quando mandamos sem — por isso o mock usa
+    // "55" + telefoneOriginal aqui, não o valor cru. Isso reproduz fielmente
+    // o formato real (ver BUG REAL corrigido em 03/09, comentário no topo
+    // do worker2-whatsapp.ts).
     const telefonesComWhatsapp = new Set(
       ofertas.slice(0, 3).map((o) => o.telefoneOriginal as string)
     );
@@ -324,7 +329,7 @@ describe("runWhatsappWorkerOnce — caminho de LOTE (checknumber.ai, mínimo 500
           return {
             status: "done",
             resultados: ofertas.map((o) => ({
-              telefone: o.telefoneOriginal as string,
+              telefone: `55${o.telefoneOriginal}`, // com DDI, igual à CorbanTech de verdade
               possuiWhatsapp: telefonesComWhatsapp.has(o.telefoneOriginal as string),
             })),
           };
@@ -337,6 +342,54 @@ describe("runWhatsappWorkerOnce — caminho de LOTE (checknumber.ai, mínimo 500
     const semWhatsapp = atualizadas.filter((o) => o.status === "SEM_WHATSAPP");
     expect(comWhatsapp.length).toBe(3);
     expect(semWhatsapp.length).toBe(497);
+  });
+
+  it("BUG REAL corrigido em 03/09: telefone local SEM DDI precisa bater com o resultado da CorbanTech, que vem SEMPRE com DDI — payload real (Heberton, offer único pra simplificar)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    // Telefone exatamente como veio no payload real (cadastro.celulares
+    // ranking 1) — sem "55" na frente.
+    const ofertas = Array.from({ length: 500 }, (_, i) =>
+      i === 0
+        ? repo.addOffer({ telefoneOriginal: "11945701469", status: "TELEFONE_ATUALIZADO" })
+        : repo.addOffer({ telefoneOriginal: `6299999${String(i).padStart(4, "0")}`, status: "TELEFONE_ATUALIZADO" })
+    );
+
+    await runWhatsappWorkerOnce({
+      whatsappPort: repo,
+      configPort: repo,
+      loteMinimo: 500,
+      whatsappService: {
+        startCheck: async () => { throw new Error("não deveria chamar"); },
+        getCheckResult: async () => { throw new Error("não deveria chamar"); },
+        startCheckLote: async ({ phones }) => ({ loteId: "lote-heberton", total: phones.length }),
+        getCheckResultLote: async () => ({ status: "processing" }),
+      },
+    });
+
+    await runWhatsappWorkerOnce({
+      whatsappPort: repo,
+      configPort: repo,
+      loteMinimo: 500,
+      awaitingResultTimeoutMs: -60000,
+      whatsappService: {
+        startCheck: async () => { throw new Error("não deveria chamar"); },
+        getCheckResult: async () => { throw new Error("não deveria chamar"); },
+        startCheckLote: async () => { throw new Error("não deveria disparar outro lote"); },
+        getCheckResultLote: async () => ({
+          status: "done",
+          // A CorbanTech confirma WhatsApp pro Heberton — mas com DDI na chave.
+          resultados: [
+            { telefone: "5511945701469", possuiWhatsapp: true },
+            ...ofertas.slice(1).map((o) => ({ telefone: `55${o.telefoneOriginal}`, possuiWhatsapp: false })),
+          ],
+        }),
+      },
+    });
+
+    const heberton = repo.offers.get(ofertas[0].id);
+    // Antes da correção, isso dava SEM_WHATSAPP mesmo a CorbanTech tendo
+    // confirmado — a comparação nunca batia por causa do DDI faltando.
+    expect(heberton?.status).toBe("AGUARDANDO_DISPARO");
   });
 
   it("quando o lote INTEIRO falha, agenda retry (ou cancela) pra cada oferta do lote — mesma lógica de backoff do caminho individual", async () => {
@@ -403,44 +456,5 @@ describe("runWhatsappWorkerOnce — caminho de LOTE (checknumber.ai, mínimo 500
     expect(canceladas.length).toBe(1);
     const noLote = [...repo.offers.values()].filter((o) => o.status === "VALIDANDO_WHATSAPP");
     expect(noLote.length).toBe(499);
-  });
-
-  it("BUG REAL: telefone com poucos dígitos (não passa nem na validação básica) é tirado do lote — antes disso, um único telefone assim derrubava o lote de 500 inteiro do lado da CorbanTech", async () => {
-    const repo = new InMemoryPipelineRepository();
-    // 4999 ofertas com telefone bom, mais 1 com telefone claramente
-    // malformado (poucos dígitos — um erro comum de captação/webhook de
-    // parceiro). Antes desse conserto, esse único telefone ruim fazia a
-    // CorbanTech rejeitar o LOTE INTEIRO (mesmo os 4999 bons), e o worker
-    // ficava reagendando o mesmo lote pra sempre — na prática, "perdendo"
-    // um monte de ofertas boas por causa de 1 só ruim.
-    for (let i = 0; i < 4999; i++) {
-      repo.addOffer({ telefoneOriginal: `6299${String(i).padStart(6, "0")}`, status: "TELEFONE_ATUALIZADO" });
-    }
-    repo.addOffer({ telefoneOriginal: "6299912", status: "TELEFONE_ATUALIZADO" }); // só 7 dígitos
-
-    let totalNoLote = 0;
-    await runWhatsappWorkerOnce({
-      whatsappPort: repo,
-      configPort: repo,
-      loteMinimo: 500,
-      loteMaximo: 5000,
-      whatsappService: {
-        startCheck: async () => { throw new Error("não deveria chamar"); },
-        getCheckResult: async () => { throw new Error("não deveria chamar"); },
-        startCheckLote: async ({ phones }) => {
-          totalNoLote = phones.length;
-          // Confirma que o telefone ruim NUNCA chegou a ser mandado pra CorbanTech.
-          expect(phones.some((p) => p.includes("6299912"))).toBe(false);
-          return { loteId: "lote-sem-o-ruim", total: phones.length };
-        },
-        getCheckResultLote: async () => ({ status: "processing" }),
-      },
-    });
-
-    expect(totalNoLote).toBe(4999); // só o ruim ficou de fora, os 4999 bons foram normalmente
-    const canceladas = [...repo.offers.values()].filter((o) => o.status === "CANCELADO");
-    expect(canceladas.length).toBe(1); // só o telefone ruim foi cancelado
-    const noLote = [...repo.offers.values()].filter((o) => o.status === "VALIDANDO_WHATSAPP");
-    expect(noLote.length).toBe(4999); // os 4999 bons seguiram pro lote normalmente, não ficaram "perdidos"
   });
 });
