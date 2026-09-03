@@ -56,7 +56,8 @@ export function registerBuscarPorTelefoneRoutes(
       }
 
       // Mesmo formato de campos do GET /aguardando-disparo — contrato já
-      // conhecido desse mesmo sistema externo.
+      // conhecido desse mesmo sistema externo. "origem" é novo (04/09,
+      // pedido explícito) — nome do parceiro/webhook de onde esse lead veio.
       return {
         id: oferta.id,
         externalId: oferta.externalId,
@@ -70,6 +71,7 @@ export function registerBuscarPorTelefoneRoutes(
         valor: oferta.valor,
         parcelas: oferta.parcelas,
         status: oferta.status,
+        origem: oferta.origemWebhook,
       };
     }
   );

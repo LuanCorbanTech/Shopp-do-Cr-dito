@@ -24,6 +24,7 @@ describe("GET /api/v1/leads/buscar-por-telefone", () => {
       status: "DISPARO_RESPONDIDO",
     });
     port.ofertasPorChave.set("offer-1", oferta);
+    port.origemPorOfertaId.set("offer-1", "Leilão de Crédito");
     const app = buildApp(port, TOKEN);
 
     const response = await app.inject({
@@ -46,7 +47,24 @@ describe("GET /api/v1/leads/buscar-por-telefone", () => {
       valor: 5000,
       parcelas: 12,
       status: "DISPARO_RESPONDIDO",
+      origem: "Leilão de Crédito",
     });
+  });
+
+  it("campo 'origem' (04/09, pedido explícito) — devolve o nome do parceiro/webhook de onde o lead veio", async () => {
+    const port = new FakeDispatchPollPort();
+    const oferta = fakeOferta({ id: "offer-2", telefoneValidado: "5511999999999" });
+    port.ofertasPorChave.set("offer-2", oferta);
+    port.origemPorOfertaId.set("offer-2", "Odysseia");
+    const app = buildApp(port, TOKEN);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/leads/buscar-por-telefone?telefone=5511999999999",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+
+    expect(response.json().origem).toBe("Odysseia");
   });
 
   it("aceita telefone SEM DDI (adiciona 55 sozinho antes de buscar)", async () => {
