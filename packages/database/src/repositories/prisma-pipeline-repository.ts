@@ -802,20 +802,42 @@ export class PrismaPipelineRepository
     return rows.length > 0 ? mapRow(rows[0]) : null;
   }
 
-  async buscarOfertaMaisRecentePorTelefone(telefoneNormalizado: string): Promise<OfferSnapshot | null> {
+  async buscarOfertaMaisRecentePorTelefone(
+    telefoneNormalizado: string
+  ): Promise<(OfferSnapshot & { origemWebhook: string | null }) | null> {
     // Compara contra os dois campos "confiáveis" (telefoneValidado é o
     // preferido — já passou pela validação de WhatsApp; telefoneAtualizado é
     // o fallback, pra achar ofertas que pararam antes dessa etapa). Não
     // compara telefoneOriginal — é o valor cru do parceiro, sem garantia de
     // formato, comparar contra ele daria falso-negativo na maioria dos casos.
-    const rows = await this.prisma.$queryRaw<OfferRow[]>`
-      SELECT ${OFFER_COLUMNS_SQL}
-      FROM offers
-      WHERE telefone_validado = ${telefoneNormalizado} OR telefone_atualizado = ${telefoneNormalizado}
-      ORDER BY created_at DESC
+    //
+    // Não reaproveita OFFER_COLUMNS_SQL aqui (diferente de outras queries)
+    // porque ele seleciona "id" sem prefixo de tabela — com o JOIN em
+    // webhooks (que TAMBÉM tem uma coluna "id"), isso vira "coluna
+    // ambígua" no Postgres. Por isso essa query lista as colunas na mão,
+    // com "o." explícito.
+    const rows = await this.prisma.$queryRaw<(OfferRow & { origem_webhook: string | null })[]>`
+      SELECT
+        o.id, o.webhook_id AS "webhookId", o.external_id AS "externalId", o.nome, o.cpf,
+        o.data_nascimento AS "dataNascimento",
+        o.telefone_original AS "telefoneOriginal", o.telefone_atualizado AS "telefoneAtualizado",
+        o.telefone_validado AS "telefoneValidado", o.possui_whatsapp AS "possuiWhatsapp",
+        o.banco_autorizado AS "bancoAutorizado",
+        o.produto, o.valor, o.parcelas, o.status::text AS status,
+        o.routing_rule_id AS "routingRuleId", o.endpoint_id AS "endpointId",
+        o.tentativas_telefone AS "tentativasTelefone", o.tentativas_whatsapp AS "tentativasWhatsapp",
+        o.tentativas_envio AS "tentativasEnvio", o.reserved_at AS "reservedAt",
+        o.whatsapp_request_id AS "whatsappRequestId", o.whatsapp_lote_id AS "whatsappLoteId",
+        o.whatsapp_check_iniciado_em AS "whatsappCheckIniciadoEm",
+        w.origem AS origem_webhook
+      FROM offers o
+      JOIN webhooks w ON w.id = o.webhook_id
+      WHERE o.telefone_validado = ${telefoneNormalizado} OR o.telefone_atualizado = ${telefoneNormalizado}
+      ORDER BY o.created_at DESC
       LIMIT 1
     `;
-    return rows.length > 0 ? mapRow(rows[0]) : null;
+    if (rows.length === 0) return null;
+    return { ...mapRow(rows[0]), origemWebhook: rows[0].origem_webhook };
   }
 }
 
