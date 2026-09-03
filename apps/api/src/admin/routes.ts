@@ -415,7 +415,18 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
 
       // Diagnóstico SÓ LEITURA (03/09): responde "por que 'Lemit validado'
       // está maior que 'WhatsApp validado', com a Lemit desativada?".
-      instance.get("/offers/diagnostico-lemit-vs-whatsapp", async () => adminRepo.diagnosticoLemitVsWhatsapp());
+      // ?desde=2026-09-03T00:00:00Z (ISO) — filtra pela data da CONSULTA em
+      // si, não da oferta, pra separar o efeito da "segunda chance" nova de
+      // consultas antigas (de quando a Lemit podia estar ativada). Sem
+      // "desde", usa meia-noite de hoje (horário do servidor) como padrão.
+      instance.get<{ Querystring: { desde?: string } }>("/offers/diagnostico-lemit-vs-whatsapp", async (request) => {
+        const desde = request.query.desde ? new Date(request.query.desde) : new Date(new Date().toDateString());
+        return adminRepo.diagnosticoLemitVsWhatsapp(desde);
+      });
+
+      // Versão sem filtro de data (todo o histórico) — só pra comparação,
+      // caso precise ver o total acumulado desde sempre.
+      instance.get("/offers/diagnostico-lemit-vs-whatsapp-tudo", async () => adminRepo.diagnosticoLemitVsWhatsappTudo());
 
       instance.get<{ Querystring: { status?: string; cpf?: string; limit?: string; offset?: string } }>(
         "/offers",
