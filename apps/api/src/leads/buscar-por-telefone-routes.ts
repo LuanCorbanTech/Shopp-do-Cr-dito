@@ -42,12 +42,11 @@ export function registerBuscarPorTelefoneRoutes(
         return { error: "telefone_obrigatorio", mensagem: 'Informe o telefone em "?telefone=...".' };
       }
 
-      // Mesma normalização usada no resto do sistema (ver
-      // montarNumeroCompleto/telefoneParecValido nos workers): só dígitos, e
-      // se tiver 10 ou 11 dígitos (sem DDI), assume Brasil (55) — igual a
-      // como os números já são gravados no banco.
-      let digitos = telefoneBruto.replace(/\D/g, "");
-      if (digitos.length === 10 || digitos.length === 11) digitos = `55${digitos}`;
+      // Só limpa pra dígitos — quem decide os formatos a tentar (com/sem
+      // DDI) é buscarOfertaMaisRecentePorTelefone agora (04/09: adicionar o
+      // 55 aqui e só buscar nesse formato causava "não encontrada" pra
+      // quase todo mundo, já que o telefone é gravado SEM DDI).
+      const digitos = telefoneBruto.replace(/\D/g, "");
 
       const oferta = await port.buscarOfertaMaisRecentePorTelefone(digitos);
       if (!oferta) {

@@ -151,4 +151,36 @@ describe("GET /api/v1/leads/buscar-por-telefone", () => {
 
     expect(response.statusCode).toBe(503);
   });
+
+  it("BUG REAL corrigido em 04/09: acha a oferta quando o telefone é passado SEM DDI e está gravado SEM DDI (caso real reportado — antes, a rota adicionava 55 e nunca batia)", async () => {
+    const port = new FakeDispatchPollPort();
+    const oferta = fakeOferta({ id: "offer-real", telefoneValidado: "62993929051" }); // exatamente como reportado, sem DDI
+    port.ofertasPorChave.set("offer-real", oferta);
+    const app = buildApp(port, TOKEN);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/leads/buscar-por-telefone?telefone=62993929051",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().id).toBe("offer-real");
+  });
+
+  it("também acha quando o telefone É passado COM o DDI (13 dígitos), mesmo o valor gravado estando sem", async () => {
+    const port = new FakeDispatchPollPort();
+    const oferta = fakeOferta({ id: "offer-real-2", telefoneValidado: "62993929051" });
+    port.ofertasPorChave.set("offer-real-2", oferta);
+    const app = buildApp(port, TOKEN);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/leads/buscar-por-telefone?telefone=5562993929051", // com 55 na frente
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().id).toBe("offer-real-2");
+  });
 });

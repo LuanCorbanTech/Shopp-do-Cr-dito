@@ -65,12 +65,21 @@ export class FakeDispatchPollPort implements DispatchPollPort {
   // real da implementação Prisma, testada à parte contra Postgres real — aqui
   // só precisa achar QUALQUER correspondência, pra testar o comportamento da
   // rota (auth, formato da resposta, 404 quando não acha).
+  //
+  // Reproduz a mesma checagem "com ou sem DDI" da implementação real
+  // (04/09) — testa os dois formatos possíveis do parâmetro recebido.
   async buscarOfertaMaisRecentePorTelefone(
-    telefoneNormalizado: string
+    telefoneDigitos: string
   ): Promise<(OfferSnapshot & { origemWebhook: string | null }) | null> {
+    const comDDI = telefoneDigitos.length <= 11 ? `55${telefoneDigitos}` : telefoneDigitos;
+    const semDDI = telefoneDigitos.startsWith("55") && telefoneDigitos.length >= 12 ? telefoneDigitos.slice(2) : telefoneDigitos;
+    const candidatos = [comDDI, semDDI];
+
     const todas = [...this.ofertasDisponiveis, ...this.ofertasPorChave.values()];
     const encontrada = todas.find(
-      (o) => o.telefoneValidado === telefoneNormalizado || o.telefoneAtualizado === telefoneNormalizado
+      (o) =>
+        (o.telefoneValidado && candidatos.includes(o.telefoneValidado)) ||
+        (o.telefoneAtualizado && candidatos.includes(o.telefoneAtualizado))
     );
     if (!encontrada) return null;
     return { ...encontrada, origemWebhook: this.origemPorOfertaId.get(encontrada.id) ?? "Origem Teste" };
