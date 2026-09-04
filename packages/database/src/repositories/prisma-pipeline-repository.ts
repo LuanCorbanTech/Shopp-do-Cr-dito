@@ -803,19 +803,27 @@ export class PrismaPipelineRepository
   }
 
   async buscarOfertaMaisRecentePorTelefone(
-    telefoneNormalizado: string
+    telefoneDigitos: string
   ): Promise<(OfferSnapshot & { origemWebhook: string | null }) | null> {
-    // Compara contra os dois campos "confiáveis" (telefoneValidado é o
-    // preferido — já passou pela validação de WhatsApp; telefoneAtualizado é
-    // o fallback, pra achar ofertas que pararam antes dessa etapa). Não
-    // compara telefoneOriginal — é o valor cru do parceiro, sem garantia de
-    // formato, comparar contra ele daria falso-negativo na maioria dos casos.
-    //
+    // BUG REAL corrigido em 04/09 — telefoneValidado/telefoneAtualizado são
+    // gravados SEM o DDI (confirmado repetidamente nessa mesma investigação:
+    // formato cru, ex.: "62993929051", nunca "5562993929051"). A rota que
+    // chama esse método costumava ADICIONAR o 55 antes de comparar — o que
+    // fazia a busca nunca bater com o formato realmente gravado. Corrigido
+    // testando os dois formatos possíveis (com e sem DDI), sem depender de
+    // adivinhar qual está certo pra cada oferta.
+    const comDDI = telefoneDigitos.length <= 11 ? `55${telefoneDigitos}` : telefoneDigitos;
+    const semDDI = telefoneDigitos.startsWith("55") && telefoneDigitos.length >= 12
+      ? telefoneDigitos.slice(2)
+      : telefoneDigitos;
+
     // Não reaproveita OFFER_COLUMNS_SQL aqui (diferente de outras queries)
     // porque ele seleciona "id" sem prefixo de tabela — com o JOIN em
     // webhooks (que TAMBÉM tem uma coluna "id"), isso vira "coluna
     // ambígua" no Postgres. Por isso essa query lista as colunas na mão,
-    // com "o." explícito.
+    // com "o." explícito. LEFT JOIN (não INNER) — mesmo se por algum
+    // motivo a referência ao webhook estiver quebrada, a oferta ainda
+    // aparece (só com origem null), em vez de sumir da busca inteira.
     const rows = await this.prisma.$queryRaw<(OfferRow & { origem_webhook: string | null })[]>`
       SELECT
         o.id, o.webhook_id AS "webhookId", o.external_id AS "externalId", o.nome, o.cpf,
@@ -831,8 +839,9 @@ export class PrismaPipelineRepository
         o.whatsapp_check_iniciado_em AS "whatsappCheckIniciadoEm",
         w.origem AS origem_webhook
       FROM offers o
-      JOIN webhooks w ON w.id = o.webhook_id
-      WHERE o.telefone_validado = ${telefoneNormalizado} OR o.telefone_atualizado = ${telefoneNormalizado}
+      LEFT JOIN webhooks w ON w.id = o.webhook_id
+      WHERE o.telefone_validado IN (${comDDI}, ${semDDI})
+         OR o.telefone_atualizado IN (${comDDI}, ${semDDI})
       ORDER BY o.created_at DESC
       LIMIT 1
     `;
