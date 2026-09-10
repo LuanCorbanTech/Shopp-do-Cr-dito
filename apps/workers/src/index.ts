@@ -13,6 +13,8 @@ import { runReconciliationWorkerOnce } from "./workers/worker6-reconciliation";
 import { runRelatorioPeriodicoWorkerOnce } from "./workers/worker7-relatorio-periodico";
 import { runDisparoIndividualWorkerOnce, type DisparoIndividualEndpoint } from "./workers/worker8-disparo-individual";
 import { runTarefasWorkerOnce } from "./workers/worker9-tarefas";
+import { runMargemFactaWorkerOnce, type FactaMargemService } from "./workers/worker0-margem-facta";
+import { gerarTokenFacta, consultarBaseOfflineFacta } from "./fornecedores/facta-margem";
 import { definirAtivoOdysseia } from "./fornecedores/odysseia";
 
 // Entry point dos 6 workers do pipeline (seção 6.1 do doc de arquitetura). Cada um é
@@ -49,6 +51,15 @@ async function resolverCredenciaisLemit(): Promise<{ apiKey: string; baseUrl?: s
     urlConsulta: valor.urlConsulta || process.env.LIMIT_API_URL_CONSULTA || undefined,
   };
 }
+
+// Consulta de margem Facta (04/09) — diferente da Lemit/WhatsApp, o worker0
+// já lê usuário/senha direto do configPort (mesmo objeto "repo" abaixo) —
+// não precisa de uma função "resolverCredenciais" separada aqui. O
+// serviço HTTP em si (chamar a API de verdade) é só isso:
+const factaMargemService: FactaMargemService = {
+  gerarToken: (config) => gerarTokenFacta(config),
+  consultarCpf: (config, token, cpf) => consultarBaseOfflineFacta(config, token, cpf),
+};
 
 async function resolverCredenciaisWhatsapp(): Promise<{ apiKey: string; baseUrl: string }> {
   const config = await prisma.integrationConfig.findUnique({ where: { chave: "WHATSAPP_VALIDACAO_CREDENCIAIS" } });
@@ -399,6 +410,25 @@ loop(
   },
   () => resolverIntervaloDisparoIndividualMs(WORKER8_INTERVAL_MS_PADRAO)
 );
+
+// Worker0 — Consulta de margem Facta (04/09): nova PRIMEIRA etapa do funil,
+// antes de tudo o mais (inclusive antes do Worker1/Lemit). IMPORTANTE: a
+// própria Facta exige um intervalo mínimo de 3s entre consultas — por isso
+// o intervalo padrão aqui é maior que isso (com folga), e o batchSize é
+// SEMPRE 1 (nunca configurável pra mais — processar 2+ ofertas no MESMO
+// ciclo violaria o limite de 3s entre elas, já que o worker não coloca
+// nenhuma espera extra dentro do próprio ciclo).
+const WORKER0_INTERVAL_MS_PADRAO = Number(process.env.WORKER0_INTERVAL_MS ?? 4000);
+
+loop("worker0-margem-facta", WORKER0_INTERVAL_MS_PADRAO, async () => {
+  const resultado = await runMargemFactaWorkerOnce({
+    port: repo,
+    configPort: repo,
+    factaService: factaMargemService,
+    batchSize: 1,
+  });
+  return resultado.aprovadas + resultado.negativas + resultado.aguardandoOnline + resultado.erros;
+});
 
 // Worker9 — tarefas de recebimento (31/08): a cada ciclo, checa as tarefas
 // agendadas de cada webhook — liga o fornecedor quando chega a hora,
