@@ -14,6 +14,8 @@ import type {
   InfoPessoaLemit,
   MargemFactaPort,
   OfertaParaMargemSnapshot,
+  MargemFactaOnlinePort,
+  OfertaParaOnlineFactaSnapshot,
 } from "@plataforma-ofertas/domain";
 
 // Réplica em memória de todas as portas dos workers 1-6, no mesmo espírito do
@@ -48,6 +50,9 @@ export interface MutableOffer extends OfferSnapshot {
   dadosFactaOffline?: unknown;
   tentativasMargemFacta?: number;
   proximaTentativaMargemEm?: Date | null;
+  dadosFactaOnline?: unknown;
+  tentativasOnlineFacta?: number;
+  proximaTentativaOnlineFactaEm?: Date | null;
 }
 
 const IN_FLIGHT_STATUSES = [
@@ -69,13 +74,15 @@ export class InMemoryPipelineRepository
     DispatchPort,
     RetryPort,
     ReconciliationPort,
-    MargemFactaPort
+    MargemFactaPort,
+    MargemFactaOnlinePort
 {
   readonly offers = new Map<string, MutableOffer>();
   readonly configs = new Map<string, IntegrationConfigSnapshot>();
   readonly rules: RoutingRuleSnapshot[] = [];
   // Cache do token Facta (04/09) — sem tabela própria, direto em memória aqui.
   private tokenFactaCache: { token: string; expiraEm: Date } | null = null;
+  private tokenOnlineFactaCache: { token: string; expiraEm: Date } | null = null;
   readonly endpoints = new Map<string, EndpointSnapshot>();
   readonly processingLog: Array<{ offerId: string; etapa: string; resultado: string; respostaBruta?: unknown }> = [];
   private idCounter = 0;
@@ -115,6 +122,9 @@ export class InMemoryPipelineRepository
       dadosFactaOffline: partial.dadosFactaOffline ?? null,
       tentativasMargemFacta: partial.tentativasMargemFacta ?? 0,
       proximaTentativaMargemEm: partial.proximaTentativaMargemEm ?? null,
+      dadosFactaOnline: partial.dadosFactaOnline ?? null,
+      tentativasOnlineFacta: partial.tentativasOnlineFacta ?? 0,
+      proximaTentativaOnlineFactaEm: partial.proximaTentativaOnlineFactaEm ?? null,
     };
     this.offers.set(offer.id, offer);
     return offer;
@@ -553,5 +563,106 @@ export class InMemoryPipelineRepository
 
   async salvarTokenFactaCache(token: string, expiraEm: Date): Promise<void> {
     this.tokenFactaCache = { token, expiraEm };
+  }
+
+  // -------------------------------------------------------------------------
+  // Consulta ONLINE Facta (04/09, 2ª etapa)
+  // -------------------------------------------------------------------------
+
+  async claimOffersParaRegistrarAutorizacaoOnline(limit: number): Promise<OfertaParaOnlineFactaSnapshot[]> {
+    const candidatas = [...this.offers.values()]
+      .filter((o) => o.status === "AGUARDANDO_CONSULTA_ONLINE")
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, limit);
+    for (const o of candidatas) {
+      o.status = "REGISTRANDO_AUTORIZACAO_ONLINE_FACTA";
+      o.reservedAt = new Date();
+    }
+    return candidatas.map((o) => ({
+      id: o.id,
+      cpf: o.cpf,
+      nome: o.nome,
+      telefoneOriginal: o.telefoneOriginal,
+      tentativasOnlineFacta: o.tentativasOnlineFacta ?? 0,
+    }));
+  }
+
+  async marcarAutorizacaoOnlineRegistrada(offerId: string, respostaBruta: unknown, proximaVerificacaoEm: Date): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "AGUARDANDO_RESULTADO_ONLINE_FACTA";
+    offer.dadosFactaOnline = respostaBruta;
+    offer.proximaTentativaOnlineFactaEm = proximaVerificacaoEm;
+    offer.reservedAt = null;
+  }
+
+  async marcarErroRegistrarAutorizacaoOnline(
+    offerId: string,
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date }
+  ): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "AGUARDANDO_CONSULTA_ONLINE";
+    offer.reservedAt = null;
+    offer.tentativasOnlineFacta = params.tentativa;
+    offer.proximaTentativaOnlineFactaEm = params.proximaTentativaEm;
+  }
+
+  async claimOffersParaVerificarResultadoOnline(limit: number, agora: Date): Promise<OfertaParaOnlineFactaSnapshot[]> {
+    const candidatas = [...this.offers.values()]
+      .filter(
+        (o) =>
+          o.status === "AGUARDANDO_RESULTADO_ONLINE_FACTA" &&
+          (!o.proximaTentativaOnlineFactaEm || o.proximaTentativaOnlineFactaEm.getTime() <= agora.getTime())
+      )
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, limit);
+    for (const o of candidatas) {
+      o.status = "CONSULTANDO_RESULTADO_ONLINE_FACTA";
+      o.reservedAt = agora;
+    }
+    return candidatas.map((o) => ({
+      id: o.id,
+      cpf: o.cpf,
+      nome: o.nome,
+      telefoneOriginal: o.telefoneOriginal,
+      tentativasOnlineFacta: o.tentativasOnlineFacta ?? 0,
+    }));
+  }
+
+  async marcarMargemAprovadaOnline(offerId: string, dados: { valorMargemDisponivel: number; dadosCompletos: unknown }): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "MARGEM_APROVADA";
+    offer.valorMargemDisponivelFacta = dados.valorMargemDisponivel;
+    offer.dadosFactaOnline = dados.dadosCompletos;
+    offer.reservedAt = null;
+  }
+
+  async marcarMargemNegativaOnline(offerId: string, dados: { valorMargemDisponivel: number; dadosCompletos: unknown }): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "MARGEM_NEGATIVA";
+    offer.valorMargemDisponivelFacta = dados.valorMargemDisponivel;
+    offer.dadosFactaOnline = dados.dadosCompletos;
+    offer.reservedAt = null;
+  }
+
+  async marcarAindaProcessandoOnline(offerId: string, proximaVerificacaoEm: Date, tentativa: number): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "AGUARDANDO_RESULTADO_ONLINE_FACTA";
+    offer.reservedAt = null;
+    offer.tentativasOnlineFacta = tentativa;
+    offer.proximaTentativaOnlineFactaEm = proximaVerificacaoEm;
+  }
+
+  async marcarFalhaAbertaOnline(offerId: string): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "MARGEM_APROVADA";
+    offer.reservedAt = null;
+  }
+
+  async buscarTokenOnlineFactaCache(): Promise<{ token: string; expiraEm: Date } | null> {
+    return this.tokenOnlineFactaCache;
+  }
+
+  async salvarTokenOnlineFactaCache(token: string, expiraEm: Date): Promise<void> {
+    this.tokenOnlineFactaCache = { token, expiraEm };
   }
 }
