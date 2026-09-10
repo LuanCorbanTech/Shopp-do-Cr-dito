@@ -133,6 +133,38 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         return atualizado[body.integracao as "lemit" | "whatsapp"];
       });
 
+      // Consulta de margem Facta (04/09) — credencial própria (usuario+senha),
+      // rota separada por ter formato diferente das de cima.
+      instance.get("/integrations/facta-margem", async () => adminRepo.getCredenciaisFacta());
+
+      instance.post<{ Body: { usuario?: string; senha?: string; ativo?: boolean } }>(
+        "/integrations/facta-margem",
+        async (request) => {
+          const body = request.body ?? {};
+          return adminRepo.salvarCredenciaisFacta({ usuario: body.usuario, senha: body.senha, ativo: Boolean(body.ativo) });
+        }
+      );
+
+      // Ferramenta de teste (04/09, pedido explícito) — a Facta não oferece
+      // homologação, então antes de ligar a consulta automática pra todo
+      // mundo, dá pra testar com 1 CPF específico direto na produção, sem
+      // afetar nenhuma oferta real. Usa a MESMA credencial já salva acima
+      // (não pede usuario/senha de novo aqui).
+      instance.get<{ Querystring: { cpf?: string } }>("/integrations/facta-margem/testar", async (request, reply) => {
+        const cpfBruto = request.query.cpf;
+        if (!cpfBruto) {
+          reply.code(400);
+          return { error: "cpf_obrigatorio", mensagem: "Informe ?cpf=12345678900 (só dígitos ou formatado, tanto faz)." };
+        }
+        try {
+          const resultado = await adminRepo.testarConsultaFacta(cpfBruto);
+          return resultado;
+        } catch (error) {
+          reply.code(502);
+          return { error: "falha_consulta", mensagem: error instanceof Error ? error.message : String(error) };
+        }
+      });
+
       // Relatório periódico: envia os KPIs do dia (mesmas contagens do
       // /dashboard/kpis) por POST simples pro endpoint cadastrado aqui, na
       // frequência configurada (worker7-relatorio-periodico, apps/workers).
