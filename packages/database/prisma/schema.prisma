@@ -52,6 +52,31 @@ enum OfferStatus {
   // automaticamente por nós).
   DISPARO_ENVIADO
   DISPARO_RESPONDIDO
+
+  // ---------------------------------------------------------------------
+  // Consulta de margem Facta (04/09) — nova PRIMEIRA etapa do funil, antes
+  // de tudo o que já existia. RECEBIDO continua sendo o status inicial (a
+  // oferta chega assim, sem mudar nada no recebimento em si); esse worker
+  // novo (worker0) é quem agora reivindica RECEBIDO primeiro, decidindo
+  // entre os 3 caminhos abaixo antes de liberar (ou não) pro fluxo normal.
+  // ---------------------------------------------------------------------
+
+  // Passou pela consulta de margem Facta com sucesso (valorMargemDisponivel
+  // > 0) — a partir daqui, segue o fluxo de sempre (Worker 1/Lemit agora
+  // reivindica ofertas nesse status, não mais RECEBIDO diretamente).
+  MARGEM_APROVADA
+  // valorMargemDisponivel <= 0 — processo encerra aqui, por decisão de
+  // negócio (pedido explícito 04/09), com os dados da consulta salvos.
+  MARGEM_NEGATIVA
+  // A Facta respondeu "Nenhum dado encontrado" pra esse CPF (base offline
+  // dela não tem histórico) — fica esperando a "Consulta Online" (2ª etapa
+  // ainda não implementada, prevista pra depois). Não é erro, não é
+  // margem negativa — é "não sabemos ainda".
+  AGUARDANDO_CONSULTA_ONLINE
+  // Estado transitório (reivindicado atomicamente, igual PROCESSANDO_TELEFONE
+  // pro Worker 1) — nunca deve ficar visível por muito tempo; se aparecer
+  // parado, é sinal de worker0 travado no meio de uma consulta.
+  CONSULTANDO_MARGEM_FACTA
 }
 
 enum DispatchQueueStatus {
@@ -226,6 +251,16 @@ model Offer {
   // guardada em phone_validations.resposta_limit (auditoria) — este campo aqui é
   // só a cópia "pronta pra uso" mais recente.
   dadosPessoaLemit Json?       @map("dados_pessoa_lemit")
+
+  // Consulta de margem Facta (04/09) — ver worker0-margem-facta.ts.
+  // valorMargemDisponivel em coluna própria (é o campo que decide o fluxo,
+  // ganha índice pra permitir filtrar/relatório depois); o resto da
+  // resposta ("dados[0]" inteiro: matrícula, empregador, cbo, etc.) fica
+  // só no JSON, igual ao padrão já usado pra dadosPessoaLemit acima.
+  valorMargemDisponivelFacta Decimal? @map("valor_margem_disponivel_facta") @db.Decimal(14, 2)
+  dadosFactaOffline          Json?    @map("dados_facta_offline")
+  tentativasMargemFacta      Int      @default(0) @map("tentativas_margem_facta")
+  proximaTentativaMargemEm   DateTime? @map("proxima_tentativa_margem_em")
 
   status           OfferStatus @default(RECEBIDO)
 
