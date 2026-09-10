@@ -77,6 +77,22 @@ enum OfferStatus {
   // pro Worker 1) — nunca deve ficar visível por muito tempo; se aparecer
   // parado, é sinal de worker0 travado no meio de uma consulta.
   CONSULTANDO_MARGEM_FACTA
+
+  // ---------------------------------------------------------------------
+  // Consulta ONLINE Facta (04/09) — 2ª etapa, só acontece pra quem ficou
+  // AGUARDANDO_CONSULTA_ONLINE (offline não achou nada). Fluxo em 2 passos:
+  // primeiro registra a autorização (sem precisar de link, pedido
+  // explícito), depois consulta os dados de verdade — precisa esperar
+  // entre os dois passos, por isso 2 status "aguardando" diferentes.
+  // ---------------------------------------------------------------------
+
+  // Reivindicado atomicamente enquanto registra a autorização (passo 1).
+  REGISTRANDO_AUTORIZACAO_ONLINE_FACTA
+  // Autorização registrada — aguardando a próxima janela pra checar se já
+  // processou (passo 2, pode levar um tempo do lado da Facta).
+  AGUARDANDO_RESULTADO_ONLINE_FACTA
+  // Reivindicado atomicamente enquanto consulta os dados de verdade (passo 2).
+  CONSULTANDO_RESULTADO_ONLINE_FACTA
 }
 
 enum DispatchQueueStatus {
@@ -261,6 +277,11 @@ model Offer {
   dadosFactaOffline          Json?    @map("dados_facta_offline")
   tentativasMargemFacta      Int      @default(0) @map("tentativas_margem_facta")
   proximaTentativaMargemEm   DateTime? @map("proxima_tentativa_margem_em")
+
+  // Consulta ONLINE Facta (04/09) — ver worker0b-margem-facta-online.ts.
+  dadosFactaOnline               Json?     @map("dados_facta_online")
+  tentativasOnlineFacta          Int       @default(0) @map("tentativas_online_facta")
+  proximaTentativaOnlineFactaEm  DateTime? @map("proxima_tentativa_online_facta_em")
 
   status           OfferStatus @default(RECEBIDO)
 
