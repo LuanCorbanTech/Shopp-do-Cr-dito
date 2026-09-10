@@ -122,3 +122,14 @@ export async function salvarOdysseiaApiKey(formData: FormData): Promise<void> {
   });
   revalidatePath("/integracoes");
 }
+
+export async function salvarCredenciaisFacta(formData: FormData): Promise<void> {
+  const usuario = String(formData.get("usuario") ?? "");
+  const senha = String(formData.get("senha") ?? "");
+  const ativo = formData.get("ativo") === "on";
+  await adminApiFetch("/admin/integrations/facta-margem", {
+    method: "POST",
+    body: JSON.stringify({ usuario, senha, ativo }),
+  });
+  revalidatePath("/integracoes");
+}

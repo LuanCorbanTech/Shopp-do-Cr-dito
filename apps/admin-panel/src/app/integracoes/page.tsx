@@ -1,5 +1,6 @@
 import { adminApiFetch } from "@/lib/api";
-import { setLimitEnabled, salvarCredenciais, toggleRelatorioPeriodico, salvarRelatorioPeriodico, toggleDisparoIndividual, salvarDisparoIndividual, salvarOdysseiaApiKey } from "./actions";
+import { setLimitEnabled, salvarCredenciais, toggleRelatorioPeriodico, salvarRelatorioPeriodico, toggleDisparoIndividual, salvarDisparoIndividual, salvarOdysseiaApiKey, salvarCredenciaisFacta } from "./actions";
+import FactaTestarCpf from "./FactaTestarCpf";
 import { formatarDataHora } from "@/lib/data-hora";
 import DisparoIndividualEndpointsEditor from "./DisparoIndividualEndpointsEditor";
 
@@ -57,6 +58,13 @@ interface OdysseiaStatus {
   apiKeyMascarada: string | null;
 }
 
+interface FactaMargemStatus {
+  ativo: boolean;
+  usuario: string | null;
+  senhaConfigurada: boolean;
+  senhaMascarada: string | null;
+}
+
 export default async function IntegracoesPage() {
   let status: LimitStatus | null = null;
   let error: string | null = null;
@@ -96,6 +104,14 @@ export default async function IntegracoesPage() {
     odysseia = await adminApiFetch<OdysseiaStatus>("/admin/integrations/odysseia");
   } catch (e) {
     erroOdysseia = e instanceof Error ? e.message : String(e);
+  }
+
+  let factaMargem: FactaMargemStatus | null = null;
+  let erroFactaMargem: string | null = null;
+  try {
+    factaMargem = await adminApiFetch<FactaMargemStatus>("/admin/integrations/facta-margem");
+  } catch (e) {
+    erroFactaMargem = e instanceof Error ? e.message : String(e);
   }
 
   return (
@@ -374,6 +390,68 @@ export default async function IntegracoesPage() {
             />
             <button type="submit">Salvar</button>
           </form>
+        </div>
+      )}
+
+      <h1 style={{ marginTop: 40 }}>Consulta de margem (Facta)</h1>
+      <p className="subtitle">
+        Primeira etapa do funil (04/09) — antes de tudo o mais, consulta a base offline da Facta por CPF. Se a
+        margem disponível for maior que 0, a oferta segue o fluxo normal; se for 0 ou negativa, o processo encerra
+        ali (status &quot;Margem negativa&quot;). A Facta não oferece ambiente de homologação — use o campo de teste
+        abaixo pra confirmar a credencial com 1 CPF antes de ativar pra valer.
+      </p>
+      {erroFactaMargem && <p className="empty-state">Não foi possível carregar: {erroFactaMargem}</p>}
+      {factaMargem && (
+        <div className="card">
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <strong>Consulta de margem Facta</strong>
+            <span className={`badge ${factaMargem.ativo ? "good" : "neutral"}`}>
+              {factaMargem.ativo ? "ATIVADO" : "DESATIVADO"}
+            </span>
+          </div>
+          <form action={salvarCredenciaisFacta}>
+            <div style={{ marginBottom: 10 }}>
+              <label htmlFor="facta-usuario" style={{ display: "block", marginBottom: 4 }}>
+                Usuário
+              </label>
+              <input
+                id="facta-usuario"
+                name="usuario"
+                type="text"
+                defaultValue={factaMargem.usuario ?? ""}
+                placeholder="usuário da Facta"
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label htmlFor="facta-senha" style={{ display: "block", marginBottom: 4 }}>
+                Senha{" "}
+                {factaMargem.senhaConfigurada && (
+                  <span className="badge good" style={{ marginLeft: 6 }}>
+                    CONFIGURADA
+                  </span>
+                )}
+              </label>
+              {factaMargem.senhaConfigurada && (
+                <p className="field-help" style={{ marginTop: 0, marginBottom: 8 }}>
+                  Senha atual termina em: {factaMargem.senhaMascarada}
+                </p>
+              )}
+              <input
+                id="facta-senha"
+                name="senha"
+                type="password"
+                placeholder={factaMargem.senhaConfigurada ? "deixe em branco para manter a senha atual" : "senha da Facta"}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <input type="checkbox" name="ativo" defaultChecked={factaMargem.ativo} />
+              Ativar a consulta de margem (leads novos passam por essa checagem antes do resto do funil)
+            </label>
+            <button type="submit">Salvar</button>
+          </form>
+          <FactaTestarCpf />
         </div>
       )}
     </div>
