@@ -43,6 +43,24 @@ function mascararCredencial(valor: unknown): {
   };
 }
 
+// Facta usa usuário+senha (Basic Auth), diferente da Lemit/CorbanTech (uma
+// única "apiKey") — por isso uma função de mascaramento própria, em vez de
+// forçar o mesmo formato da mascararCredencial acima. "usuario" não é
+// segredo (aparece em texto puro); só "senha" é mascarada.
+function mascararCredencialFacta(valor: unknown): {
+  usuario: string | null;
+  senhaConfigurada: boolean;
+  senhaMascarada: string | null;
+} {
+  const v = (valor ?? {}) as { usuario?: string; senha?: string };
+  const senha = v.senha ?? null;
+  return {
+    usuario: v.usuario ?? null,
+    senhaConfigurada: Boolean(senha),
+    senhaMascarada: senha ? `${"•".repeat(Math.max(senha.length - 3, 0))}${senha.slice(-3)}` : null,
+  };
+}
+
 // Consultas usadas pela API administrativa (seção 31-38 do escopo original / seção 8
 // do doc de arquitetura). Ao contrário dos workers, aqui vamos direto ao Prisma sem
 // uma porta/interface adicional — é código de leitura/CRUD simples, e o ganho de
@@ -854,6 +872,82 @@ export class AdminRepository {
       lemit: mascararCredencial(lemit?.valor),
       whatsapp: mascararCredencial(whatsapp?.valor),
     };
+  }
+
+  // Consulta de margem Facta (04/09) — credencial própria (usuario+senha),
+  // separada das de cima por ter formato diferente (Basic Auth, não uma
+  // apiKey única).
+  async getCredenciaisFacta() {
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "FACTA_MARGEM_CREDENCIAIS" } });
+    return { ...mascararCredencialFacta(config?.valor), ativo: config?.ativo ?? false };
+  }
+
+  async salvarCredenciaisFacta(dados: { usuario?: string; senha?: string; ativo: boolean }) {
+    const atual = await this.prisma.integrationConfig.findUnique({ where: { chave: "FACTA_MARGEM_CREDENCIAIS" } });
+    const valorAtual = (atual?.valor ?? {}) as Record<string, unknown>;
+    const usuario = dados.usuario !== undefined && dados.usuario.trim() !== "" ? dados.usuario.trim() : valorAtual.usuario ?? null;
+    const senha = dados.senha !== undefined && dados.senha.trim() !== "" ? dados.senha.trim() : valorAtual.senha ?? null;
+    // Preserva o cache do token (tokenCache/tokenCacheExpiraEm) já salvo pelo
+    // worker — trocar usuario/senha aqui não deve apagar um token ainda
+    // válido à toa (o worker mesmo detecta e gera um novo se a credencial
+    // mudou e o token antigo passar a falhar).
+    const novoValor = { ...valorAtual, usuario, senha };
+    await this.prisma.integrationConfig.upsert({
+      where: { chave: "FACTA_MARGEM_CREDENCIAIS" },
+      create: { chave: "FACTA_MARGEM_CREDENCIAIS", ativo: dados.ativo, valor: novoValor },
+      update: { ativo: dados.ativo, valor: novoValor },
+    });
+    return this.getCredenciaisFacta();
+  }
+
+  // Ferramenta de teste (04/09) — consulta 1 CPF na Facta usando a credencial
+  // já salva, SEM tocar em nenhuma oferta (não é o worker, é só um "ping"
+  // manual). Sem homologação disponível, esse é o jeito seguro de validar a
+  // integração em produção antes de ligar o worker automático pra valer.
+  // Não reaproveita cache de token daqui (chamada rara, sem custo relevante
+  // gerar um token novo a cada teste manual).
+  async testarConsultaFacta(cpfBruto: string): Promise<{
+    tokenGerado: boolean;
+    cpfConsultado: string;
+    dados: Record<string, unknown> | null;
+    mensagem: string;
+  }> {
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "FACTA_MARGEM_CREDENCIAIS" } });
+    const valor = (config?.valor ?? {}) as { usuario?: string; senha?: string; baseUrl?: string };
+    if (!valor.usuario || !valor.senha) {
+      throw new Error("Credenciais da Facta não configuradas ainda (usuario/senha) — salve antes de testar.");
+    }
+    const baseUrl = (valor.baseUrl || "https://cltoff.facta.com.br").replace(/\/$/, "");
+    const cpfLimpo = cpfBruto.replace(/\D/g, "");
+
+    const basic = Buffer.from(`${valor.usuario}:${valor.senha}`).toString("base64");
+    const respostaToken = await fetch(`${baseUrl}/gera-token`, { method: "GET", headers: { Authorization: `Basic ${basic}` } });
+    const corpoToken = (await respostaToken.json().catch(() => null)) as { erro?: boolean; mensagem?: string; token?: string } | null;
+    if (!respostaToken.ok || !corpoToken || corpoToken.erro || !corpoToken.token) {
+      throw new Error(corpoToken?.mensagem || `Facta respondeu ${respostaToken.status} ao gerar token`);
+    }
+
+    const respostaConsulta = await fetch(`${baseUrl}/clt/base-offline?cpf=${cpfLimpo}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${corpoToken.token}` },
+    });
+    const corpoConsulta = (await respostaConsulta.json().catch(() => null)) as {
+      erro?: boolean;
+      mensagem?: string;
+      dados?: Record<string, unknown>[];
+    } | null;
+    if (!respostaConsulta.ok || !corpoConsulta) {
+      throw new Error(`Facta respondeu ${respostaConsulta.status} na consulta`);
+    }
+    if (corpoConsulta.erro) {
+      if (corpoConsulta.mensagem?.includes("Nenhum dado encontrado")) {
+        return { tokenGerado: true, cpfConsultado: cpfLimpo, dados: null, mensagem: "Nenhum dado encontrado (CPF sem histórico na base offline da Facta)." };
+      }
+      throw new Error(corpoConsulta.mensagem || "Erro na consulta offline da Facta");
+    }
+
+    const primeiro = Array.isArray(corpoConsulta.dados) && corpoConsulta.dados.length > 0 ? corpoConsulta.dados[0] : null;
+    return { tokenGerado: true, cpfConsultado: cpfLimpo, dados: primeiro, mensagem: "Consulta realizada com sucesso." };
   }
 
   async salvarCredenciaisIntegracao(
