@@ -14,7 +14,13 @@ import { runRelatorioPeriodicoWorkerOnce } from "./workers/worker7-relatorio-per
 import { runDisparoIndividualWorkerOnce, type DisparoIndividualEndpoint } from "./workers/worker8-disparo-individual";
 import { runTarefasWorkerOnce } from "./workers/worker9-tarefas";
 import { runMargemFactaWorkerOnce, type FactaMargemService } from "./workers/worker0-margem-facta";
-import { gerarTokenFacta, consultarBaseOfflineFacta } from "./fornecedores/facta-margem";
+import { runMargemFactaOnlineWorkerOnce, type FactaOnlineService } from "./workers/worker0b-margem-facta-online";
+import {
+  gerarTokenFacta,
+  consultarBaseOfflineFacta,
+  cadastrarAutorizacaoOnlineFacta,
+  consultarDadosTrabalhadorOnlineFacta,
+} from "./fornecedores/facta-margem";
 import { definirAtivoOdysseia } from "./fornecedores/odysseia";
 
 // Entry point dos 6 workers do pipeline (seção 6.1 do doc de arquitetura). Cada um é
@@ -59,6 +65,12 @@ async function resolverCredenciaisLemit(): Promise<{ apiKey: string; baseUrl?: s
 const factaMargemService: FactaMargemService = {
   gerarToken: (config) => gerarTokenFacta(config),
   consultarCpf: (config, token, cpf) => consultarBaseOfflineFacta(config, token, cpf),
+};
+
+const factaOnlineService: FactaOnlineService = {
+  gerarToken: (config) => gerarTokenFacta(config),
+  cadastrarAutorizacao: (config, token, params) => cadastrarAutorizacaoOnlineFacta(config, token, params),
+  consultarDados: (config, token, cpf) => consultarDadosTrabalhadorOnlineFacta(config, token, cpf),
 };
 
 async function resolverCredenciaisWhatsapp(): Promise<{ apiKey: string; baseUrl: string }> {
@@ -428,6 +440,23 @@ loop("worker0-margem-facta", WORKER0_INTERVAL_MS_PADRAO, async () => {
     batchSize: 1,
   });
   return resultado.aprovadas + resultado.negativas + resultado.aguardandoOnline + resultado.erros;
+});
+
+// Worker0-B — Consulta ONLINE de margem Facta (04/09, 2ª etapa): só
+// processa quem a offline deixou em AGUARDANDO_CONSULTA_ONLINE. Sem
+// documentação de limite de taxa pra esses 2 endpoints específicos (não
+// estão no manual oficial) — usa um intervalo com folga por precaução,
+// mas menos rígido que o da offline (que TEM limite documentado de 3s).
+const WORKER0B_INTERVAL_MS_PADRAO = Number(process.env.WORKER0B_INTERVAL_MS ?? 5000);
+
+loop("worker0b-margem-facta-online", WORKER0B_INTERVAL_MS_PADRAO, async () => {
+  const resultado = await runMargemFactaOnlineWorkerOnce({
+    port: repo,
+    configPort: repo,
+    factaService: factaOnlineService,
+    batchSize: 1,
+  });
+  return resultado.autorizacoesRegistradas + resultado.aprovadas + resultado.negativas + resultado.aindaProcessando + resultado.falhasAbertas;
 });
 
 // Worker9 — tarefas de recebimento (31/08): a cada ciclo, checa as tarefas
