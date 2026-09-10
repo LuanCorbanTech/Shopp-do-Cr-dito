@@ -386,3 +386,41 @@ export interface MargemFactaPort {
   buscarTokenFactaCache(): Promise<{ token: string; expiraEm: Date } | null>;
   salvarTokenFactaCache(token: string, expiraEm: Date): Promise<void>;
 }
+
+// ---------------------------------------------------------------------------
+// Consulta ONLINE Facta (04/09) — 2ª etapa, só pra quem ficou
+// AGUARDANDO_CONSULTA_ONLINE depois da offline não achar nada. 2 fases:
+// registrar autorização (sem link, pedido explícito) e depois checar o
+// resultado (pode levar um tempo do lado da Facta, por isso reivindica
+// separado, com uma janela de espera no meio).
+// ---------------------------------------------------------------------------
+
+export interface OfertaParaOnlineFactaSnapshot {
+  id: string;
+  cpf: string | null;
+  nome: string | null;
+  /** telefoneOriginal — nessa etapa (bem no início do funil) ainda não existe telefoneValidado/Atualizado. */
+  telefoneOriginal: string | null;
+  tentativasOnlineFacta: number;
+}
+
+export interface MargemFactaOnlinePort {
+  // Fase 1 — registrar autorização.
+  claimOffersParaRegistrarAutorizacaoOnline(limit: number): Promise<OfertaParaOnlineFactaSnapshot[]>;
+  marcarAutorizacaoOnlineRegistrada(offerId: string, respostaBruta: unknown, proximaVerificacaoEm: Date): Promise<void>;
+  /** Falha ao registrar a autorização em si (não confundir com "falha na consulta depois") — volta pra AGUARDANDO_CONSULTA_ONLINE, tenta nessa fase de novo depois. */
+  marcarErroRegistrarAutorizacaoOnline(offerId: string, params: { erro: string; tentativa: number; proximaTentativaEm: Date }): Promise<void>;
+
+  // Fase 2 — checar o resultado.
+  claimOffersParaVerificarResultadoOnline(limit: number, agora: Date): Promise<OfertaParaOnlineFactaSnapshot[]>;
+  marcarMargemAprovadaOnline(offerId: string, dados: { valorMargemDisponivel: number; dadosCompletos: unknown }): Promise<void>;
+  marcarMargemNegativaOnline(offerId: string, dados: { valorMargemDisponivel: number; dadosCompletos: unknown }): Promise<void>;
+  /** Ainda não processou do lado da Facta — agenda nova checagem, não é erro. */
+  marcarAindaProcessandoOnline(offerId: string, proximaVerificacaoEm: Date, tentativa: number): Promise<void>;
+  /** Esgotou as tentativas de checagem (ou erro terminal) — "falha aberta", mesmo espírito da offline. */
+  marcarFalhaAbertaOnline(offerId: string): Promise<void>;
+
+  // Cache do token (próprio — URL base diferente da offline, mesmo com a mesma credencial).
+  buscarTokenOnlineFactaCache(): Promise<{ token: string; expiraEm: Date } | null>;
+  salvarTokenOnlineFactaCache(token: string, expiraEm: Date): Promise<void>;
+}
