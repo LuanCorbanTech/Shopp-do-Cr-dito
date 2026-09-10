@@ -182,3 +182,4 @@ Ver seção 12 do documento de arquitetura.
   impede rodar a API completa neste ambiente).
 - Autenticação do painel é um token único (ver seção acima) — trocar por login
   multiusuário antes de expor a um time maior que uma pessoa.
+<!-- deploy -->
