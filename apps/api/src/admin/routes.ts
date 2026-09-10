@@ -165,6 +165,27 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         }
       });
 
+      // Teste da consulta ONLINE (04/09, 2ª etapa) — registra a autorização
+      // de verdade e já tenta consultar em seguida. Pede nome+celular
+      // porque, diferente da offline, esse endpoint exige esses dados pra
+      // registrar a autorização (não é só o CPF).
+      instance.get<{ Querystring: { cpf?: string; nome?: string; celular?: string } }>(
+        "/integrations/facta-margem/testar-online",
+        async (request, reply) => {
+          const { cpf, nome, celular } = request.query;
+          if (!cpf || !nome || !celular) {
+            reply.code(400);
+            return { error: "campos_obrigatorios", mensagem: "Informe ?cpf=...&nome=...&celular=(DD) 90000-0000." };
+          }
+          try {
+            return await adminRepo.testarConsultaOnlineFacta({ cpf, nome, celular });
+          } catch (error) {
+            reply.code(502);
+            return { error: "falha_consulta", mensagem: error instanceof Error ? error.message : String(error) };
+          }
+        }
+      );
+
       // Relatório periódico: envia os KPIs do dia (mesmas contagens do
       // /dashboard/kpis) por POST simples pro endpoint cadastrado aqui, na
       // frequência configurada (worker7-relatorio-periodico, apps/workers).
