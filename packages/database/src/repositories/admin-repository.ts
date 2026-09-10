@@ -544,16 +544,16 @@ export class AdminRepository {
       // também esteja preenchido, com a resposta "nenhum dado encontrado" da
       // 1ª tentativa).
       this.prisma.offer.count({
-        where: { ...createdAt, status: "MARGEM_APROVADA", dadosFactaOffline: { not: Prisma.JsonNull }, dadosFactaOnline: Prisma.JsonNull },
+        where: { ...createdAt, status: "MARGEM_APROVADA", dadosFactaOffline: { not: Prisma.DbNull }, dadosFactaOnline: { equals: Prisma.DbNull } },
       }),
       this.prisma.offer.count({
-        where: { ...createdAt, status: "MARGEM_NEGATIVA", dadosFactaOffline: { not: Prisma.JsonNull }, dadosFactaOnline: Prisma.JsonNull },
+        where: { ...createdAt, status: "MARGEM_NEGATIVA", dadosFactaOffline: { not: Prisma.DbNull }, dadosFactaOnline: { equals: Prisma.DbNull } },
       }),
       this.prisma.offer.count({
-        where: { ...createdAt, status: "MARGEM_APROVADA", dadosFactaOnline: { not: Prisma.JsonNull } },
+        where: { ...createdAt, status: "MARGEM_APROVADA", dadosFactaOnline: { not: Prisma.DbNull } },
       }),
       this.prisma.offer.count({
-        where: { ...createdAt, status: "MARGEM_NEGATIVA", dadosFactaOnline: { not: Prisma.JsonNull } },
+        where: { ...createdAt, status: "MARGEM_NEGATIVA", dadosFactaOnline: { not: Prisma.DbNull } },
       }),
       this.prisma.offer.count({
         where: {
