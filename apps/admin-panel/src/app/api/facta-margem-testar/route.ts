@@ -4,10 +4,13 @@ import { adminApiFetch } from "@/lib/api";
 export async function GET(request: NextRequest) {
   try {
     const cpf = request.nextUrl.searchParams.get("cpf");
-    if (!cpf) {
-      return NextResponse.json({ error: "cpf_obrigatorio", mensagem: "Informe um CPF." }, { status: 400 });
+    const nome = request.nextUrl.searchParams.get("nome");
+    const celular = request.nextUrl.searchParams.get("celular");
+    if (!cpf || !nome || !celular) {
+      return NextResponse.json({ error: "campos_obrigatorios", mensagem: "Informe cpf, nome e celular." }, { status: 400 });
     }
-    const data = await adminApiFetch(`/admin/integrations/facta-margem/testar?cpf=${encodeURIComponent(cpf)}`);
+    const qs = new URLSearchParams({ cpf, nome, celular }).toString();
+    const data = await adminApiFetch(`/admin/integrations/facta-margem/testar-online?${qs}`);
     return NextResponse.json(data);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
