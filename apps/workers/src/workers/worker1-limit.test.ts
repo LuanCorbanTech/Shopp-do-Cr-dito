@@ -6,7 +6,7 @@ describe("runLimitWorkerOnce", () => {
   it("usa o telefone original e ignora a Lemit quando desativada (item 8)", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", false);
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "85868388372" });
 
     let called = false;
     await runLimitWorkerOnce({
@@ -28,7 +28,7 @@ describe("runLimitWorkerOnce", () => {
   it("ignora a Lemit quando o lead não tem CPF, mesmo com a consulta ativada", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true);
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: null });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: null });
 
     let called = false;
     await runLimitWorkerOnce({
@@ -50,7 +50,7 @@ describe("runLimitWorkerOnce", () => {
   it("chama a Lemit por CPF e grava o telefone escolhido + os dados da pessoa quando ativada", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true);
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372", nome: "Pablo (nome do parceiro)" });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "85868388372", nome: "Pablo (nome do parceiro)" });
 
     let documentoRecebido: string | null = null;
     await runLimitWorkerOnce({
@@ -83,7 +83,7 @@ describe("runLimitWorkerOnce", () => {
   it("mantém o nome já existente quando a Lemit não devolve nenhum nome", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true);
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372", nome: "Nome Original Do Parceiro" });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "85868388372", nome: "Nome Original Do Parceiro" });
 
     await runLimitWorkerOnce({
       phonePort: repo,
@@ -105,7 +105,7 @@ describe("runLimitWorkerOnce", () => {
   it("mantém o telefone original quando a Lemit não devolve nenhum celular usável", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true);
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "85868388372" });
 
     await runLimitWorkerOnce({
       phonePort: repo,
@@ -126,7 +126,7 @@ describe("runLimitWorkerOnce", () => {
   it("agenda retry (não cancela) quando ainda há tentativas disponíveis", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true, { maxTentativas: 3 });
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "85868388372" });
 
     await runLimitWorkerOnce({
       phonePort: repo,
@@ -144,7 +144,7 @@ describe("runLimitWorkerOnce", () => {
   it("cancela ao esgotar o número máximo de tentativas — nunca é retry infinito", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true, { maxTentativas: 1 });
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "85868388372" });
 
     await runLimitWorkerOnce({
       phonePort: repo,
@@ -160,7 +160,7 @@ describe("runLimitWorkerOnce", () => {
   it("guarda o corpo real da resposta de erro da Lemit (não só a mensagem curta) — pra dar pra investigar depois", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true, { maxTentativas: 3 });
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "85868388372" });
 
     // Simula exatamente o formato do LimitServiceError (packages/integrations/limit) —
     // sem importar a classe real, só duck-typing as propriedades. Usa 500 (erro
@@ -190,7 +190,7 @@ describe("runLimitWorkerOnce", () => {
     // CPF real, com dígitos verificadores corretos (confirmado à parte) — o
     // ponto aqui é que a LEMIT não tem registro dele, não que o CPF em si
     // seja mal formatado.
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "33522334388" });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "33522334388" });
 
     const erro404 = Object.assign(new Error("API Lemit respondeu 404"), {
       httpStatus: 404,
@@ -217,7 +217,7 @@ describe("runLimitWorkerOnce", () => {
   it("não quebra quando o erro NÃO tem respostaBruta (ex.: timeout de rede, sem corpo de resposta nenhum)", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true, { maxTentativas: 3 });
-    const offer = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "85868388372" });
 
     await runLimitWorkerOnce({
       phonePort: repo,
@@ -283,7 +283,7 @@ describe("runLimitWorkerOnce — segunda chance pra quem ficou SEM_WHATSAPP com 
   it("não mexe em ofertas RECEBIDO normais quando processa a fila de segunda chance — as duas filas são independentes", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", false);
-    const offerRecebida = repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" }); // RECEBIDO normal
+    const offerRecebida = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "85868388372" }); // pool normal
     const offerSegundaChance = repo.addOffer({
       telefoneOriginal: "62988888888", cpf: "11111111111", status: "SEM_WHATSAPP", telefoneAtualizado: null,
     });
@@ -328,7 +328,7 @@ describe("runLimitWorkerOnce — segunda chance pra quem ficou SEM_WHATSAPP com 
   it("processa as 2 filas no MESMO ciclo (recebidas + segunda chance), contando as duas no total devolvido", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", true);
-    repo.addOffer({ telefoneOriginal: "62999999999", cpf: "85868388372" });
+    repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "85868388372" });
     repo.addOffer({ telefoneOriginal: "62988888888", cpf: "11111111111", status: "SEM_WHATSAPP", telefoneAtualizado: null });
 
     const total = await runLimitWorkerOnce({
@@ -345,7 +345,7 @@ describe("runLimitWorkerOnce — lead SEM telefone nenhum na captação, mesmo c
   it("BUG REAL: consulta a Lemit DE VERDADE (mesmo desativada) quando a oferta não tem telefoneOriginal nenhum — payload real confirmado (Fábio, sem cadastro/telefones/whatsapps)", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", false); // desativada
-    const offer = repo.addOffer({ telefoneOriginal: null, cpf: "07851703751" });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: null, cpf: "07851703751" });
 
     let chamouLemit = false;
     await runLimitWorkerOnce({
@@ -367,7 +367,7 @@ describe("runLimitWorkerOnce — lead SEM telefone nenhum na captação, mesmo c
   it("continua PULANDO a Lemit normalmente (comportamento de sempre) quando a oferta TEM telefone original, mesmo desativada", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", false);
-    repo.addOffer({ telefoneOriginal: "62999999999", cpf: "07851703751" });
+    repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: "62999999999", cpf: "07851703751" });
 
     let chamouLemit = false;
     await runLimitWorkerOnce({
@@ -382,7 +382,7 @@ describe("runLimitWorkerOnce — lead SEM telefone nenhum na captação, mesmo c
   it("se a oferta sem telefone TAMBÉM não tiver CPF, cai no caminho normal de 'sem documento' (não força Lemit à toa, já que não tem como consultar)", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", false);
-    const offer = repo.addOffer({ telefoneOriginal: null, cpf: null });
+    const offer = repo.addOffer({ status: "MARGEM_APROVADA", telefoneOriginal: null, cpf: null });
 
     let chamouLemit = false;
     await runLimitWorkerOnce({

@@ -12,6 +12,8 @@ import type {
   StuckOfferSnapshot,
   OfferSnapshot,
   InfoPessoaLemit,
+  MargemFactaPort,
+  OfertaParaMargemSnapshot,
 } from "@plataforma-ofertas/domain";
 
 // Réplica em memória de todas as portas dos workers 1-6, no mesmo espírito do
@@ -41,6 +43,11 @@ export interface MutableOffer extends OfferSnapshot {
   numero?: string | null;
   logradouro?: string | null;
   complemento?: string | null;
+  // Consulta de margem Facta (04/09) — visibilidade em teste, igual aos campos da Lemit acima.
+  valorMargemDisponivelFacta?: number | null;
+  dadosFactaOffline?: unknown;
+  tentativasMargemFacta?: number;
+  proximaTentativaMargemEm?: Date | null;
 }
 
 const IN_FLIGHT_STATUSES = [
@@ -61,11 +68,14 @@ export class InMemoryPipelineRepository
     RoutingPort,
     DispatchPort,
     RetryPort,
-    ReconciliationPort
+    ReconciliationPort,
+    MargemFactaPort
 {
   readonly offers = new Map<string, MutableOffer>();
   readonly configs = new Map<string, IntegrationConfigSnapshot>();
   readonly rules: RoutingRuleSnapshot[] = [];
+  // Cache do token Facta (04/09) — sem tabela própria, direto em memória aqui.
+  private tokenFactaCache: { token: string; expiraEm: Date } | null = null;
   readonly endpoints = new Map<string, EndpointSnapshot>();
   readonly processingLog: Array<{ offerId: string; etapa: string; resultado: string; respostaBruta?: unknown }> = [];
   private idCounter = 0;
@@ -101,6 +111,10 @@ export class InMemoryPipelineRepository
       reservedAt: partial.reservedAt ?? null,
       proximaTentativaEm: partial.proximaTentativaEm ?? null,
       createdAt: partial.createdAt ?? new Date(Date.now() + this.idCounter), // preserva ordem de inserção
+      valorMargemDisponivelFacta: partial.valorMargemDisponivelFacta ?? null,
+      dadosFactaOffline: partial.dadosFactaOffline ?? null,
+      tentativasMargemFacta: partial.tentativasMargemFacta ?? 0,
+      proximaTentativaMargemEm: partial.proximaTentativaMargemEm ?? null,
     };
     this.offers.set(offer.id, offer);
     return offer;
@@ -151,8 +165,10 @@ export class InMemoryPipelineRepository
   // ---------------------------------------------------------------------------
   // Worker 1 — PhoneProcessingPort
   // ---------------------------------------------------------------------------
+  // Renomeado de "RECEBIDO" pra "MARGEM_APROVADA" em 04/09 — ver comentário
+  // na interface (pipeline-ports.ts).
   async claimOffersReceived(limit: number): Promise<OfferSnapshot[]> {
-    return this.claimByStatus(["RECEBIDO"], "PROCESSANDO_TELEFONE", limit);
+    return this.claimByStatus(["MARGEM_APROVADA"], "PROCESSANDO_TELEFONE", limit);
   }
 
   async claimOffersSemWhatsappParaRetentarLemit(limit: number): Promise<OfferSnapshot[]> {
@@ -469,5 +485,73 @@ export class InMemoryPipelineRepository
     const offer = this.require(offerId);
     offer.status = targetStatus;
     offer.reservedAt = null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Worker 0 — Consulta de margem Facta (04/09)
+  // -------------------------------------------------------------------------
+
+  async claimOffersParaMargem(limit: number, agora: Date): Promise<OfertaParaMargemSnapshot[]> {
+    const candidatas = [...this.offers.values()]
+      .filter(
+        (o) =>
+          o.status === "RECEBIDO" &&
+          (!o.proximaTentativaMargemEm || o.proximaTentativaMargemEm.getTime() <= agora.getTime())
+      )
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, limit);
+    for (const o of candidatas) {
+      o.status = "CONSULTANDO_MARGEM_FACTA";
+      o.reservedAt = agora;
+    }
+    return candidatas.map((o) => ({ id: o.id, cpf: o.cpf, tentativasMargemFacta: o.tentativasMargemFacta ?? 0 }));
+  }
+
+  async marcarMargemAprovada(
+    offerId: string,
+    dados: { valorMargemDisponivel: number | null; dadosCompletos: unknown }
+  ): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "MARGEM_APROVADA";
+    offer.valorMargemDisponivelFacta = dados.valorMargemDisponivel;
+    offer.dadosFactaOffline = dados.dadosCompletos;
+    offer.reservedAt = null;
+  }
+
+  async marcarMargemNegativa(
+    offerId: string,
+    dados: { valorMargemDisponivel: number; dadosCompletos: unknown }
+  ): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "MARGEM_NEGATIVA";
+    offer.valorMargemDisponivelFacta = dados.valorMargemDisponivel;
+    offer.dadosFactaOffline = dados.dadosCompletos;
+    offer.reservedAt = null;
+  }
+
+  async marcarAguardandoConsultaOnline(offerId: string, respostaBruta: unknown): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "AGUARDANDO_CONSULTA_ONLINE";
+    offer.dadosFactaOffline = respostaBruta;
+    offer.reservedAt = null;
+  }
+
+  async marcarErroMargem(
+    offerId: string,
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date }
+  ): Promise<void> {
+    const offer = this.require(offerId);
+    offer.status = "RECEBIDO";
+    offer.reservedAt = null;
+    offer.tentativasMargemFacta = params.tentativa;
+    offer.proximaTentativaMargemEm = params.proximaTentativaEm;
+  }
+
+  async buscarTokenFactaCache(): Promise<{ token: string; expiraEm: Date } | null> {
+    return this.tokenFactaCache;
+  }
+
+  async salvarTokenFactaCache(token: string, expiraEm: Date): Promise<void> {
+    this.tokenFactaCache = { token, expiraEm };
   }
 }

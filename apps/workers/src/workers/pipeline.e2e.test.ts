@@ -33,7 +33,7 @@ describe("pipeline completo (RECEBIDO -> AGUARDANDO_DISPARO)", () => {
       telefoneOriginal: "62999999999",
       cpf: "85868388372",
       bancoAutorizado: "C6",
-      status: "RECEBIDO",
+      status: "MARGEM_APROVADA",
     });
 
     await runLimitWorkerOnce({
@@ -97,7 +97,7 @@ describe("pipeline completo (RECEBIDO -> AGUARDANDO_DISPARO)", () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("LIMIT_CONSULTA", false);
 
-    const offer = repo.addOffer({ telefoneOriginal: "62988887777", bancoAutorizado: "BMG", status: "RECEBIDO" });
+    const offer = repo.addOffer({ telefoneOriginal: "62988887777", bancoAutorizado: "BMG", status: "MARGEM_APROVADA" });
 
     await runLimitWorkerOnce({ phonePort: repo, configPort: repo, limitService: { lookupPhone: async () => { throw new Error("não deveria ser chamado"); } } });
 
