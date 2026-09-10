@@ -34,6 +34,10 @@ export interface OfferFullInfo {
   valor: number | null;
   parcelas: number | null;
   status: string;
+  // "Status disparo" (04/09, pedido explícito) — só a tentativa mais
+  // recente de disparo individual, de qualquer endpoint (array com 0 ou 1
+  // item, já vem assim da API — ver listOffers no admin-repository).
+  disparoIndividualTentativas?: Array<{ httpStatus: number | null; sucesso: boolean; timeout: boolean }>;
 }
 
 function Campo({ label, value }: { label: string; value: string | number | null | boolean }) {

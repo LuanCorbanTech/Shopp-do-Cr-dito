@@ -121,6 +121,7 @@ export function OfertasClient() {
               <th>Banco</th>
               <th>WhatsApp</th>
               <th>Status</th>
+              <th>Status disparo</th>
               <th>Horário recebido</th>
               <th>Última atualização</th>
               <th></th>
@@ -129,13 +130,14 @@ export function OfertasClient() {
           <tbody>
             {carregando && !data && (
               <tr>
-                <td colSpan={8} className="empty-state">
+                <td colSpan={9} className="empty-state">
                   Carregando…
                 </td>
               </tr>
             )}
             {data?.items.map((offer) => {
               const telefone = telefoneWhatsapp(offer);
+              const ultimoDisparo = offer.disparoIndividualTentativas?.[0];
               return (
                 <tr key={offer.id}>
                   <td>{offer.nome ?? "—"}</td>
@@ -159,6 +161,19 @@ export function OfertasClient() {
                       <StatusBadge status={offer.status} />
                     </a>
                   </td>
+                  <td>
+                    {!ultimoDisparo && "—"}
+                    {ultimoDisparo?.timeout && (
+                      <span className="badge" title="Endpoint não respondeu a tempo (timeout)">
+                        timeout
+                      </span>
+                    )}
+                    {ultimoDisparo && !ultimoDisparo.timeout && (
+                      <span className={`badge ${ultimoDisparo.sucesso ? "good" : "critical"}`}>
+                        {ultimoDisparo.httpStatus ?? "—"}
+                      </span>
+                    )}
+                  </td>
                   <td style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{formatarDataHora(offer.createdAt)}</td>
                   <td style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{formatarDataHora(offer.updatedAt)}</td>
                   <td>
@@ -169,7 +184,7 @@ export function OfertasClient() {
             })}
             {data && data.items.length === 0 && (
               <tr>
-                <td colSpan={8} className="empty-state">
+                <td colSpan={9} className="empty-state">
                   Nenhuma oferta encontrada.
                 </td>
               </tr>

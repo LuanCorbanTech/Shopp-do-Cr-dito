@@ -505,6 +505,11 @@ export class AdminRepository {
       disparoConsultado,
       disparoEnviado,
       disparoRespondido,
+      factaOfflineAprovada,
+      factaOfflineNegativa,
+      factaOnlineAprovada,
+      factaOnlineNegativa,
+      factaAguardandoOnline,
     ] = await Promise.all([
       this.prisma.offer.count({ where: { ...createdAt, ...filtroExtra } }),
       this.prisma.offer.count({ where: { ...createdAt, status: { in: intersecta(STATUS_PROCESSAMENTO) as never[] } } }),
@@ -532,6 +537,37 @@ export class AdminRepository {
             : { disparoRespondidoEm: { not: null } }),
         },
       }),
+      // Consulta de margem Facta (04/09) — separado por etapa (offline vs
+      // online) e por resultado (aprovada vs negativa). "Offline" = decidiu
+      // já na 1ª consulta (dadosFactaOnline ainda nulo); "Online" = precisou
+      // da 2ª etapa (dadosFactaOnline preenchido — mesmo que dadosFactaOffline
+      // também esteja preenchido, com a resposta "nenhum dado encontrado" da
+      // 1ª tentativa).
+      this.prisma.offer.count({
+        where: { ...createdAt, status: "MARGEM_APROVADA", dadosFactaOffline: { not: Prisma.JsonNull }, dadosFactaOnline: Prisma.JsonNull },
+      }),
+      this.prisma.offer.count({
+        where: { ...createdAt, status: "MARGEM_NEGATIVA", dadosFactaOffline: { not: Prisma.JsonNull }, dadosFactaOnline: Prisma.JsonNull },
+      }),
+      this.prisma.offer.count({
+        where: { ...createdAt, status: "MARGEM_APROVADA", dadosFactaOnline: { not: Prisma.JsonNull } },
+      }),
+      this.prisma.offer.count({
+        where: { ...createdAt, status: "MARGEM_NEGATIVA", dadosFactaOnline: { not: Prisma.JsonNull } },
+      }),
+      this.prisma.offer.count({
+        where: {
+          ...createdAt,
+          status: {
+            in: intersecta([
+              "AGUARDANDO_CONSULTA_ONLINE",
+              "REGISTRANDO_AUTORIZACAO_ONLINE_FACTA",
+              "AGUARDANDO_RESULTADO_ONLINE_FACTA",
+              "CONSULTANDO_RESULTADO_ONLINE_FACTA",
+            ]) as never[],
+          },
+        },
+      }),
     ]);
 
     return {
@@ -543,6 +579,11 @@ export class AdminRepository {
       disparoConsultado,
       disparoEnviado,
       disparoRespondido,
+      factaOfflineAprovada,
+      factaOfflineNegativa,
+      factaOnlineAprovada,
+      factaOnlineNegativa,
+      factaAguardandoOnline,
     };
   }
 
@@ -950,6 +991,106 @@ export class AdminRepository {
     return { tokenGerado: true, cpfConsultado: cpfLimpo, dados: primeiro, mensagem: "Consulta realizada com sucesso." };
   }
 
+  // Ferramenta de teste da consulta ONLINE (04/09, 2ª etapa) — registra a
+  // autorização de verdade e já tenta consultar em seguida (sem esperar a
+  // janela normal de 60s, já que é um teste manual, não o worker
+  // automático). Se a Facta ainda não tiver processado, devolve
+  // "aindaProcessando: true" — não é erro, só significa que precisa
+  // esperar mais e tentar de novo manualmente.
+  async testarConsultaOnlineFacta(params: {
+    cpf: string;
+    nome: string;
+    celular: string;
+  }): Promise<{
+    autorizacaoRegistrada: unknown;
+    aindaProcessando: boolean;
+    dados: Record<string, unknown> | null;
+    mensagem: string;
+  }> {
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "FACTA_MARGEM_CREDENCIAIS" } });
+    const valor = (config?.valor ?? {}) as {
+      usuario?: string;
+      senha?: string;
+      baseUrlOnline?: string;
+      averbadorOnline?: string;
+      localizacaoIpOnline?: string;
+      localizacaoAutorizacaoOnline?: string;
+    };
+    if (!valor.usuario || !valor.senha) {
+      throw new Error("Credenciais da Facta não configuradas ainda (usuario/senha) — salve antes de testar.");
+    }
+    const baseUrl = (valor.baseUrlOnline || "https://webservice.facta.com.br").replace(/\/$/, "");
+    const cpfLimpo = params.cpf.replace(/\D/g, "");
+
+    const basic = Buffer.from(`${valor.usuario}:${valor.senha}`).toString("base64");
+    const respostaToken = await fetch(`${baseUrl}/gera-token`, { method: "GET", headers: { Authorization: `Basic ${basic}` } });
+    const corpoToken = (await respostaToken.json().catch(() => null)) as { erro?: boolean; mensagem?: string; token?: string } | null;
+    if (!respostaToken.ok || !corpoToken || corpoToken.erro || !corpoToken.token) {
+      throw new Error(corpoToken?.mensagem || `Facta respondeu ${respostaToken.status} ao gerar token (serviço online)`);
+    }
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const agora = new Date();
+    const dataFormatada = `${agora.getFullYear()}-${pad(agora.getMonth() + 1)}-${pad(agora.getDate())} ${pad(agora.getHours())}:${pad(agora.getMinutes())}:${pad(agora.getSeconds())}`;
+
+    const form = new FormData();
+    form.append("averbador", valor.averbadorOnline || "10010");
+    form.append("nome", params.nome);
+    form.append("cpf", cpfLimpo);
+    form.append("celular", params.celular);
+    form.append("tipo_envio", "WHATSAPP");
+    form.append("data_autorizacao_cliente", dataFormatada);
+    form.append("localizacao_ip", valor.localizacaoIpOnline || "");
+    form.append("localizacao_autorizacao", valor.localizacaoAutorizacaoOnline || "");
+
+    const respostaAutorizacao = await fetch(`${baseUrl}/cadastrar-autorizacao-consulta`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${corpoToken.token}` },
+      body: form,
+    });
+    const corpoAutorizacao = (await respostaAutorizacao.json().catch(() => null)) as { erro?: boolean; mensagem?: string } | null;
+    if (!respostaAutorizacao.ok || !corpoAutorizacao || corpoAutorizacao.erro) {
+      throw new Error(corpoAutorizacao?.mensagem || `Facta respondeu ${respostaAutorizacao.status} ao registrar autorização`);
+    }
+
+    // Tenta consultar na hora (só pra teste manual — o worker de verdade
+    // espera 60s antes da 1ª tentativa).
+    const respostaConsulta = await fetch(`${baseUrl}/consignado-trabalhador/consulta-dados-trabalhador?cpf=${cpfLimpo}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${corpoToken.token}` },
+    });
+    const corpoConsulta = (await respostaConsulta.json().catch(() => null)) as {
+      erro?: boolean;
+      mensagem?: string;
+      dados_trabalhador?: { dados?: Record<string, unknown>[] };
+    } | null;
+
+    if (!respostaConsulta.ok || !corpoConsulta) {
+      return {
+        autorizacaoRegistrada: corpoAutorizacao,
+        aindaProcessando: true,
+        dados: null,
+        mensagem: `Autorização registrada. Consulta ainda não disponível (HTTP ${respostaConsulta.status}) — tente de novo em alguns segundos.`,
+      };
+    }
+    if (corpoConsulta.erro) {
+      return {
+        autorizacaoRegistrada: corpoAutorizacao,
+        aindaProcessando: true,
+        dados: null,
+        mensagem: `Autorização registrada. Consulta ainda respondeu "${corpoConsulta.mensagem}" — tente de novo em alguns segundos.`,
+      };
+    }
+
+    const primeiro = corpoConsulta.dados_trabalhador?.dados?.[0] ?? null;
+    return {
+      autorizacaoRegistrada: corpoAutorizacao,
+      aindaProcessando: false,
+      dados: primeiro,
+      mensagem: "Autorização registrada e consulta concluída com sucesso.",
+    };
+  }
+
   async salvarCredenciaisIntegracao(
     chave: "LEMIT_CREDENCIAIS" | "WHATSAPP_VALIDACAO_CREDENCIAIS",
     dados: {
@@ -1286,6 +1427,15 @@ export class AdminRepository {
         orderBy: { createdAt: "desc" },
         take: params.limit,
         skip: params.offset,
+        // "Status disparo" na lista (04/09, pedido explícito) — só a
+        // tentativa MAIS RECENTE de disparo individual (de qualquer
+        // endpoint), pra mostrar na coluna sem precisar abrir a oferta.
+        include: {
+          disparoIndividualTentativas: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
       }),
       this.prisma.offer.count({ where }),
     ]);

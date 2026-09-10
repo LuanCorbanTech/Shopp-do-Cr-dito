@@ -26,6 +26,11 @@ interface KpiContagens {
   disparoConsultado: number;
   disparoEnviado: number;
   disparoRespondido: number;
+  factaOfflineAprovada: number;
+  factaOfflineNegativa: number;
+  factaOnlineAprovada: number;
+  factaOnlineNegativa: number;
+  factaAguardandoOnline: number;
 }
 
 // "anterior" só vem preenchido quando o filtro de período é um intervalo
@@ -338,6 +343,44 @@ export function DashboardClient() {
           enviadosAnterior={kpis?.anterior?.disparoEnviado ?? null}
           respondidosAnterior={kpis?.anterior?.disparoRespondido ?? null}
           serieDisparo={serieDisparo}
+        />
+      </div>
+
+      <div className="section-label">Consulta de margem (Facta)</div>
+      <div className="kpi-grid">
+        <KpiCard
+          icon={<IconShield />}
+          value={kpis?.factaOfflineAprovada ?? null}
+          label="Offline: margem aprovada"
+          loading={carregando && !kpis}
+          deltaTexto={delta("factaOfflineAprovada").texto}
+          deltaPositivo={delta("factaOfflineAprovada").positivo}
+        />
+        <KpiCard
+          icon={<IconShield />}
+          value={kpis?.factaOfflineNegativa ?? null}
+          label="Offline: margem negativa"
+          loading={carregando && !kpis}
+        />
+        <KpiCard
+          icon={<IconHourglass />}
+          value={kpis?.factaAguardandoOnline ?? null}
+          label="Aguardando consulta online"
+          loading={carregando && !kpis}
+        />
+        <KpiCard
+          icon={<IconShield />}
+          value={kpis?.factaOnlineAprovada ?? null}
+          label="Online: margem aprovada"
+          loading={carregando && !kpis}
+          deltaTexto={delta("factaOnlineAprovada").texto}
+          deltaPositivo={delta("factaOnlineAprovada").positivo}
+        />
+        <KpiCard
+          icon={<IconShield />}
+          value={kpis?.factaOnlineNegativa ?? null}
+          label="Online: margem negativa"
+          loading={carregando && !kpis}
         />
       </div>
 

@@ -16,6 +16,8 @@ import type {
   InfoPessoaLemit,
   MargemFactaPort,
   OfertaParaMargemSnapshot,
+  MargemFactaOnlinePort,
+  OfertaParaOnlineFactaSnapshot,
 } from "@plataforma-ofertas/domain";
 
 // Implementação Prisma/PostgreSQL de todas as portas usadas pelos workers 1-6.
@@ -103,7 +105,8 @@ export class PrismaPipelineRepository
     RetryPort,
     ReconciliationPort,
     DispatchPollPort,
-    MargemFactaPort
+    MargemFactaPort,
+    MargemFactaOnlinePort
 {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -934,6 +937,147 @@ export class PrismaPipelineRepository
     const atual = await this.prisma.integrationConfig.findUnique({ where: { chave: "FACTA_MARGEM_CREDENCIAIS" } });
     const valorAtual = (atual?.valor ?? {}) as Record<string, unknown>;
     const novoValor = { ...valorAtual, tokenCache: token, tokenCacheExpiraEm: expiraEm.toISOString() };
+    await this.prisma.integrationConfig.upsert({
+      where: { chave: "FACTA_MARGEM_CREDENCIAIS" },
+      create: { chave: "FACTA_MARGEM_CREDENCIAIS", ativo: false, valor: novoValor },
+      update: { valor: novoValor },
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Consulta ONLINE Facta (04/09, 2ª etapa)
+  // -------------------------------------------------------------------------
+
+  async claimOffersParaRegistrarAutorizacaoOnline(limit: number): Promise<OfertaParaOnlineFactaSnapshot[]> {
+    const rows = await this.prisma.$queryRaw<
+      { id: string; cpf: string | null; nome: string | null; telefone_original: string | null; tentativas_online_facta: number }[]
+    >`
+      UPDATE offers
+      SET status = 'REGISTRANDO_AUTORIZACAO_ONLINE_FACTA'::"OfferStatus", reserved_at = now(), updated_at = now()
+      WHERE id IN (
+        SELECT id FROM offers
+        WHERE status = 'AGUARDANDO_CONSULTA_ONLINE'::"OfferStatus"
+        ORDER BY created_at
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, cpf, nome, telefone_original, tentativas_online_facta
+    `;
+    return rows.map((r) => ({
+      id: r.id,
+      cpf: r.cpf,
+      nome: r.nome,
+      telefoneOriginal: r.telefone_original,
+      tentativasOnlineFacta: r.tentativas_online_facta,
+    }));
+  }
+
+  async marcarAutorizacaoOnlineRegistrada(offerId: string, respostaBruta: unknown, proximaVerificacaoEm: Date): Promise<void> {
+    await this.prisma.offer.update({
+      where: { id: offerId },
+      data: {
+        status: "AGUARDANDO_RESULTADO_ONLINE_FACTA",
+        dadosFactaOnline: toJsonInput(respostaBruta),
+        proximaTentativaOnlineFactaEm: proximaVerificacaoEm,
+        reservedAt: null,
+      },
+    });
+  }
+
+  async marcarErroRegistrarAutorizacaoOnline(
+    offerId: string,
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date }
+  ): Promise<void> {
+    await this.prisma.offer.update({
+      where: { id: offerId },
+      data: {
+        status: "AGUARDANDO_CONSULTA_ONLINE",
+        reservedAt: null,
+        tentativasOnlineFacta: params.tentativa,
+        proximaTentativaOnlineFactaEm: params.proximaTentativaEm,
+      },
+    });
+  }
+
+  async claimOffersParaVerificarResultadoOnline(limit: number, agora: Date): Promise<OfertaParaOnlineFactaSnapshot[]> {
+    const rows = await this.prisma.$queryRaw<
+      { id: string; cpf: string | null; nome: string | null; telefone_original: string | null; tentativas_online_facta: number }[]
+    >`
+      UPDATE offers
+      SET status = 'CONSULTANDO_RESULTADO_ONLINE_FACTA'::"OfferStatus", reserved_at = ${agora}, updated_at = ${agora}
+      WHERE id IN (
+        SELECT id FROM offers
+        WHERE status = 'AGUARDANDO_RESULTADO_ONLINE_FACTA'::"OfferStatus"
+          AND (proxima_tentativa_online_facta_em IS NULL OR proxima_tentativa_online_facta_em <= ${agora})
+        ORDER BY created_at
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, cpf, nome, telefone_original, tentativas_online_facta
+    `;
+    return rows.map((r) => ({
+      id: r.id,
+      cpf: r.cpf,
+      nome: r.nome,
+      telefoneOriginal: r.telefone_original,
+      tentativasOnlineFacta: r.tentativas_online_facta,
+    }));
+  }
+
+  async marcarMargemAprovadaOnline(offerId: string, dados: { valorMargemDisponivel: number; dadosCompletos: unknown }): Promise<void> {
+    await this.prisma.offer.update({
+      where: { id: offerId },
+      data: {
+        status: "MARGEM_APROVADA",
+        valorMargemDisponivelFacta: dados.valorMargemDisponivel,
+        dadosFactaOnline: toJsonInput(dados.dadosCompletos),
+        reservedAt: null,
+      },
+    });
+  }
+
+  async marcarMargemNegativaOnline(offerId: string, dados: { valorMargemDisponivel: number; dadosCompletos: unknown }): Promise<void> {
+    await this.prisma.offer.update({
+      where: { id: offerId },
+      data: {
+        status: "MARGEM_NEGATIVA",
+        valorMargemDisponivelFacta: dados.valorMargemDisponivel,
+        dadosFactaOnline: toJsonInput(dados.dadosCompletos),
+        reservedAt: null,
+      },
+    });
+  }
+
+  async marcarAindaProcessandoOnline(offerId: string, proximaVerificacaoEm: Date, tentativa: number): Promise<void> {
+    await this.prisma.offer.update({
+      where: { id: offerId },
+      data: {
+        status: "AGUARDANDO_RESULTADO_ONLINE_FACTA",
+        reservedAt: null,
+        tentativasOnlineFacta: tentativa,
+        proximaTentativaOnlineFactaEm: proximaVerificacaoEm,
+      },
+    });
+  }
+
+  async marcarFalhaAbertaOnline(offerId: string): Promise<void> {
+    await this.prisma.offer.update({
+      where: { id: offerId },
+      data: { status: "MARGEM_APROVADA", reservedAt: null },
+    });
+  }
+
+  async buscarTokenOnlineFactaCache(): Promise<{ token: string; expiraEm: Date } | null> {
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "FACTA_MARGEM_CREDENCIAIS" } });
+    const valor = (config?.valor ?? {}) as { tokenCacheOnline?: string; tokenCacheOnlineExpiraEm?: string };
+    if (!valor.tokenCacheOnline || !valor.tokenCacheOnlineExpiraEm) return null;
+    return { token: valor.tokenCacheOnline, expiraEm: new Date(valor.tokenCacheOnlineExpiraEm) };
+  }
+
+  async salvarTokenOnlineFactaCache(token: string, expiraEm: Date): Promise<void> {
+    const atual = await this.prisma.integrationConfig.findUnique({ where: { chave: "FACTA_MARGEM_CREDENCIAIS" } });
+    const valorAtual = (atual?.valor ?? {}) as Record<string, unknown>;
+    const novoValor = { ...valorAtual, tokenCacheOnline: token, tokenCacheOnlineExpiraEm: expiraEm.toISOString() };
     await this.prisma.integrationConfig.upsert({
       where: { chave: "FACTA_MARGEM_CREDENCIAIS" },
       create: { chave: "FACTA_MARGEM_CREDENCIAIS", ativo: false, valor: novoValor },
