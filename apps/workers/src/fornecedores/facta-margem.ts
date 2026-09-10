@@ -97,6 +97,7 @@ export interface FactaConsultaOfflineResultado {
   respostaBruta: unknown;
 }
 
+
 export async function consultarBaseOfflineFacta(
   config: FactaMargemConfig,
   token: string,
@@ -144,3 +145,147 @@ export async function consultarBaseOfflineFacta(
     clearTimeout(timeout);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Consulta ONLINE (04/09, 2ª etapa) — Manual-do-WebService-FACTA-v2.0-
+// CONSULTA-DADOS-TRABALHADOR.pdf. Mesma credencial (usuario/senha) da
+// consulta offline, mas URL BASE diferente (webservice.facta.com.br, não
+// cltoff.facta.com.br) — por isso token PRÓPRIO, não reaproveita o cache
+// do token da offline.
+//
+// IMPORTANTE — os 2 endpoints abaixo (cadastrar-autorizacao-consulta e
+// consulta-dados-trabalhador) NÃO estão no manual oficial (que documenta
+// só "solicita-autorizacao-consulta", que manda link por SMS/WhatsApp pra
+// o cliente clicar, e "autoriza-consulta" pra checar). O que está aqui
+// segue EXATAMENTE o exemplo de cURL fornecido no chat (pedido explícito:
+// registrar autorização sem precisar de link) — sem documentação formal
+// pra confirmar os retornos possíveis, então a leitura da resposta é
+// propositalmente defensiva (guarda o corpo bruto inteiro pra conferir
+// depois, não assume um formato rígido demais).
+const FACTA_ONLINE_DEFAULT_BASE_URL = "https://webservice.facta.com.br";
+
+export interface FactaAutorizacaoOnlineParams {
+  averbador: string;
+  nome: string;
+  cpf: string;
+  /** Formato "(00) 00000-0000" — mesmo do exemplo de cURL fornecido. */
+  celular: string;
+  localizacaoIp: string;
+  localizacaoAutorizacao: string;
+  /** Se não vier, usa a hora atual no formato "YYYY-MM-DD HH:MM:SS". */
+  dataAutorizacaoCliente?: Date;
+}
+
+export interface FactaAutorizacaoOnlineResultado {
+  /** true quando a mensagem indica que já tinha autorização válida — pode consultar os dados direto, sem esperar. */
+  jaAutorizado: boolean;
+  respostaBruta: unknown;
+}
+
+function formatarDataFacta(data: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${data.getFullYear()}-${pad(data.getMonth() + 1)}-${pad(data.getDate())} ${pad(data.getHours())}:${pad(data.getMinutes())}:${pad(data.getSeconds())}`;
+}
+
+export async function cadastrarAutorizacaoOnlineFacta(
+  config: FactaMargemConfig,
+  token: string,
+  params: FactaAutorizacaoOnlineParams
+): Promise<FactaAutorizacaoOnlineResultado> {
+  const baseUrl = (config.baseUrl || FACTA_ONLINE_DEFAULT_BASE_URL).replace(/\/$/, "");
+  const timeoutMs = config.timeoutMs ?? 15_000;
+
+  // Multipart/form-data (--form no cURL fornecido), não x-www-form-urlencoded
+  // (diferente do endpoint documentado oficialmente "solicita-autorizacao-consulta").
+  const form = new FormData();
+  form.append("averbador", params.averbador);
+  form.append("nome", params.nome);
+  form.append("cpf", params.cpf.replace(/\D/g, ""));
+  form.append("celular", params.celular);
+  form.append("tipo_envio", "WHATSAPP");
+  form.append("data_autorizacao_cliente", formatarDataFacta(params.dataAutorizacaoCliente ?? new Date()));
+  form.append("localizacao_ip", params.localizacaoIp);
+  form.append("localizacao_autorizacao", params.localizacaoAutorizacao);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${baseUrl}/cadastrar-autorizacao-consulta`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+      signal: controller.signal,
+    });
+    const body = (await response.json().catch(() => null)) as { erro?: boolean; mensagem?: string } | null;
+    if (!response.ok || !body) {
+      throw new FactaMargemError(`Facta respondeu ${response.status} ao registrar autorização online`, response.status, body);
+    }
+    if (body.erro) {
+      throw new FactaMargemError(body.mensagem || "Erro ao registrar autorização online na Facta", response.status, body);
+    }
+    const mensagem = String(body.mensagem ?? "").toLowerCase();
+    const jaAutorizado = mensagem.includes("não necessita de autorização") || mensagem.includes("nao necessita de autorizacao");
+    return { jaAutorizado, respostaBruta: body };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export interface FactaConsultaOnlineResultado {
+  /** null quando ainda não processou (precisa esperar mais e tentar de novo) — ver "aindaProcessando". */
+  dados: Record<string, unknown> | null;
+  /** true quando a resposta indica "ainda não autorizado/processado" — não é erro terminal, só cedo demais. */
+  aindaProcessando: boolean;
+  respostaBruta: unknown;
+}
+
+export async function consultarDadosTrabalhadorOnlineFacta(
+  config: FactaMargemConfig,
+  token: string,
+  cpf: string
+): Promise<FactaConsultaOnlineResultado> {
+  const baseUrl = (config.baseUrl || FACTA_ONLINE_DEFAULT_BASE_URL).replace(/\/$/, "");
+  const timeoutMs = config.timeoutMs ?? 15_000;
+  const cpfLimpo = cpf.replace(/\D/g, "");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    // Nome do endpoint conforme fornecido no chat (não é o mesmo nome do
+    // manual oficial, que documenta "autoriza-consulta" — ver comentário
+    // no topo desta seção).
+    const response = await fetch(`${baseUrl}/consignado-trabalhador/consulta-dados-trabalhador?cpf=${cpfLimpo}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    const body = (await response.json().catch(() => null)) as {
+      erro?: boolean;
+      mensagem?: string;
+      dados_trabalhador?: { total?: number; dados?: Record<string, unknown>[] };
+    } | null;
+
+    if (!response.ok || !body) {
+      throw new FactaMargemError(`Facta respondeu ${response.status} na consulta online`, response.status, body);
+    }
+
+    if (body.erro) {
+      const mensagem = String(body.mensagem ?? "").toLowerCase();
+      // Baseado nas mensagens do endpoint IRMÃO documentado oficialmente
+      // (autoriza-consulta) — "token expirado" ali significa "ainda não
+      // autorizou", não é erro nosso.
+      const aindaProcessando = mensagem.includes("token expirado") || mensagem.includes("não autorizado") || mensagem.includes("nao autorizado");
+      if (aindaProcessando) {
+        return { dados: null, aindaProcessando: true, respostaBruta: body };
+      }
+      throw new FactaMargemError(body.mensagem || "Erro na consulta online da Facta", response.status, body);
+    }
+
+    const lista = body.dados_trabalhador?.dados;
+    const primeiro = Array.isArray(lista) && lista.length > 0 ? lista[0] : null;
+    return { dados: primeiro, aindaProcessando: false, respostaBruta: body };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
