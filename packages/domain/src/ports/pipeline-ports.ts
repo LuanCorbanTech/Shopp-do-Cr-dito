@@ -57,7 +57,10 @@ export interface IntegrationConfigPort {
 // ---------------------------------------------------------------------------
 
 export interface PhoneProcessingPort {
-  /** Reserva ofertas RECEBIDO -> PROCESSANDO_TELEFONE (SELECT FOR UPDATE SKIP LOCKED). */
+  /** Reserva ofertas MARGEM_APROVADA -> PROCESSANDO_TELEFONE (SELECT FOR UPDATE SKIP LOCKED).
+   * Renomeado de "RECEBIDO" pra "MARGEM_APROVADA" em 04/09 — a consulta de
+   * margem Facta (worker0) agora é a primeira etapa; só depois de aprovada
+   * é que o telefone é processado. */
   claimOffersReceived(limit: number): Promise<OfferSnapshot[]>;
   /** Limit (Lemit) desativado: usa telefone original e avança direto, registrando o motivo. */
   markPhoneSkippedLimitDisabled(offerId: string): Promise<void>;
@@ -345,4 +348,41 @@ export interface DispatchPollPort {
   buscarOfertaMaisRecentePorTelefone(
     telefoneNormalizado: string
   ): Promise<(OfferSnapshot & { origemWebhook: string | null }) | null>;
+}
+
+// ---------------------------------------------------------------------------
+// Worker 0 — Consulta de margem Facta (04/09) — nova PRIMEIRA etapa do
+// funil, antes de tudo o que já existia (inclusive antes do Worker 1/Lemit).
+// ---------------------------------------------------------------------------
+
+export interface OfertaParaMargemSnapshot {
+  id: string;
+  cpf: string | null;
+  tentativasMargemFacta: number;
+}
+
+export interface MargemFactaPort {
+  /** Reivindica (atomicamente) ofertas RECEBIDO cuja hora de tentar já chegou (ou nunca tentaram ainda). */
+  claimOffersParaMargem(limit: number, agora: Date): Promise<OfertaParaMargemSnapshot[]>;
+
+  marcarMargemAprovada(
+    offerId: string,
+    dados: { valorMargemDisponivel: number | null; dadosCompletos: unknown }
+  ): Promise<void>;
+  marcarMargemNegativa(
+    offerId: string,
+    dados: { valorMargemDisponivel: number; dadosCompletos: unknown }
+  ): Promise<void>;
+  marcarAguardandoConsultaOnline(offerId: string, respostaBruta: unknown): Promise<void>;
+  /** Falha transitória (rate limit, timeout, erro de rede) — nunca termina a oferta; só agenda a próxima tentativa. */
+  marcarErroMargem(
+    offerId: string,
+    params: { erro: string; tentativa: number; proximaTentativaEm: Date }
+  ): Promise<void>;
+
+  // Cache do token (dura 1h na Facta, reaproveitável — evita gerar um novo
+  // a cada CPF consultado). Guardado junto da credencial (mesmo registro de
+  // config), não numa tabela própria.
+  buscarTokenFactaCache(): Promise<{ token: string; expiraEm: Date } | null>;
+  salvarTokenFactaCache(token: string, expiraEm: Date): Promise<void>;
 }
