@@ -137,11 +137,16 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       // rota separada por ter formato diferente das de cima.
       instance.get("/integrations/facta-margem", async () => adminRepo.getCredenciaisFacta());
 
-      instance.post<{ Body: { usuario?: string; senha?: string; ativo?: boolean } }>(
+      instance.post<{ Body: { usuario?: string; senha?: string; ativo?: boolean; ativoOnline?: boolean } }>(
         "/integrations/facta-margem",
         async (request) => {
           const body = request.body ?? {};
-          return adminRepo.salvarCredenciaisFacta({ usuario: body.usuario, senha: body.senha, ativo: Boolean(body.ativo) });
+          return adminRepo.salvarCredenciaisFacta({
+            usuario: body.usuario,
+            senha: body.senha,
+            ativo: Boolean(body.ativo),
+            ativoOnline: Boolean(body.ativoOnline),
+          });
         }
       );
 

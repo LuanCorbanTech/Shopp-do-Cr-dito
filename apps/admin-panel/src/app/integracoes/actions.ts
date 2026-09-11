@@ -127,9 +127,13 @@ export async function salvarCredenciaisFacta(formData: FormData): Promise<void> 
   const usuario = String(formData.get("usuario") ?? "");
   const senha = String(formData.get("senha") ?? "");
   const ativo = formData.get("ativo") === "on";
+  // ativoOnline (11/09) — interruptor independente da 2ª etapa (consulta
+  // online), pedido explícito: poder rodar só a offline sem a online, ou
+  // vice-versa.
+  const ativoOnline = formData.get("ativoOnline") === "on";
   await adminApiFetch("/admin/integrations/facta-margem", {
     method: "POST",
-    body: JSON.stringify({ usuario, senha, ativo }),
+    body: JSON.stringify({ usuario, senha, ativo, ativoOnline }),
   });
   revalidatePath("/integracoes");
 }

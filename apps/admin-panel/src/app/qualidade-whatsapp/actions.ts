@@ -135,6 +135,22 @@ export async function criarWabaConta(bmContaId: string, formData: FormData): Pro
   revalidatePath(PATH);
 }
 
+// Editar o apelido de uma WABA já cadastrada (11/09 — antes só dava pra
+// editar nome/token da BM; a WABA só tinha Ativar/Desativar/Excluir). Campo
+// em branco LIMPA o apelido (volta a mostrar só o WABA_ID cru) — mesmo
+// comportamento opcional do campo "Apelido" no formulário de adicionar.
+// Não mexe no WABA_ID em si — é o identificador de verdade usado nas
+// consultas à Meta, editar isso é fora do escopo desse pedido.
+export async function atualizarWabaConta(id: string, formData: FormData): Promise<void> {
+  await adminApiFetch(`/admin/qualidade-whatsapp/wabas/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      nome: String(formData.get("nome") || "").trim(),
+    }),
+  });
+  revalidatePath(PATH);
+}
+
 export async function alternarWabaContaAtiva(id: string, ativo: boolean): Promise<void> {
   await adminApiFetch(`/admin/qualidade-whatsapp/wabas/${id}`, {
     method: "PATCH",

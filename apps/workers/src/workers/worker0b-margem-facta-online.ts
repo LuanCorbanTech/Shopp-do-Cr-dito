@@ -118,8 +118,14 @@ export async function runMargemFactaOnlineWorkerOnce(
   };
 
   const config = await configPort.getConfig("FACTA_MARGEM_CREDENCIAIS");
-  const ativo = config?.ativo ?? false;
-  if (!ativo) return resultado; // mesmo interruptor da offline -- desativada, não faz nada aqui
+  // ativoOnline (11/09): interruptor PRÓPRIO da consulta online, independente
+  // do da offline (pedido explícito — poder desligar só uma das duas). Quando
+  // ainda não foi salvo explicitamente (config antiga, de antes dessa
+  // mudança), cai no valor do interruptor geral — não muda o comportamento
+  // de quem nunca mexeu nesse campo novo.
+  const valorConfig = (config?.valor ?? {}) as { ativoOnline?: boolean };
+  const ativoOnline = typeof valorConfig.ativoOnline === "boolean" ? valorConfig.ativoOnline : (config?.ativo ?? false);
+  if (!ativoOnline) return resultado;
 
   const usuario = String(config?.valor.usuario ?? "");
   const senha = String(config?.valor.senha ?? "");

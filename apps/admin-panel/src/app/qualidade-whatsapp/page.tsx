@@ -6,6 +6,7 @@ import {
   alternarRelatorioQualidadeWhatsappAtivo,
   alternarWabaContaAtiva,
   atualizarBmConta,
+  atualizarWabaConta,
   criarWabaConta,
   salvarConfigQualidadeWhatsapp,
   salvarConfigRelatorioQualidadeWhatsapp,
@@ -468,6 +469,18 @@ export default async function QualidadeWhatsappPage({
                         </form>
                         <ExcluirWabaButton id={waba.id} wabaId={waba.wabaId} />
                       </div>
+                      <details style={{ marginTop: 4 }}>
+                        <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--text-secondary)" }}>Editar apelido</summary>
+                        <form
+                          action={atualizarWabaConta.bind(null, waba.id)}
+                          style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", maxWidth: 420 }}
+                        >
+                          <input name="nome" type="text" defaultValue={waba.nome ?? ""} placeholder="Apelido (deixe em branco pra tirar)" style={{ flex: "1 1 200px" }} />
+                          <button type="submit" className="secondary" style={{ fontSize: 12, padding: "4px 8px" }}>
+                            Salvar
+                          </button>
+                        </form>
+                      </details>
                       {waba.ultimoErro && (
                         <div className="waba-row-error">{waba.ultimoErro}</div>
                       )}

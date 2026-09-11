@@ -65,9 +65,14 @@ function mascararCredencialFacta(valor: unknown): {
 // Token do system user do app da BM (Qualidade WhatsApp, 10/09) — mesmo
 // espírito das outras funções de mascarar acima: só os últimos 4 caracteres,
 // nunca o valor completo de volta pro painel.
+// Mascarado com uma quantidade FIXA de pontinhos (11/09 — antes repetia o
+// ponto pra cada caractere do token real, e um token do system user da Meta
+// costuma ter 150-200+ caracteres, o que esticava o badge pela tela inteira).
+// Um número fixo de pontos também não vaza o tamanho real do token, que é
+// até mais correto pra um dado mascarado.
 function mascararTokenBm(token: string | null | undefined): { tokenConfigurado: boolean; tokenMascarado: string | null } {
   if (!token) return { tokenConfigurado: false, tokenMascarado: null };
-  return { tokenConfigurado: true, tokenMascarado: `${"•".repeat(Math.max(token.length - 4, 0))}${token.slice(-4)}` };
+  return { tokenConfigurado: true, tokenMascarado: `${"•".repeat(8)}${token.slice(-4)}` };
 }
 
 // Consultas usadas pela API administrativa (seção 31-38 do escopo original / seção 8
@@ -929,10 +934,22 @@ export class AdminRepository {
   // apiKey única).
   async getCredenciaisFacta() {
     const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "FACTA_MARGEM_CREDENCIAIS" } });
-    return { ...mascararCredencialFacta(config?.valor), ativo: config?.ativo ?? false };
+    const valor = (config?.valor ?? {}) as { ativoOnline?: boolean };
+    const ativo = config?.ativo ?? false;
+    return {
+      ...mascararCredencialFacta(config?.valor),
+      ativo,
+      // ativoOnline (11/09) — interruptor independente da consulta ONLINE
+      // (2ª etapa). Antes só existia 1 interruptor pras duas etapas juntas;
+      // quando ainda não foi salvo explicitamente (painel antigo, nunca
+      // tocou nesse campo novo), cai no mesmo valor do interruptor
+      // principal — assim o deploy não muda o comportamento de ninguém até
+      // a pessoa mexer nos dois de propósito.
+      ativoOnline: typeof valor.ativoOnline === "boolean" ? valor.ativoOnline : ativo,
+    };
   }
 
-  async salvarCredenciaisFacta(dados: { usuario?: string; senha?: string; ativo: boolean }) {
+  async salvarCredenciaisFacta(dados: { usuario?: string; senha?: string; ativo: boolean; ativoOnline: boolean }) {
     const atual = await this.prisma.integrationConfig.findUnique({ where: { chave: "FACTA_MARGEM_CREDENCIAIS" } });
     const valorAtual = (atual?.valor ?? {}) as Record<string, unknown>;
     const usuario = dados.usuario !== undefined && dados.usuario.trim() !== "" ? dados.usuario.trim() : valorAtual.usuario ?? null;
@@ -941,7 +958,7 @@ export class AdminRepository {
     // worker — trocar usuario/senha aqui não deve apagar um token ainda
     // válido à toa (o worker mesmo detecta e gera um novo se a credencial
     // mudou e o token antigo passar a falhar).
-    const novoValor = { ...valorAtual, usuario, senha };
+    const novoValor = { ...valorAtual, usuario, senha, ativoOnline: dados.ativoOnline };
     await this.prisma.integrationConfig.upsert({
       where: { chave: "FACTA_MARGEM_CREDENCIAIS" },
       create: { chave: "FACTA_MARGEM_CREDENCIAIS", ativo: dados.ativo, valor: novoValor },

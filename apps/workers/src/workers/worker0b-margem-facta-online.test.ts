@@ -24,13 +24,31 @@ describe("formatarCelularFacta", () => {
 });
 
 describe("runMargemFactaOnlineWorkerOnce — Fase 1 (registrar autorização)", () => {
-  it("não faz nada quando a integração está desativada", async () => {
+  it("não faz nada quando a integração está desativada (sem ativoOnline salvo, cai no interruptor geral)", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("FACTA_MARGEM_CREDENCIAIS", false, { usuario: "u", senha: "s" });
     repo.addOffer({ telefoneOriginal: "67996683738", cpf: "11111111111", status: "AGUARDANDO_CONSULTA_ONLINE" });
 
     const resultado = await runMargemFactaOnlineWorkerOnce({ port: repo, configPort: repo, factaService: servicoFake() });
     expect(resultado.autorizacoesRegistradas).toBe(0);
+  });
+
+  it("11/09: ativoOnline=false desliga a online mesmo com o interruptor geral (offline) ativo", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("FACTA_MARGEM_CREDENCIAIS", true, { usuario: "u", senha: "s", ativoOnline: false });
+    repo.addOffer({ telefoneOriginal: "67996683738", cpf: "11111111111", status: "AGUARDANDO_CONSULTA_ONLINE" });
+
+    const resultado = await runMargemFactaOnlineWorkerOnce({ port: repo, configPort: repo, factaService: servicoFake() });
+    expect(resultado.autorizacoesRegistradas).toBe(0);
+  });
+
+  it("11/09: ativoOnline=true liga a online mesmo com o interruptor geral (offline) desativado", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("FACTA_MARGEM_CREDENCIAIS", false, { usuario: "u", senha: "s", ativoOnline: true });
+    repo.addOffer({ telefoneOriginal: "67996683738", cpf: "11111111111", nome: "Fulano", status: "AGUARDANDO_CONSULTA_ONLINE" });
+
+    const resultado = await runMargemFactaOnlineWorkerOnce({ port: repo, configPort: repo, factaService: servicoFake() });
+    expect(resultado.autorizacoesRegistradas).toBe(1);
   });
 
   it("registra a autorização e agenda a checagem pra depois da janela de espera", async () => {

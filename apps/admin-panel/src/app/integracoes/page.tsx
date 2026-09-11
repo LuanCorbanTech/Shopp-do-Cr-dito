@@ -60,6 +60,7 @@ interface OdysseiaStatus {
 
 interface FactaMargemStatus {
   ativo: boolean;
+  ativoOnline: boolean;
   usuario: string | null;
   senhaConfigurada: boolean;
   senhaMascarada: string | null;
@@ -397,16 +398,22 @@ export default async function IntegracoesPage() {
       <p className="subtitle">
         Primeira etapa do funil (04/09) — antes de tudo o mais, consulta a base offline da Facta por CPF. Se a
         margem disponível for maior que 0, a oferta segue o fluxo normal; se for 0 ou negativa, o processo encerra
-        ali (status &quot;Margem negativa&quot;). A Facta não oferece ambiente de homologação — use o campo de teste
-        abaixo pra confirmar a credencial com 1 CPF antes de ativar pra valer.
+        ali (status &quot;Margem negativa&quot;). Quando a Facta não tem dado offline pra esse CPF, a 2ª etapa
+        (consulta online) tenta buscar o dado direto com o cliente — as duas etapas agora ligam/desligam
+        independente uma da outra (11/09): dá pra rodar só a offline sem a online, ou vice-versa. A Facta não
+        oferece ambiente de homologação — use o campo de teste abaixo pra confirmar a credencial com 1 CPF antes
+        de ativar pra valer.
       </p>
       {erroFactaMargem && <p className="empty-state">Não foi possível carregar: {erroFactaMargem}</p>}
       {factaMargem && (
         <div className="card">
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
             <strong>Consulta de margem Facta</strong>
             <span className={`badge ${factaMargem.ativo ? "good" : "neutral"}`}>
-              {factaMargem.ativo ? "ATIVADO" : "DESATIVADO"}
+              OFFLINE: {factaMargem.ativo ? "ATIVADO" : "DESATIVADO"}
+            </span>
+            <span className={`badge ${factaMargem.ativoOnline ? "good" : "neutral"}`}>
+              ONLINE: {factaMargem.ativoOnline ? "ATIVADO" : "DESATIVADO"}
             </span>
           </div>
           <form action={salvarCredenciaisFacta}>
@@ -445,9 +452,13 @@ export default async function IntegracoesPage() {
                 style={{ width: "100%" }}
               />
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <input type="checkbox" name="ativo" defaultChecked={factaMargem.ativo} />
-              Ativar a consulta de margem (leads novos passam por essa checagem antes do resto do funil)
+              Ativar a consulta OFFLINE (1ª etapa — leads novos passam por essa checagem antes do resto do funil)
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <input type="checkbox" name="ativoOnline" defaultChecked={factaMargem.ativoOnline} />
+              Ativar a consulta ONLINE (2ª etapa — só entra em ação pros leads que a offline deixou aguardando)
             </label>
             <button type="submit">Salvar</button>
           </form>
