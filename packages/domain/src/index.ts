@@ -7,3 +7,4 @@ export * from "./whatsapp-check-outcome";
 export * from "./lemit-phone-selection";
 export * from "./lemit-info-extraction";
 export * from "./fuso-horario";
+export * from "./qualidade-whatsapp";
