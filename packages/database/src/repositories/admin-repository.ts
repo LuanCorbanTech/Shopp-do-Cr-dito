@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { hashSenha, verificarSenha, gerarSenhaTemporaria, gerarTokenSessao } from "@plataforma-ofertas/shared";
+import { avaliarPioraQualidade } from "@plataforma-ofertas/domain";
 
 // Nunca devolve a credencial em texto puro pro painel — só se está configurada e os
 // últimos 4 caracteres, pra confirmar visualmente que é a chave certa sem expor o resto.
@@ -59,6 +60,14 @@ function mascararCredencialFacta(valor: unknown): {
     senhaConfigurada: Boolean(senha),
     senhaMascarada: senha ? `${"•".repeat(Math.max(senha.length - 3, 0))}${senha.slice(-3)}` : null,
   };
+}
+
+// Token do system user do app da BM (Qualidade WhatsApp, 10/09) — mesmo
+// espírito das outras funções de mascarar acima: só os últimos 4 caracteres,
+// nunca o valor completo de volta pro painel.
+function mascararTokenBm(token: string | null | undefined): { tokenConfigurado: boolean; tokenMascarado: string | null } {
+  if (!token) return { tokenConfigurado: false, tokenMascarado: null };
+  return { tokenConfigurado: true, tokenMascarado: `${"•".repeat(Math.max(token.length - 4, 0))}${token.slice(-4)}` };
 }
 
 // Consultas usadas pela API administrativa (seção 31-38 do escopo original / seção 8
@@ -1557,4 +1566,489 @@ export class AdminRepository {
     await this.criarUsuario({ nome: params.nome, email: params.email, senha: params.senha, role: "ADMINISTRADOR" });
     return true;
   }
+
+  // -------------------------------------------------------------------------
+  // Qualidade WhatsApp (10/09) — ver schema.prisma (BmConta/WabaConta/
+  // NumeroWhatsapp/NumeroWhatsappHistorico) pro contexto do domínio: cada BM
+  // tem seu próprio app/token (é criado dentro da própria BM), e dentro de
+  // uma BM pode haver mais de uma WABA — o token fica em BmConta, o WABA_ID
+  // em WabaConta.
+  // -------------------------------------------------------------------------
+
+  async listarBmContasQualidadeWhatsapp(): Promise<BmContaQualidadeWhatsapp[]> {
+    const bms = await this.prisma.bmConta.findMany({
+      orderBy: { nome: "asc" },
+      include: {
+        wabas: {
+          orderBy: { createdAt: "asc" },
+          include: { _count: { select: { numeros: true } } },
+        },
+      },
+    });
+    return bms.map((bm) => ({
+      id: bm.id,
+      nome: bm.nome,
+      ativo: bm.ativo,
+      ...mascararTokenBm(bm.tokenAcesso),
+      ultimaConsultaEm: bm.ultimaConsultaEm,
+      ultimoErro: bm.ultimoErro,
+      wabas: bm.wabas.map((w) => ({
+        id: w.id,
+        wabaId: w.wabaId,
+        nome: w.nome,
+        ativo: w.ativo,
+        ultimaConsultaEm: w.ultimaConsultaEm,
+        ultimoErro: w.ultimoErro,
+        totalNumeros: w._count.numeros,
+      })),
+    }));
+  }
+
+  async criarBmContaQualidadeWhatsapp(params: { nome: string; tokenAcesso: string }): Promise<{ id: string }> {
+    const bm = await this.prisma.bmConta.create({
+      data: { nome: params.nome.trim(), tokenAcesso: params.tokenAcesso.trim() },
+    });
+    return { id: bm.id };
+  }
+
+  // tokenAcesso vazio/ausente = mantém o token atual (mesmo padrão de "deixe
+  // em branco pra manter" usado nas outras credenciais do painel).
+  async atualizarBmContaQualidadeWhatsapp(
+    id: string,
+    params: { nome?: string; tokenAcesso?: string; ativo?: boolean }
+  ): Promise<void> {
+    const data: Prisma.BmContaUpdateInput = {};
+    if (params.nome !== undefined) data.nome = params.nome.trim();
+    if (params.tokenAcesso) data.tokenAcesso = params.tokenAcesso.trim();
+    if (params.ativo !== undefined) data.ativo = params.ativo;
+    await this.prisma.bmConta.update({ where: { id }, data });
+  }
+
+  // Remove a BM e, em cascata (FK no banco — ver migração), todas as WABAs
+  // dela e os números/histórico associados. Não tem como desfazer.
+  async removerBmContaQualidadeWhatsapp(id: string): Promise<void> {
+    await this.prisma.bmConta.delete({ where: { id } });
+  }
+
+  async criarWabaContaQualidadeWhatsapp(bmContaId: string, params: { wabaId: string; nome?: string }): Promise<{ id: string }> {
+    const waba = await this.prisma.wabaConta.create({
+      data: { bmContaId, wabaId: params.wabaId.trim(), nome: params.nome?.trim() || null },
+    });
+    return { id: waba.id };
+  }
+
+  async atualizarWabaContaQualidadeWhatsapp(
+    id: string,
+    params: { wabaId?: string; nome?: string; ativo?: boolean }
+  ): Promise<void> {
+    const data: Prisma.WabaContaUpdateInput = {};
+    if (params.wabaId !== undefined) data.wabaId = params.wabaId.trim();
+    if (params.nome !== undefined) data.nome = params.nome.trim() || null;
+    if (params.ativo !== undefined) data.ativo = params.ativo;
+    await this.prisma.wabaConta.update({ where: { id }, data });
+  }
+
+  // Remove a WABA e, em cascata, os números/histórico associados a ela (o
+  // resto da BM e as outras WABAs dela não são afetados).
+  async removerWabaContaQualidadeWhatsapp(id: string): Promise<void> {
+    await this.prisma.wabaConta.delete({ where: { id } });
+  }
+
+  async statusQualidadeWhatsapp(): Promise<QualidadeWhatsappConfigStatus> {
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "QUALIDADE_WHATSAPP_CONFIG" } });
+    const valor = (config?.valor ?? {}) as {
+      intervaloSegundos?: number;
+      batchSize?: number;
+      versaoGraphApi?: string;
+      webhookAlertaUrl?: string;
+    };
+    return {
+      ativo: config?.ativo ?? false,
+      intervaloSegundos: typeof valor.intervaloSegundos === "number" && valor.intervaloSegundos > 0 ? valor.intervaloSegundos : null,
+      batchSize: typeof valor.batchSize === "number" && valor.batchSize > 0 ? valor.batchSize : null,
+      versaoGraphApi: valor.versaoGraphApi || null,
+      webhookAlertaUrl: valor.webhookAlertaUrl || null,
+    };
+  }
+
+  async salvarConfigQualidadeWhatsapp(params: {
+    ativo: boolean;
+    intervaloSegundos?: number;
+    batchSize?: number;
+    versaoGraphApi?: string;
+    webhookAlertaUrl?: string;
+  }): Promise<void> {
+    const valor = {
+      intervaloSegundos: params.intervaloSegundos,
+      batchSize: params.batchSize,
+      versaoGraphApi: params.versaoGraphApi,
+      webhookAlertaUrl: params.webhookAlertaUrl,
+    };
+    await this.prisma.integrationConfig.upsert({
+      where: { chave: "QUALIDADE_WHATSAPP_CONFIG" },
+      update: { valor, ativo: params.ativo },
+      create: { chave: "QUALIDADE_WHATSAPP_CONFIG", valor, ativo: params.ativo },
+    });
+  }
+
+  async setQualidadeWhatsappAtivo(ativo: boolean): Promise<void> {
+    await this.prisma.integrationConfig.upsert({
+      where: { chave: "QUALIDADE_WHATSAPP_CONFIG" },
+      update: { ativo },
+      create: { chave: "QUALIDADE_WHATSAPP_CONFIG", ativo, valor: {} },
+    });
+  }
+
+  // KPIs agregados pro topo do painel — conta todos os números de uma vez
+  // (a escala esperada, dezenas de BMs x poucos números cada, cabe tranquilo
+  // num findMany só; se um dia isso crescer muito, dá pra trocar por um
+  // groupBy sem mudar a assinatura do método).
+  async resumoQualidadeWhatsapp(): Promise<ResumoQualidadeWhatsapp> {
+    const [totalBms, totalWabas, numeros] = await Promise.all([
+      this.prisma.bmConta.count(),
+      this.prisma.wabaConta.count(),
+      this.prisma.numeroWhatsapp.findMany({ select: { qualityRating: true, messagingLimitTier: true, atualizadoEm: true } }),
+    ]);
+
+    const porQualidade: Record<string, number> = {};
+    const porTier: Record<string, number> = {};
+    let ultimaAtualizacao: Date | null = null;
+    for (const n of numeros) {
+      porQualidade[n.qualityRating] = (porQualidade[n.qualityRating] ?? 0) + 1;
+      const tier = n.messagingLimitTier ?? "DESCONHECIDO";
+      porTier[tier] = (porTier[tier] ?? 0) + 1;
+      if (!ultimaAtualizacao || n.atualizadoEm > ultimaAtualizacao) ultimaAtualizacao = n.atualizadoEm;
+    }
+
+    return { totalNumeros: numeros.length, totalBms, totalWabas, porQualidade, porTier, ultimaAtualizacao };
+  }
+
+  async listarNumerosQualidadeWhatsapp(filtros?: {
+    bmContaId?: string;
+    qualityRating?: string;
+    busca?: string;
+  }): Promise<NumeroWhatsappListItem[]> {
+    const where: Prisma.NumeroWhatsappWhereInput = {};
+    if (filtros?.qualityRating) where.qualityRating = filtros.qualityRating;
+    if (filtros?.bmContaId) where.wabaConta = { bmContaId: filtros.bmContaId };
+    if (filtros?.busca) {
+      where.OR = [
+        { displayPhoneNumber: { contains: filtros.busca, mode: "insensitive" } },
+        { verifiedName: { contains: filtros.busca, mode: "insensitive" } },
+      ];
+    }
+
+    const numeros = await this.prisma.numeroWhatsapp.findMany({
+      where,
+      orderBy: { atualizadoEm: "desc" },
+      include: { wabaConta: { include: { bmConta: true } } },
+    });
+
+    return numeros.map((n) => ({
+      id: n.id,
+      displayPhoneNumber: n.displayPhoneNumber,
+      verifiedName: n.verifiedName,
+      qualityRating: n.qualityRating,
+      messagingLimitTier: n.messagingLimitTier,
+      status: n.status,
+      atualizadoEm: n.atualizadoEm,
+      wabaId: n.wabaConta.wabaId,
+      wabaNome: n.wabaConta.nome,
+      bmContaId: n.wabaConta.bmContaId,
+      bmNome: n.wabaConta.bmConta.nome,
+    }));
+  }
+
+  // Usado pela tela de detalhe/histórico de 1 número (painel) — igual ao
+  // mapeamento de listarNumerosQualidadeWhatsapp acima, mas buscando só 1.
+  async numeroQualidadeWhatsappPorId(id: string): Promise<NumeroWhatsappListItem | null> {
+    const n = await this.prisma.numeroWhatsapp.findUnique({
+      where: { id },
+      include: { wabaConta: { include: { bmConta: true } } },
+    });
+    if (!n) return null;
+    return {
+      id: n.id,
+      displayPhoneNumber: n.displayPhoneNumber,
+      verifiedName: n.verifiedName,
+      qualityRating: n.qualityRating,
+      messagingLimitTier: n.messagingLimitTier,
+      status: n.status,
+      atualizadoEm: n.atualizadoEm,
+      wabaId: n.wabaConta.wabaId,
+      wabaNome: n.wabaConta.nome,
+      bmContaId: n.wabaConta.bmContaId,
+      bmNome: n.wabaConta.bmConta.nome,
+    };
+  }
+
+  async historicoNumeroQualidadeWhatsapp(
+    numeroId: string,
+    limite = 200
+  ): Promise<{ consultadoEm: Date; qualityRating: string; messagingLimitTier: string | null; status: string | null }[]> {
+    const linhas = await this.prisma.numeroWhatsappHistorico.findMany({
+      where: { numeroId },
+      orderBy: { consultadoEm: "asc" },
+      take: limite,
+    });
+    return linhas.map((l) => ({
+      consultadoEm: l.consultadoEm,
+      qualityRating: l.qualityRating,
+      messagingLimitTier: l.messagingLimitTier,
+      status: l.status,
+    }));
+  }
+
+  // ---- daqui pra baixo: métodos usados pelo worker10 (não pelo painel) ----
+
+  // As mais desatualizadas primeiro (nulls first — nunca consultadas ainda),
+  // só WABAs ativas de BMs ativas — é assim que o rodízio cobre todas as
+  // WABAs cadastradas ao longo de vários ciclos, sem nenhuma fila separada.
+  async wabasQualidadeParaConsultar(limite: number): Promise<WabaParaConsultarQualidade[]> {
+    const wabas = await this.prisma.wabaConta.findMany({
+      where: { ativo: true, bmConta: { ativo: true } },
+      orderBy: [{ ultimaConsultaEm: { sort: "asc", nulls: "first" } }],
+      take: limite,
+      include: { bmConta: true },
+    });
+    return wabas.map((w) => ({
+      id: w.id,
+      wabaId: w.wabaId,
+      bmContaId: w.bmContaId,
+      bmNome: w.bmConta.nome,
+      tokenAcesso: w.bmConta.tokenAcesso,
+    }));
+  }
+
+  // Upsert de cada número (por phoneNumberId, que é o "id" da Meta) + 1 linha
+  // de histórico por número a CADA consulta (mesmo sem mudança nenhuma —
+  // pedido explícito, pra dar pra ver no gráfico que a checagem realmente
+  // rodou naquele horário). A comparação com o valor ANTERIOR (pra decidir
+  // se piorou) usa avaliarPioraQualidade (@plataforma-ofertas/domain) — puro,
+  // testado à parte, sem depender do Postgres.
+  async registrarConsultaWabaSucesso(params: {
+    wabaContaId: string;
+    numeros: NumeroWhatsappConsultado[];
+  }): Promise<{ pioraram: NumeroWhatsappPiorouQualidade[] }> {
+    const waba = await this.prisma.wabaConta.findUnique({
+      where: { id: params.wabaContaId },
+      include: { bmConta: true },
+    });
+    if (!waba) return { pioraram: [] };
+
+    const pioraram: NumeroWhatsappPiorouQualidade[] = [];
+
+    for (const item of params.numeros) {
+      if (!item.phoneNumberId) continue; // resposta malformada da Meta — não tem como identificar o número, ignora essa linha
+
+      const anterior = await this.prisma.numeroWhatsapp.findUnique({ where: { phoneNumberId: item.phoneNumberId } });
+
+      const { piorou, motivo } = avaliarPioraQualidade(
+        anterior
+          ? { qualityRating: anterior.qualityRating, messagingLimitTier: anterior.messagingLimitTier, status: anterior.status }
+          : null,
+        item
+      );
+
+      const numero = await this.prisma.numeroWhatsapp.upsert({
+        where: { phoneNumberId: item.phoneNumberId },
+        update: {
+          wabaContaId: params.wabaContaId,
+          displayPhoneNumber: item.displayPhoneNumber,
+          verifiedName: item.verifiedName,
+          qualityRating: item.qualityRating,
+          messagingLimitTier: item.messagingLimitTier,
+          status: item.status,
+        },
+        create: {
+          wabaContaId: params.wabaContaId,
+          phoneNumberId: item.phoneNumberId,
+          displayPhoneNumber: item.displayPhoneNumber,
+          verifiedName: item.verifiedName,
+          qualityRating: item.qualityRating,
+          messagingLimitTier: item.messagingLimitTier,
+          status: item.status,
+        },
+      });
+
+      await this.prisma.numeroWhatsappHistorico.create({
+        data: {
+          numeroId: numero.id,
+          qualityRating: item.qualityRating,
+          messagingLimitTier: item.messagingLimitTier,
+          status: item.status,
+        },
+      });
+
+      if (piorou && motivo) {
+        pioraram.push({
+          numeroId: numero.id,
+          displayPhoneNumber: item.displayPhoneNumber,
+          wabaId: waba.wabaId,
+          bmNome: waba.bmConta.nome,
+          motivo,
+          qualityRatingAnterior: anterior?.qualityRating ?? null,
+          qualityRatingAtual: item.qualityRating,
+        });
+      }
+    }
+
+    await this.prisma.wabaConta.update({
+      where: { id: params.wabaContaId },
+      data: { ultimaConsultaEm: new Date(), ultimoErro: null },
+    });
+
+    return { pioraram };
+  }
+
+  async registrarConsultaWabaErro(wabaContaId: string, mensagem: string): Promise<void> {
+    await this.prisma.wabaConta.update({
+      where: { id: wabaContaId },
+      data: { ultimaConsultaEm: new Date(), ultimoErro: mensagem },
+    });
+  }
+
+  // Ferramenta de teste (10/09, mesmo espírito do testarConsultaFacta acima):
+  // consulta 1 WABA específica na Meta AGORA (sem esperar o rodízio do
+  // worker10) e já grava o resultado de verdade (estado atual + histórico +
+  // ultimaConsultaEm) — diferente do teste da Facta, que só mostra o
+  // resultado sem persistir nada, aqui persistir é o comportamento certo:
+  // é literalmente a mesma operação que o worker faria pra essa WABA, só
+  // que na hora. Reimplementa a chamada HTTP à parte (não importa o cliente
+  // de apps/workers — packages/database não depende de apps/*), igual o
+  // padrão já usado pra Facta.
+  async testarWabaQualidadeWhatsapp(
+    wabaContaId: string
+  ): Promise<{ numeros: NumeroWhatsappConsultado[]; pioraram: NumeroWhatsappPiorouQualidade[] }> {
+    const waba = await this.prisma.wabaConta.findUnique({ where: { id: wabaContaId }, include: { bmConta: true } });
+    if (!waba) throw new Error("WABA não encontrada.");
+
+    const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "QUALIDADE_WHATSAPP_CONFIG" } });
+    const valorConfig = (config?.valor ?? {}) as { versaoGraphApi?: string };
+    const versaoBruta = (valorConfig.versaoGraphApi || "v21.0").trim();
+    const versao = versaoBruta.startsWith("v") ? versaoBruta : `v${versaoBruta}`;
+
+    const url = `https://graph.facebook.com/${versao}/${encodeURIComponent(
+      waba.wabaId
+    )}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,messaging_limit_tier,status`;
+
+    const resposta = await fetch(url, { method: "GET", headers: { Authorization: `Bearer ${waba.bmConta.tokenAcesso}` } });
+    const textoBruto = await resposta.text();
+    let corpo: unknown = {};
+    if (textoBruto) {
+      try {
+        corpo = JSON.parse(textoBruto);
+      } catch {
+        corpo = { raw: textoBruto };
+      }
+    }
+
+    if (!resposta.ok) {
+      const erroMeta = (corpo as { error?: { message?: string; error_user_msg?: string } } | undefined)?.error;
+      const mensagem = erroMeta?.error_user_msg || erroMeta?.message || `Meta respondeu HTTP ${resposta.status}`;
+      await this.registrarConsultaWabaErro(wabaContaId, mensagem);
+      throw new Error(mensagem);
+    }
+
+    const dadosBrutos = (corpo as { data?: unknown[] }).data;
+    const numeros: NumeroWhatsappConsultado[] = Array.isArray(dadosBrutos)
+      ? dadosBrutos.map((item) => {
+          const i = (item ?? {}) as Record<string, unknown>;
+          return {
+            phoneNumberId: String(i.id ?? ""),
+            displayPhoneNumber: typeof i.display_phone_number === "string" ? i.display_phone_number : "",
+            verifiedName: typeof i.verified_name === "string" ? i.verified_name : null,
+            qualityRating: typeof i.quality_rating === "string" && i.quality_rating ? i.quality_rating : "UNKNOWN",
+            messagingLimitTier: typeof i.messaging_limit_tier === "string" ? i.messaging_limit_tier : null,
+            status: typeof i.status === "string" ? i.status : null,
+          };
+        })
+      : [];
+
+    const { pioraram } = await this.registrarConsultaWabaSucesso({ wabaContaId, numeros });
+    return { numeros, pioraram };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tipos — Qualidade WhatsApp (10/09)
+// ---------------------------------------------------------------------------
+
+export interface WabaContaQualidadeWhatsapp {
+  id: string;
+  wabaId: string;
+  nome: string | null;
+  ativo: boolean;
+  ultimaConsultaEm: Date | null;
+  ultimoErro: string | null;
+  totalNumeros: number;
+}
+
+export interface BmContaQualidadeWhatsapp {
+  id: string;
+  nome: string;
+  ativo: boolean;
+  tokenConfigurado: boolean;
+  tokenMascarado: string | null;
+  ultimaConsultaEm: Date | null;
+  ultimoErro: string | null;
+  wabas: WabaContaQualidadeWhatsapp[];
+}
+
+export interface QualidadeWhatsappConfigStatus {
+  ativo: boolean;
+  intervaloSegundos: number | null;
+  batchSize: number | null;
+  versaoGraphApi: string | null;
+  webhookAlertaUrl: string | null;
+}
+
+export interface ResumoQualidadeWhatsapp {
+  totalNumeros: number;
+  totalBms: number;
+  totalWabas: number;
+  porQualidade: Record<string, number>;
+  porTier: Record<string, number>;
+  ultimaAtualizacao: Date | null;
+}
+
+export interface NumeroWhatsappListItem {
+  id: string;
+  displayPhoneNumber: string;
+  verifiedName: string | null;
+  qualityRating: string;
+  messagingLimitTier: string | null;
+  status: string | null;
+  atualizadoEm: Date;
+  wabaId: string;
+  wabaNome: string | null;
+  bmContaId: string;
+  bmNome: string;
+}
+
+export interface WabaParaConsultarQualidade {
+  id: string;
+  wabaId: string;
+  bmContaId: string;
+  bmNome: string;
+  tokenAcesso: string;
+}
+
+export interface NumeroWhatsappConsultado {
+  phoneNumberId: string;
+  displayPhoneNumber: string;
+  verifiedName: string | null;
+  qualityRating: string;
+  messagingLimitTier: string | null;
+  status: string | null;
+}
+
+export interface NumeroWhatsappPiorouQualidade {
+  numeroId: string;
+  displayPhoneNumber: string;
+  wabaId: string;
+  bmNome: string;
+  motivo: string;
+  qualityRatingAnterior: string | null;
+  qualityRatingAtual: string;
 }
