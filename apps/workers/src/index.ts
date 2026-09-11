@@ -15,6 +15,8 @@ import { runDisparoIndividualWorkerOnce, type DisparoIndividualEndpoint } from "
 import { runTarefasWorkerOnce } from "./workers/worker9-tarefas";
 import { runMargemFactaWorkerOnce, type FactaMargemService } from "./workers/worker0-margem-facta";
 import { runMargemFactaOnlineWorkerOnce, type FactaOnlineService } from "./workers/worker0b-margem-facta-online";
+import { runQualidadeWhatsappWorkerOnce, type MetaQualidadeService } from "./workers/worker10-qualidade-whatsapp";
+import { buscarNumerosWhatsappMeta } from "./fornecedores/meta-qualidade-whatsapp";
 import {
   gerarTokenFacta,
   consultarBaseOfflineFacta,
@@ -475,6 +477,75 @@ loop("worker9-tarefas", WORKER9_INTERVAL_MS, async () => {
   });
   return resultado.iniciadas + resultado.concluidas;
 });
+
+// Worker10 — Qualidade WhatsApp (10/09): a cada ciclo, consulta um lote de
+// WABAs (as mais desatualizadas primeiro — rodízio cobre todas ao longo de
+// vários ciclos) na API oficial da Meta, e grava qualidade/limite/status de
+// cada número. Config toda num único registro no painel ("Qualidade
+// WhatsApp"): ativo/desativado, tamanho do lote por ciclo, versão da Graph
+// API (a Meta aposenta versões antigas periodicamente — trocar aqui não
+// exige deploy novo) e a URL do webhook de alerta (opcional).
+//
+// batchSize e intervalo padrão pensados pra ~50 BMs (informado pelo
+// usuário): 10 WABAs a cada 60s cobre todas em ~5 ciclos (~5min) — ajustável
+// no painel sem reiniciar nada, caso o limite de chamadas da própria Meta
+// exija outro ritmo (não documentado oficialmente pra esse endpoint no
+// momento dessa entrega).
+const metaQualidadeService: MetaQualidadeService = {
+  buscarNumeros: (params) => buscarNumerosWhatsappMeta(params),
+};
+
+async function resolverConfigQualidadeWhatsapp(): Promise<{
+  ativo: boolean;
+  batchSize: number;
+  versaoGraphApi: string;
+  webhookAlertaUrl: string | null;
+}> {
+  try {
+    const status = await adminRepo.statusQualidadeWhatsapp();
+    return {
+      ativo: status.ativo,
+      batchSize: status.batchSize && status.batchSize > 0 ? status.batchSize : 10,
+      versaoGraphApi: status.versaoGraphApi || "v21.0",
+      webhookAlertaUrl: status.webhookAlertaUrl,
+    };
+  } catch (error) {
+    logger.warn({ error }, "Falha ao ler a config de Qualidade WhatsApp — ciclo será ignorado");
+    return { ativo: false, batchSize: 10, versaoGraphApi: "v21.0", webhookAlertaUrl: null };
+  }
+}
+
+async function resolverIntervaloQualidadeWhatsappMs(padraoMs: number): Promise<number> {
+  try {
+    const status = await adminRepo.statusQualidadeWhatsapp();
+    if (typeof status.intervaloSegundos === "number" && status.intervaloSegundos > 0) {
+      return status.intervaloSegundos * 1000;
+    }
+  } catch (error) {
+    logger.warn({ error }, "Falha ao ler o intervalo de Qualidade WhatsApp — usando o padrão");
+  }
+  return padraoMs;
+}
+
+const WORKER10_INTERVAL_MS_PADRAO = Number(process.env.WORKER10_INTERVAL_MS ?? 60_000);
+
+loop(
+  "worker10-qualidade-whatsapp",
+  WORKER10_INTERVAL_MS_PADRAO,
+  async () => {
+    const { ativo, batchSize, versaoGraphApi, webhookAlertaUrl } = await resolverConfigQualidadeWhatsapp();
+    const resultado = await runQualidadeWhatsappWorkerOnce({
+      ativo,
+      batchSize,
+      versaoGraphApi,
+      webhookAlertaUrl,
+      port: adminRepo,
+      metaService: metaQualidadeService,
+    });
+    return resultado.consultadas + resultado.erros;
+  },
+  () => resolverIntervaloQualidadeWhatsappMs(WORKER10_INTERVAL_MS_PADRAO)
+);
 
 process.on("SIGTERM", async () => {
   logger.info("Encerrando workers...");
