@@ -641,3 +641,97 @@ model AdminSession {
   @@index([userId], map: "idx_admin_sessions_user_id")
   @@map("admin_sessions")
 }
+
+// ---------------------------------------------------------------------------
+// Qualidade WhatsApp (10/09) — monitoramento de qualidade/limite dos números
+// dentro das BMs (Business Managers) cadastradas, via API oficial da Meta
+// (GET /{WABA_ID}/phone_numbers). Domínio totalmente novo, sem relação com o
+// pipeline de ofertas acima — cada BM tem seu próprio app/token (o app é
+// criado dentro da própria BM), e dentro de uma BM pode haver mais de uma
+// WABA — por isso o token fica no nível de BmConta e o WABA_ID no nível de
+// WabaConta (cada WABA usa o token da BM "pai" pra consultar a Meta).
+//
+// qualityRating/status ficam como String (não enum) de propósito — são
+// valores que vêm prontos da Meta e ela pode adicionar/mudar categorias sem
+// avisar; um enum exigiria uma migração toda vez que isso acontecesse. O
+// worker (worker10-qualidade-whatsapp) sempre grava o valor cru recebido.
+// ---------------------------------------------------------------------------
+
+model BmConta {
+  id               String    @id @default(uuid())
+  nome             String    // apelido do cliente/BM (livre, só pra identificação no painel)
+  tokenAcesso      String    @map("token_acesso") // token do system user do app criado dentro dessa BM
+  ativo            Boolean   @default(true)
+  ultimaConsultaEm DateTime? @map("ultima_consulta_em")
+  ultimoErro       String?   @map("ultimo_erro")
+
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  wabas            WabaConta[]
+
+  @@map("bm_contas")
+}
+
+model WabaConta {
+  id               String    @id @default(uuid())
+  bmContaId        String    @map("bm_conta_id")
+  bmConta          BmConta   @relation(fields: [bmContaId], references: [id], onDelete: Cascade)
+
+  wabaId           String    @map("waba_id") // WABA_ID de verdade, usado na URL da Graph API
+  nome             String?   // apelido opcional (ex.: "Loja 1"), só exibição
+  ativo            Boolean   @default(true)
+  ultimaConsultaEm DateTime? @map("ultima_consulta_em")
+  ultimoErro       String?   @map("ultimo_erro")
+
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  numeros          NumeroWhatsapp[]
+
+  @@unique([wabaId], map: "uq_waba_contas_waba_id")
+  @@index([bmContaId], map: "idx_waba_contas_bm_conta_id")
+  @@map("waba_contas")
+}
+
+// Estado ATUAL de cada número (1 linha por phoneNumberId da Meta) — sobrescrito
+// a cada consulta bem-sucedida. O histórico completo (1 linha por consulta,
+// pedido explícito pra poder ver evolução) fica em NumeroWhatsappHistorico.
+model NumeroWhatsapp {
+  id                 String    @id @default(uuid())
+  wabaContaId        String    @map("waba_conta_id")
+  wabaConta          WabaConta @relation(fields: [wabaContaId], references: [id], onDelete: Cascade)
+
+  phoneNumberId      String    @unique @map("phone_number_id") // campo "id" devolvido pela Meta pra esse número
+  displayPhoneNumber String    @map("display_phone_number")
+  verifiedName       String?   @map("verified_name")
+  qualityRating      String    @default("UNKNOWN") @map("quality_rating") // GREEN | YELLOW | RED | UNKNOWN (cru da Meta)
+  messagingLimitTier String?   @map("messaging_limit_tier") // ex.: TIER_250, TIER_1K, TIER_10K...
+  status             String?   // ex.: CONNECTED, FLAGGED, RESTRICTED... (cru da Meta)
+
+  atualizadoEm       DateTime  @updatedAt @map("atualizado_em")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  historico          NumeroWhatsappHistorico[]
+
+  @@index([wabaContaId], map: "idx_numeros_whatsapp_waba_conta_id")
+  @@index([qualityRating], map: "idx_numeros_whatsapp_quality_rating")
+  @@map("numeros_whatsapp")
+}
+
+// Snapshot de cada consulta (append-only) — usado pro gráfico de evolução e
+// pra detectar piora (comparando com o registro anterior do mesmo número).
+model NumeroWhatsappHistorico {
+  id                 String         @id @default(uuid())
+  numeroId           String         @map("numero_id")
+  numero             NumeroWhatsapp @relation(fields: [numeroId], references: [id], onDelete: Cascade)
+
+  qualityRating      String         @map("quality_rating")
+  messagingLimitTier String?        @map("messaging_limit_tier")
+  status             String?
+
+  consultadoEm       DateTime       @default(now()) @map("consultado_em")
+
+  @@index([numeroId, consultadoEm], map: "idx_numero_historico_numero_consultado")
+  @@map("numeros_whatsapp_historico")
+}
