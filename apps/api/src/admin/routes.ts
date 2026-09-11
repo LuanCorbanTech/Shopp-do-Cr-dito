@@ -689,15 +689,39 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
 
       instance.get("/qualidade-whatsapp/bms", async () => adminRepo.listarBmContasQualidadeWhatsapp());
 
-      instance.post<{ Body: { nome?: string; tokenAcesso?: string } }>("/qualidade-whatsapp/bms", async (request, reply) => {
+      instance.post<{
+        Body: { nome?: string; tokenAcesso?: string; wabas?: { wabaId?: string; nome?: string }[] };
+      }>("/qualidade-whatsapp/bms", async (request, reply) => {
         const body = request.body ?? {};
         if (!body.nome?.trim() || !body.tokenAcesso?.trim()) {
           reply.code(400);
           return { error: "campos_obrigatorios", mensagem: "Informe nome e token de acesso." };
         }
         const bm = await adminRepo.criarBmContaQualidadeWhatsapp({ nome: body.nome, tokenAcesso: body.tokenAcesso });
+
+        // Falha aberta: a BM já está criada nesse ponto. Cada WABA informada
+        // junto é tentada individualmente — uma falhar (ex.: WABA_ID
+        // duplicado) não derruba a BM nem as outras WABAs da lista.
+        let wabasCriadas = 0;
+        const wabasComErro: { wabaId: string; mensagem: string }[] = [];
+        for (const wabaBruta of body.wabas ?? []) {
+          const wabaId = wabaBruta.wabaId?.trim();
+          if (!wabaId) continue;
+          try {
+            await adminRepo.criarWabaContaQualidadeWhatsapp(bm.id, { wabaId, nome: wabaBruta.nome });
+            wabasCriadas += 1;
+          } catch (error) {
+            wabasComErro.push({
+              wabaId,
+              mensagem: isPrismaUniqueConstraintError(error)
+                ? "Já existe uma WABA cadastrada com esse WABA_ID."
+                : "Não foi possível cadastrar essa WABA.",
+            });
+          }
+        }
+
         reply.code(201);
-        return bm;
+        return { id: bm.id, wabasCriadas, wabasComErro };
       });
 
       instance.patch<{
