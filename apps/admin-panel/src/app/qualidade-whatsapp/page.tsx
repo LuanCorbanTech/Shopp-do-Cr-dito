@@ -52,6 +52,8 @@ interface QualidadeWhatsappRelatorioConfigStatus {
   ativo: boolean;
   intervaloSegundos: number | null;
   webhookUrl: string | null;
+  authTokenConfigurado: boolean;
+  authTokenMascarado: string | null;
 }
 
 interface ResumoQualidadeWhatsapp {
@@ -340,6 +342,23 @@ export default async function QualidadeWhatsappPage({
                 placeholder="https://seu-sistema.com/webhook/qualidade-whatsapp"
                 defaultValue={relatorioConfig.webhookUrl ?? ""}
               />
+            </div>
+            <div>
+              <label className="field-label" htmlFor="webhookAuthToken">
+                Token de autenticação (Bearer){" "}
+                {relatorioConfig.authTokenConfigurado && (
+                  <span className="badge good" style={{ marginLeft: 6 }}>
+                    CONFIGURADO
+                  </span>
+                )}
+              </label>
+              <p className="field-help">
+                Enviado no header <code>Authorization: Bearer &lt;token&gt;</code> desse webhook.{" "}
+                {relatorioConfig.authTokenConfigurado
+                  ? `Token atual termina em: ${relatorioConfig.authTokenMascarado}. Deixe em branco pra manter o token atual.`
+                  : "Deixe em branco se o seu endpoint não exigir autenticação."}
+              </p>
+              <input id="webhookAuthToken" name="webhookAuthToken" type="password" autoComplete="off" placeholder="••••••••" />
             </div>
             <button type="submit">Salvar</button>
           </form>

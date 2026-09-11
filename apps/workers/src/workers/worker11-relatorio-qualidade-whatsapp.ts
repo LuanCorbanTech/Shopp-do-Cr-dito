@@ -27,6 +27,8 @@ export interface NumeroQualidadeParaRelatorio {
 export interface RunRelatorioQualidadeWhatsappWorkerOnceParams {
   ativo: boolean;
   webhookUrl?: string | null;
+  /** Token pra autenticar no outro sistema (11/09 — pedido do usuário). Quando presente, vai como "Authorization: Bearer <token>". Sem token cadastrado, o POST sai sem esse header, como sempre foi. */
+  webhookAuthToken?: string | null;
   numeros: NumeroQualidadeParaRelatorio[];
   /** Injeção do fetch — só pra testar sem rede de verdade; em produção usa o fetch global. */
   fetchImpl?: typeof fetch;
@@ -75,7 +77,7 @@ export function montarRelatorioQualidadeWhatsappBody(
 export async function runRelatorioQualidadeWhatsappWorkerOnce(
   params: RunRelatorioQualidadeWhatsappWorkerOnceParams
 ): Promise<number> {
-  const { ativo, webhookUrl, numeros, fetchImpl = fetch } = params;
+  const { ativo, webhookUrl, webhookAuthToken, numeros, fetchImpl = fetch } = params;
 
   if (!ativo) return 0;
   if (!webhookUrl) {
@@ -84,11 +86,15 @@ export async function runRelatorioQualidadeWhatsappWorkerOnce(
   }
 
   const body = montarRelatorioQualidadeWhatsappBody(numeros);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (webhookAuthToken) {
+    headers["Authorization"] = `Bearer ${webhookAuthToken}`;
+  }
 
   try {
     const resposta = await fetchImpl(webhookUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     });
     if (!resposta.ok) {

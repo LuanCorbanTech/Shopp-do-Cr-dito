@@ -558,13 +558,19 @@ loop(
 async function resolverConfigRelatorioQualidadeWhatsapp(): Promise<{
   ativo: boolean;
   webhookUrl: string | null;
+  webhookAuthToken: string | null;
 }> {
   try {
     const status = await adminRepo.statusRelatorioQualidadeWhatsapp();
-    return { ativo: status.ativo, webhookUrl: status.webhookUrl };
+    // O status devolvido pro painel só traz o token MASCARADO
+    // (authTokenMascarado) — o valor de verdade pra autenticar de fato não
+    // vem por statusRelatorioQualidadeWhatsapp (rota também usada pelo
+    // painel). Por isso o worker lê a config bruta direto do banco aqui.
+    const tokenReal = await adminRepo.obterTokenRelatorioQualidadeWhatsapp();
+    return { ativo: status.ativo, webhookUrl: status.webhookUrl, webhookAuthToken: tokenReal };
   } catch (error) {
     logger.warn({ error }, "Falha ao ler a config do relatório de Qualidade WhatsApp — ciclo será ignorado");
-    return { ativo: false, webhookUrl: null };
+    return { ativo: false, webhookUrl: null, webhookAuthToken: null };
   }
 }
 
@@ -586,10 +592,10 @@ loop(
   "worker11-relatorio-qualidade-whatsapp",
   WORKER11_INTERVAL_MS_PADRAO,
   async () => {
-    const { ativo, webhookUrl } = await resolverConfigRelatorioQualidadeWhatsapp();
+    const { ativo, webhookUrl, webhookAuthToken } = await resolverConfigRelatorioQualidadeWhatsapp();
     if (!ativo) return 0;
     const numeros = await adminRepo.listarNumerosParaRelatorioQualidadeWhatsapp();
-    return runRelatorioQualidadeWhatsappWorkerOnce({ ativo, webhookUrl, numeros });
+    return runRelatorioQualidadeWhatsappWorkerOnce({ ativo, webhookUrl, webhookAuthToken, numeros });
   },
   () => resolverIntervaloRelatorioQualidadeWhatsappMs(WORKER11_INTERVAL_MS_PADRAO)
 );

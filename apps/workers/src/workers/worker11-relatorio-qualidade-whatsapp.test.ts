@@ -103,4 +103,37 @@ describe("runRelatorioQualidadeWhatsappWorkerOnce", () => {
     });
     expect(resultado).toBe(0);
   });
+
+  it("inclui o header Authorization: Bearer quando um token está configurado", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    await runRelatorioQualidadeWhatsappWorkerOnce({
+      ativo: true,
+      webhookUrl: "https://exemplo.com/relatorio-qualidade",
+      webhookAuthToken: "token-de-teste-fake-123",
+      numeros: NUMEROS_EXEMPLO,
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [, init] = fetchImpl.mock.calls[0];
+    expect((init as RequestInit).headers).toMatchObject({
+      "Content-Type": "application/json",
+      Authorization: "Bearer token-de-teste-fake-123",
+    });
+  });
+
+  it("não inclui o header Authorization quando nenhum token está configurado", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    await runRelatorioQualidadeWhatsappWorkerOnce({
+      ativo: true,
+      webhookUrl: "https://exemplo.com/relatorio-qualidade",
+      webhookAuthToken: null,
+      numeros: NUMEROS_EXEMPLO,
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [, init] = fetchImpl.mock.calls[0];
+    expect((init as RequestInit).headers).not.toHaveProperty("Authorization");
+  });
 });

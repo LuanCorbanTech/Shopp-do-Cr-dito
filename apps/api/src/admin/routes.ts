@@ -666,13 +666,14 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       instance.get("/qualidade-whatsapp/relatorio-config", async () => adminRepo.statusRelatorioQualidadeWhatsapp());
 
       instance.post<{
-        Body: { ativo?: boolean; intervaloSegundos?: number; webhookUrl?: string };
+        Body: { ativo?: boolean; intervaloSegundos?: number; webhookUrl?: string; webhookAuthToken?: string };
       }>("/qualidade-whatsapp/relatorio-config", async (request) => {
         const body = request.body ?? {};
         await adminRepo.salvarConfigRelatorioQualidadeWhatsapp({
           ativo: Boolean(body.ativo),
           intervaloSegundos: body.intervaloSegundos,
           webhookUrl: body.webhookUrl,
+          webhookAuthToken: body.webhookAuthToken,
         });
         return adminRepo.statusRelatorioQualidadeWhatsapp();
       });

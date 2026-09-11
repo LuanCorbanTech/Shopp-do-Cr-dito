@@ -1763,20 +1763,50 @@ export class AdminRepository {
     const config = await this.prisma.integrationConfig.findUnique({
       where: { chave: "QUALIDADE_WHATSAPP_RELATORIO_CONFIG" },
     });
-    const valor = (config?.valor ?? {}) as { intervaloSegundos?: number; webhookUrl?: string };
+    const valor = (config?.valor ?? {}) as { intervaloSegundos?: number; webhookUrl?: string; webhookAuthToken?: string };
+    const { tokenConfigurado, tokenMascarado } = mascararTokenBm(valor.webhookAuthToken);
     return {
       ativo: config?.ativo ?? false,
       intervaloSegundos: typeof valor.intervaloSegundos === "number" && valor.intervaloSegundos > 0 ? valor.intervaloSegundos : null,
       webhookUrl: valor.webhookUrl || null,
+      authTokenConfigurado: tokenConfigurado,
+      authTokenMascarado: tokenMascarado,
     };
   }
 
+  // Valor REAL do token (não mascarado) — só pra uso interno do worker11 na
+  // hora de montar o header Authorization de verdade. Nunca deve ser
+  // exposto por nenhuma rota da API administrativa (o painel só vê
+  // authTokenConfigurado/authTokenMascarado, via statusRelatorioQualidadeWhatsapp acima).
+  async obterTokenRelatorioQualidadeWhatsapp(): Promise<string | null> {
+    const config = await this.prisma.integrationConfig.findUnique({
+      where: { chave: "QUALIDADE_WHATSAPP_RELATORIO_CONFIG" },
+    });
+    const valor = (config?.valor ?? {}) as { webhookAuthToken?: string };
+    return valor.webhookAuthToken || null;
+  }
+
+  // "webhookAuthToken" segue o mesmo padrão já usado pra Facta usuario/senha:
+  // campo em branco (undefined ou string vazia) NÃO apaga o token já salvo —
+  // só troca quando vem um valor novo de verdade. Isso evita que o painel
+  // limpe o token sempre que o formulário for salvo sem mexer nesse campo
+  // (já que o valor mascarado nunca é devolvido pro <input>, não dá pra
+  // reenviar o valor atual mesmo se quisesse).
   async salvarConfigRelatorioQualidadeWhatsapp(params: {
     ativo: boolean;
     intervaloSegundos?: number;
     webhookUrl?: string;
+    webhookAuthToken?: string;
   }): Promise<void> {
-    const valor = { intervaloSegundos: params.intervaloSegundos, webhookUrl: params.webhookUrl };
+    const atual = await this.prisma.integrationConfig.findUnique({
+      where: { chave: "QUALIDADE_WHATSAPP_RELATORIO_CONFIG" },
+    });
+    const valorAtual = (atual?.valor ?? {}) as { webhookAuthToken?: string };
+    const webhookAuthToken =
+      params.webhookAuthToken !== undefined && params.webhookAuthToken.trim() !== ""
+        ? params.webhookAuthToken.trim()
+        : valorAtual.webhookAuthToken;
+    const valor = { intervaloSegundos: params.intervaloSegundos, webhookUrl: params.webhookUrl, webhookAuthToken };
     await this.prisma.integrationConfig.upsert({
       where: { chave: "QUALIDADE_WHATSAPP_RELATORIO_CONFIG" },
       update: { valor, ativo: params.ativo },
@@ -2130,6 +2160,12 @@ export interface QualidadeWhatsappRelatorioConfigStatus {
   ativo: boolean;
   intervaloSegundos: number | null;
   webhookUrl: string | null;
+  // Token enviado no header "Authorization: Bearer <token>" desse webhook
+  // (11/09 — o outro sistema passou a exigir autenticação). Nunca devolve o
+  // valor puro pro painel, só se está configurado e o final — mesmo
+  // mascaramento fixo (8 pontos + últimos 4) já usado pro token da BM.
+  authTokenConfigurado: boolean;
+  authTokenMascarado: string | null;
 }
 
 export interface NumeroQualidadeParaRelatorio {

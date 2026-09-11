@@ -59,6 +59,9 @@ export async function salvarConfigRelatorioQualidadeWhatsapp(formData: FormData)
       ativo: formData.get("ativo") === "on",
       intervaloSegundos: Number(formData.get("intervaloSegundos")) || undefined,
       webhookUrl: String(formData.get("webhookUrl") || "").trim() || undefined,
+      // Em branco = não mexer no token já salvo (mesmo padrão do campo de
+      // senha da Facta) — por isso não força undefined->"" aqui.
+      webhookAuthToken: String(formData.get("webhookAuthToken") || "").trim() || undefined,
     }),
   });
   revalidatePath(PATH);
