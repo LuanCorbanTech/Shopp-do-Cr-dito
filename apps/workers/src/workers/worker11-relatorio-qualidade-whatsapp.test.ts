@@ -76,7 +76,9 @@ describe("runRelatorioQualidadeWhatsappWorkerOnce", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toBe("https://exemplo.com/relatorio-qualidade");
-    expect((init as RequestInit).headers).toMatchObject({ "Content-Type": "application/json" });
+    // Pedido explícito do usuário (11/09): sem token cadastrado, o POST sai
+    // sem NENHUM header custom — nem Content-Type, nem Authorization.
+    expect((init as RequestInit).headers).toEqual({});
     const corpo = JSON.parse((init as RequestInit).body as string);
     expect(corpo.total_numeros).toBe(4);
     expect(corpo.numeros).toHaveLength(4);
@@ -116,13 +118,13 @@ describe("runRelatorioQualidadeWhatsappWorkerOnce", () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [, init] = fetchImpl.mock.calls[0];
-    expect((init as RequestInit).headers).toMatchObject({
-      "Content-Type": "application/json",
+    // Só o header de autenticação — sem Content-Type (pedido explícito do usuário).
+    expect((init as RequestInit).headers).toEqual({
       Authorization: "Bearer token-de-teste-fake-123",
     });
   });
 
-  it("não inclui o header Authorization quando nenhum token está configurado", async () => {
+  it("não inclui nenhum header quando nenhum token está configurado", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     await runRelatorioQualidadeWhatsappWorkerOnce({
       ativo: true,
@@ -134,6 +136,6 @@ describe("runRelatorioQualidadeWhatsappWorkerOnce", () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [, init] = fetchImpl.mock.calls[0];
-    expect((init as RequestInit).headers).not.toHaveProperty("Authorization");
+    expect((init as RequestInit).headers).toEqual({});
   });
 });

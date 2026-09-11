@@ -86,7 +86,10 @@ export async function runRelatorioQualidadeWhatsappWorkerOnce(
   }
 
   const body = montarRelatorioQualidadeWhatsappBody(numeros);
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  // Pedido explícito do usuário (11/09): NÃO manda "Content-Type" nesse
+  // POST — só o header de autenticação, quando houver token cadastrado. Sem
+  // token, o POST sai sem nenhum header custom.
+  const headers: Record<string, string> = {};
   if (webhookAuthToken) {
     headers["Authorization"] = `Bearer ${webhookAuthToken}`;
   }
