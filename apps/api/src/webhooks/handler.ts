@@ -1,6 +1,18 @@
 import type { OffersPort, CreateOfferInput, WebhookRecord } from "@plataforma-ofertas/domain";
+import { mapWithConcurrencyLimit } from "@plataforma-ofertas/shared";
 import { verifyWebhookSignature, type SignatureInvalidReason, type WebhookSignatureScheme } from "./hmac";
 import { resolveIdempotencyKey } from "./idempotency";
+
+// Concorrência padrão pra processar os itens de um LOTE (array/envelope) —
+// bug real encontrado em 11/09: processar em série (1 por vez) fazia um
+// lote de ~500 leads passar dos 50s de timeout de alguns parceiros
+// (Odysseia), que reenviavam o lote inteiro de novo (ver comentário em
+// createOfferIdempotent sobre o reset por CPF+parceiro). 10 é conservador
+// pra caber folgado no pool de conexões padrão do Prisma mesmo num droplet
+// pequeno (2 vCPUs -> pool padrão de 5); configurável via
+// WEBHOOK_LOTE_CONCORRENCIA (ver server.ts) sem precisar mexer no código se
+// o servidor crescer.
+export const CONCORRENCIA_LOTE_PADRAO = 10;
 
 // Lógica de negócio do webhook de ingestão (itens 2, 3 e 46 do escopo original):
 // - Não depende do Fastify nem do Prisma diretamente (só da interface OffersPort),
@@ -106,6 +118,8 @@ export interface HandleWebhookRequestParams {
   headers: Record<string, string | undefined>;
   toleranceSeconds: number;
   nowSeconds?: number;
+  /** Quantos itens do lote processar em paralelo (padrão: CONCORRENCIA_LOTE_PADRAO). */
+  concorrenciaLote?: number;
 }
 
 export type WebhookItemOutcome =
@@ -148,6 +162,8 @@ export async function handleWebhookRequest(
     return { kind: "invalid_signature", reason: signatureCheck.reason };
   }
 
+  const concorrencia = params.concorrenciaLote ?? CONCORRENCIA_LOTE_PADRAO;
+
   // Formato "envelope" (ex.: Odysseia): { teste?, leads: [...] }. Quando
   // teste=true, é só um "ping" de verificação antes de trocar a URL de
   // destino no painel deles — não deve gravar oferta nenhuma, só confirmar
@@ -156,18 +172,16 @@ export async function handleWebhookRequest(
     if (params.body.teste === true) {
       return { kind: "test_ping" };
     }
-    const resultados: WebhookItemOutcome[] = [];
-    for (const item of params.body.leads) {
-      resultados.push(await processOfferItem(port, webhook, item));
-    }
+    const resultados = await mapWithConcurrencyLimit(params.body.leads, concorrencia, (item) =>
+      processOfferItem(port, webhook, item)
+    );
     return { kind: "batch", resultados };
   }
 
   if (Array.isArray(params.body)) {
-    const resultados: WebhookItemOutcome[] = [];
-    for (const item of params.body) {
-      resultados.push(await processOfferItem(port, webhook, item));
-    }
+    const resultados = await mapWithConcurrencyLimit(params.body, concorrencia, (item) =>
+      processOfferItem(port, webhook, item)
+    );
     return { kind: "batch", resultados };
   }
 

@@ -263,6 +263,60 @@ describe("handleWebhookRequest — lote (array de leads)", () => {
     }
   });
 
+  it("processa um lote maior que a concorrência padrão (10) mantendo o resultado na ordem certa (bug real: Odysseia, 495 leads, timeout — ver CONCORRENCIA_LOTE_PADRAO)", async () => {
+    const { port, offersByKey } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = Array.from({ length: 25 }, (_, i) => ({
+      cpf: String(i + 1).padStart(11, "0"),
+      telefone: "85992100340",
+      external_id: `lead-${i + 1}`,
+    }));
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: odysseiaHeaders(rawBody),
+      toleranceSeconds: 300,
+    });
+
+    expect(outcome.kind).toBe("batch");
+    if (outcome.kind === "batch") {
+      expect(outcome.resultados).toHaveLength(25);
+      expect(outcome.resultados.every((r) => r.kind === "created")).toBe(true);
+      // O offerId de cada resultado precisa corresponder ao external_id da MESMA
+      // posição do item de entrada (concorrência não pode embaralhar a ordem).
+      outcome.resultados.forEach((r, i) => {
+        if (r.kind === "created") {
+          const offer = [...offersByKey.values()].find((o) => o.id === r.offerId);
+          expect(offer?.idempotencyKey).toBe(body[i].external_id);
+        }
+      });
+    }
+    expect(offersByKey.size).toBe(25);
+  });
+
+  it("respeita um limite de concorrência customizado (concorrenciaLote) passado explicitamente", async () => {
+    const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+    const body = Array.from({ length: 8 }, (_, i) => ({ cpf: String(i + 1).padStart(11, "0") }));
+    const rawBody = JSON.stringify(body);
+
+    const outcome = await handleWebhookRequest(port, {
+      identificador: "odysseia",
+      rawBody,
+      body,
+      headers: odysseiaHeaders(rawBody),
+      toleranceSeconds: 300,
+      concorrenciaLote: 2,
+    });
+
+    expect(outcome.kind).toBe("batch");
+    if (outcome.kind === "batch") {
+      expect(outcome.resultados).toHaveLength(8);
+      expect(outcome.resultados.every((r) => r.kind === "created")).toBe(true);
+    }
+  });
+
   it("um lote inteiro com assinatura inválida é rejeitado antes de processar qualquer item", async () => {
     const { port, offersByKey } = createFakeOffersPort([WEBHOOK_SIMPLES]);
     const body = [{ cpf: "11111111111", telefone: "85992100340" }];

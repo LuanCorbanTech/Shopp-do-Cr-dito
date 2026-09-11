@@ -337,6 +337,12 @@ model Offer {
   logs             LogEntry[]
   disparoIndividualTentativas DisparoIndividualTentativa[]
 
+  // NÃO É UM ÍNDICE ÓRFÃO (11/09): existe também "idx_offers_webhook_cpf_normalizado",
+  // um índice FUNCIONAL sobre (webhookId, regexp_replace(cpf, '\D', '', 'g')) —
+  // usado pela checagem de "mesmo parceiro + mesmo CPF" em createOfferIdempotent.
+  // O Prisma não representa índices sobre expressão em @@index, então esse
+  // vive só na migração 20260911170000_indice_cpf_normalizado_webhook — não
+  // remover achando que sobrou de uma limpeza.
   @@unique([webhookId, idempotencyKey], map: "uq_offer_idempotency")
   @@index([status], map: "idx_offers_status")
   @@index([createdAt], map: "idx_offers_created_at")

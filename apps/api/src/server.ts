@@ -18,6 +18,11 @@ const offersPort = new PrismaOffersPort(prisma);
 const pipelineRepo = new PrismaPipelineRepository(prisma);
 const adminRepo = new AdminRepository(prisma);
 const toleranceSeconds = Number(process.env.WEBHOOK_HMAC_DEFAULT_TOLERANCE_SECONDS ?? 300);
+// Correção 11/09 — ver handler.ts (CONCORRENCIA_LOTE_PADRAO): processar um
+// lote grande de leads em série passava do timeout de alguns parceiros
+// (Odysseia, 50s), que reenviavam o lote inteiro de novo e resetavam leads
+// já validados. Configurável aqui sem precisar mexer no código.
+const webhookLoteConcorrencia = Number(process.env.WEBHOOK_LOTE_CONCORRENCIA ?? 10);
 
 const whatsappWebhookToken = process.env.WHATSAPP_WEBHOOK_TOKEN;
 if (!whatsappWebhookToken) {
@@ -36,7 +41,7 @@ if (!dispatchApiToken) {
   );
 }
 
-registerWebhookRoutes(app, offersPort, toleranceSeconds);
+registerWebhookRoutes(app, offersPort, toleranceSeconds, webhookLoteConcorrencia);
 registerWhatsappValidacaoWebhookRoutes(app, pipelineRepo, pipelineRepo, whatsappWebhookToken);
 registerAdminRoutes(app, adminRepo);
 registerAguardandoDisparoRoutes(app, pipelineRepo, dispatchApiToken);

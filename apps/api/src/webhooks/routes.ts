@@ -7,7 +7,9 @@ import { webhookBodySchema, webhookParamsSchema } from "./schema";
 export function registerWebhookRoutes(
   app: FastifyInstance,
   port: OffersPort,
-  toleranceSeconds: number
+  toleranceSeconds: number,
+  /** Quantos itens de um lote processar em paralelo (ver handler.ts, CONCORRENCIA_LOTE_PADRAO). */
+  concorrenciaLote?: number
 ): void {
   // Log próprio (não o do Fastify, que fica com logger:false em server.ts) —
   // só pros casos de ERRO (404/401/400), pra dar pra investigar sem precisar
@@ -53,6 +55,7 @@ export function registerWebhookRoutes(
         body: request.body,
         headers: normalizeHeaders(request.headers),
         toleranceSeconds,
+        concorrenciaLote,
       });
 
       switch (outcome.kind) {

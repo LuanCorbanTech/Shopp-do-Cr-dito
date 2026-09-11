@@ -1,0 +1,23 @@
+-- Correção urgente (11/09) — índice funcional pra acelerar a checagem de
+-- "mesmo parceiro (webhook) + mesmo CPF" feita em createOfferIdempotent
+-- (packages/database/src/repositories/prisma-offers-port.ts), que compara
+-- regexp_replace(cpf, '\D', '', 'g') pra ignorar pontuação. Sem esse
+-- índice, o Postgres precisa varrer as ofertas do parceiro e recalcular
+-- regexp_replace em cada uma pra cada webhook recebido — foi identificado
+-- como a causa principal de um lote de ~500 leads (Odysseia) passar de 50s
+-- de processamento, estourar o timeout do parceiro, e o parceiro reenviar o
+-- lote inteiro de novo (resetando leads que já tinham validado WhatsApp).
+--
+-- CONCURRENTLY evita travar a tabela "offers" pra escrita/leitura enquanto o
+-- índice é construído (mais lento pra criar, mas não derruba o site
+-- durante o deploy). O Prisma Migrate reconhece CREATE INDEX CONCURRENTLY e
+-- roda essa migração automaticamente FORA de uma transação (exigência do
+-- Postgres pra esse comando) — não precisa de nenhum passo manual, o
+-- `prisma migrate deploy` do pipeline de deploy aplica normal.
+--
+-- OBS: esse índice usa uma expressão (regexp_replace), que o schema.prisma
+-- não consegue representar em @@index — por isso ele só existe aqui, na
+-- migração, e tem um comentário espelho no schema.prisma explicando pra não
+-- ser removido achando que é "índice órfão" numa limpeza futura.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_offers_webhook_cpf_normalizado"
+ON "offers" ("webhook_id", (regexp_replace("cpf", '\D', '', 'g')));
