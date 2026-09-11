@@ -621,6 +621,161 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         const senhaTemporaria = await adminRepo.gerarNovaSenhaUsuario(request.params.id);
         return { senhaTemporaria };
       });
+
+      // -----------------------------------------------------------------
+      // Qualidade WhatsApp (10/09) — monitoramento de qualidade/limite dos
+      // números dentro das BMs cadastradas, via API oficial da Meta. Ver
+      // AdminRepository (packages/database) e worker10-qualidade-whatsapp
+      // (apps/workers) pro resto do domínio.
+      // -----------------------------------------------------------------
+
+      instance.get("/qualidade-whatsapp/config", async () => adminRepo.statusQualidadeWhatsapp());
+
+      instance.post<{
+        Body: {
+          ativo?: boolean;
+          intervaloSegundos?: number;
+          batchSize?: number;
+          versaoGraphApi?: string;
+          webhookAlertaUrl?: string;
+        };
+      }>("/qualidade-whatsapp/config", async (request) => {
+        const body = request.body ?? {};
+        await adminRepo.salvarConfigQualidadeWhatsapp({
+          ativo: Boolean(body.ativo),
+          intervaloSegundos: body.intervaloSegundos,
+          batchSize: body.batchSize,
+          versaoGraphApi: body.versaoGraphApi,
+          webhookAlertaUrl: body.webhookAlertaUrl,
+        });
+        return adminRepo.statusQualidadeWhatsapp();
+      });
+
+      // Toggle rápido (mesmo padrão do "Ativar/Desativar" das outras
+      // integrações) — não mexe nos outros campos da config.
+      instance.post<{ Body: { ativo: boolean } }>("/qualidade-whatsapp/config/ativo", async (request) => {
+        await adminRepo.setQualidadeWhatsappAtivo(Boolean(request.body?.ativo));
+        return adminRepo.statusQualidadeWhatsapp();
+      });
+
+      instance.get("/qualidade-whatsapp/resumo", async () => adminRepo.resumoQualidadeWhatsapp());
+
+      instance.get<{ Querystring: { bmContaId?: string; qualityRating?: string; busca?: string } }>(
+        "/qualidade-whatsapp/numeros",
+        async (request) =>
+          adminRepo.listarNumerosQualidadeWhatsapp({
+            bmContaId: request.query.bmContaId || undefined,
+            qualityRating: request.query.qualityRating || undefined,
+            busca: request.query.busca || undefined,
+          })
+      );
+
+      instance.get<{ Params: { id: string } }>("/qualidade-whatsapp/numeros/:id", async (request, reply) => {
+        const numero = await adminRepo.numeroQualidadeWhatsappPorId(request.params.id);
+        if (!numero) {
+          reply.code(404);
+          return { error: "numero_nao_encontrado" };
+        }
+        return numero;
+      });
+
+      instance.get<{ Params: { id: string }; Querystring: { limite?: string } }>(
+        "/qualidade-whatsapp/numeros/:id/historico",
+        async (request) => {
+          const limite = request.query.limite ? Number(request.query.limite) : undefined;
+          return adminRepo.historicoNumeroQualidadeWhatsapp(request.params.id, limite);
+        }
+      );
+
+      instance.get("/qualidade-whatsapp/bms", async () => adminRepo.listarBmContasQualidadeWhatsapp());
+
+      instance.post<{ Body: { nome?: string; tokenAcesso?: string } }>("/qualidade-whatsapp/bms", async (request, reply) => {
+        const body = request.body ?? {};
+        if (!body.nome?.trim() || !body.tokenAcesso?.trim()) {
+          reply.code(400);
+          return { error: "campos_obrigatorios", mensagem: "Informe nome e token de acesso." };
+        }
+        const bm = await adminRepo.criarBmContaQualidadeWhatsapp({ nome: body.nome, tokenAcesso: body.tokenAcesso });
+        reply.code(201);
+        return bm;
+      });
+
+      instance.patch<{
+        Params: { id: string };
+        Body: { nome?: string; tokenAcesso?: string; ativo?: boolean };
+      }>("/qualidade-whatsapp/bms/:id", async (request) => {
+        await adminRepo.atualizarBmContaQualidadeWhatsapp(request.params.id, request.body ?? {});
+        return adminRepo.listarBmContasQualidadeWhatsapp();
+      });
+
+      // Excluir uma BM apaga em cascata (banco) todas as WABAs dela e os
+      // números/histórico associados — não tem como desfazer, painel avisa
+      // o usuário antes de chamar isso (confirmação no front).
+      instance.delete<{ Params: { id: string } }>("/qualidade-whatsapp/bms/:id", async (request, reply) => {
+        await adminRepo.removerBmContaQualidadeWhatsapp(request.params.id);
+        reply.code(204);
+        return;
+      });
+
+      instance.post<{ Params: { id: string }; Body: { wabaId?: string; nome?: string } }>(
+        "/qualidade-whatsapp/bms/:id/wabas",
+        async (request, reply) => {
+          const body = request.body ?? {};
+          if (!body.wabaId?.trim()) {
+            reply.code(400);
+            return { error: "waba_id_obrigatorio", mensagem: "Informe o WABA_ID." };
+          }
+          try {
+            const waba = await adminRepo.criarWabaContaQualidadeWhatsapp(request.params.id, {
+              wabaId: body.wabaId,
+              nome: body.nome,
+            });
+            reply.code(201);
+            return waba;
+          } catch (error) {
+            if (isPrismaUniqueConstraintError(error)) {
+              reply.code(409);
+              return { error: "waba_id_duplicado", mensagem: "Já existe uma WABA cadastrada com esse WABA_ID." };
+            }
+            throw error;
+          }
+        }
+      );
+
+      instance.patch<{
+        Params: { id: string };
+        Body: { wabaId?: string; nome?: string; ativo?: boolean };
+      }>("/qualidade-whatsapp/wabas/:id", async (request, reply) => {
+        try {
+          await adminRepo.atualizarWabaContaQualidadeWhatsapp(request.params.id, request.body ?? {});
+          return adminRepo.listarBmContasQualidadeWhatsapp();
+        } catch (error) {
+          if (isPrismaUniqueConstraintError(error)) {
+            reply.code(409);
+            return { error: "waba_id_duplicado", mensagem: "Já existe uma WABA cadastrada com esse WABA_ID." };
+          }
+          throw error;
+        }
+      });
+
+      instance.delete<{ Params: { id: string } }>("/qualidade-whatsapp/wabas/:id", async (request, reply) => {
+        await adminRepo.removerWabaContaQualidadeWhatsapp(request.params.id);
+        reply.code(204);
+        return;
+      });
+
+      // Botão "Testar agora" (painel) — consulta essa WABA na Meta na hora
+      // (sem esperar o rodízio do worker10) e já grava o resultado de
+      // verdade, exatamente como o worker faria pra ela.
+      instance.post<{ Params: { id: string } }>("/qualidade-whatsapp/wabas/:id/testar", async (request, reply) => {
+        try {
+          const resultado = await adminRepo.testarWabaQualidadeWhatsapp(request.params.id);
+          return resultado;
+        } catch (error) {
+          reply.code(502);
+          return { error: "falha_consulta", mensagem: error instanceof Error ? error.message : String(error) };
+        }
+      });
     },
     { prefix: "/admin" }
   );
