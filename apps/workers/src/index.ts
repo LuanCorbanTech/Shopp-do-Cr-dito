@@ -429,11 +429,20 @@ loop(
 // Worker0 — Consulta de margem Facta (04/09): nova PRIMEIRA etapa do funil,
 // antes de tudo o mais (inclusive antes do Worker1/Lemit). IMPORTANTE: a
 // própria Facta exige um intervalo mínimo de 3s entre consultas — por isso
-// o intervalo padrão aqui é maior que isso (com folga), e o batchSize é
-// SEMPRE 1 (nunca configurável pra mais — processar 2+ ofertas no MESMO
-// ciclo violaria o limite de 3s entre elas, já que o worker não coloca
-// nenhuma espera extra dentro do próprio ciclo).
+// o intervalo padrão aqui é maior que isso (com folga), e o batchSize
+// (quando a integração está ATIVA) é SEMPRE 1 (nunca configurável pra mais
+// nesse caso — processar 2+ ofertas no MESMO ciclo violaria o limite de 3s
+// entre elas, já que o worker não coloca nenhuma espera extra dentro do
+// próprio ciclo).
+//
+// Quando a integração está DESATIVADA no painel, esse limite de 3s não se
+// aplica (nenhuma chamada de rede acontece) — nesse caso o worker usa
+// batchSizeDesativado (bem maior) pra não deixar RECEBIDO empilhar. Ver
+// worker0-margem-facta.ts (11/09) — bug encontrado em produção: com
+// Facta desativada e volume de leads alto, o cap de 1/ciclo não dava conta
+// e o RECEBIDO ficava crescendo sem parar.
 const WORKER0_INTERVAL_MS_PADRAO = Number(process.env.WORKER0_INTERVAL_MS ?? 4000);
+const WORKER0_BATCH_SIZE_DESATIVADO = Number(process.env.WORKER0_BATCH_SIZE_DESATIVADO ?? 300);
 
 loop("worker0-margem-facta", WORKER0_INTERVAL_MS_PADRAO, async () => {
   const resultado = await runMargemFactaWorkerOnce({
@@ -441,6 +450,7 @@ loop("worker0-margem-facta", WORKER0_INTERVAL_MS_PADRAO, async () => {
     configPort: repo,
     factaService: factaMargemService,
     batchSize: 1,
+    batchSizeDesativado: WORKER0_BATCH_SIZE_DESATIVADO,
   });
   return resultado.aprovadas + resultado.negativas + resultado.aguardandoOnline + resultado.erros;
 });

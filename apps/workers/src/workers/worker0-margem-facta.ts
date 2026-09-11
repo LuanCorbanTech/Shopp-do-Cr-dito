@@ -31,6 +31,14 @@ import { FactaMargemError, type FactaMargemConfig } from "../fornecedores/facta-
 // NO MÁXIMO 1 oferta por ciclo (batchSize sempre 1 na prática — ver
 // index.ts, que chama esse worker num intervalo de ciclo que já respeita
 // essa folga), mesmo que o parâmetro permita mais.
+//
+// EXCEÇÃO (11/09) — integração DESATIVADA no painel: nesse caso não tem
+// NENHUMA chamada de rede pra Facta (é só um "aprova direto", loop local no
+// banco), então o limite de 3s não se aplica e não faz sentido processar só
+// 1 por ciclo — isso deixaria RECEBIDO acumulando indefinidamente sempre
+// que a Facta estiver desligada e o volume de leads for maior que ~1 a
+// cada intervalo do ciclo. Por isso, quando desativada, usa um lote bem
+// maior (batchSizeDesativado, ver abaixo) pra escoar a fila rápido.
 
 // Serviço injetado (não importa gerarTokenFacta/consultarBaseOfflineFacta
 // direto aqui) — mesmo espírito do "LimitLookup" no worker1-limit.ts:
@@ -49,7 +57,10 @@ export interface RunMargemFactaWorkerOnceParams {
   port: MargemFactaPort;
   configPort: IntegrationConfigPort;
   factaService: FactaMargemService;
+  /** Usado só quando a integração está ATIVA (respeita o limite de 3s da Facta). Padrão: 1. */
   batchSize?: number;
+  /** Usado só quando a integração está DESATIVADA no painel (sem chamada de rede, não tem limite de taxa). Padrão: 300. */
+  batchSizeDesativado?: number;
   now?: Date;
 }
 
@@ -69,7 +80,7 @@ function paraNumero(valor: unknown): number | null {
 export async function runMargemFactaWorkerOnce(
   params: RunMargemFactaWorkerOnceParams
 ): Promise<RunMargemFactaWorkerOnceResultado> {
-  const { port, configPort, factaService, batchSize = 1, now = new Date() } = params;
+  const { port, configPort, factaService, batchSize = 1, batchSizeDesativado = 300, now = new Date() } = params;
 
   let aprovadas = 0;
   let negativas = 0;
@@ -85,7 +96,12 @@ export async function runMargemFactaWorkerOnce(
     ? (config!.valor.backoffSecondsSchedule as number[])
     : DEFAULT_BACKOFF_SCHEDULE_SECONDS;
 
-  const ofertas = await port.claimOffersParaMargem(batchSize, now);
+  // Desativada -> não tem limite de 3s da Facta pra respeitar (nenhuma
+  // chamada de rede acontece nesse ramo), então processa um lote bem maior
+  // por ciclo pra não deixar RECEBIDO empilhar enquanto a integração
+  // estiver desligada.
+  const batchEfetivo = ativo ? batchSize : batchSizeDesativado;
+  const ofertas = await port.claimOffersParaMargem(batchEfetivo, now);
   if (ofertas.length === 0) return { aprovadas, negativas, aguardandoOnline, erros };
 
   // Desativado no painel — passa direto pra todo mundo desse ciclo, sem

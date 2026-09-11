@@ -223,4 +223,55 @@ describe("runMargemFactaWorkerOnce", () => {
 
     expect(resultado.aprovadas).toBe(3);
   });
+
+  it("integração ATIVA, batchSize padrão (sem passar nada): processa só 1 por ciclo mesmo com mais ofertas na fila (respeita o limite de 3s da Facta)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("FACTA_MARGEM_CREDENCIAIS", true, { usuario: "u", senha: "s" });
+    repo.addOffer({ telefoneOriginal: null, cpf: "11111111111" });
+    repo.addOffer({ telefoneOriginal: null, cpf: "22222222222" });
+    repo.addOffer({ telefoneOriginal: null, cpf: "33333333333" });
+
+    const resultado = await runMargemFactaWorkerOnce({
+      port: repo,
+      configPort: repo,
+      factaService: servicoFake(),
+    });
+
+    expect(resultado.aprovadas).toBe(1);
+  });
+
+  it("integração DESATIVADA: processa MUITO MAIS que 1 por ciclo (usa batchSizeDesativado, não o limite de 3s da Facta que só vale quando ativa), mesmo sem passar o parâmetro explicitamente", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("FACTA_MARGEM_CREDENCIAIS", false, { usuario: "u", senha: "s" });
+    for (let i = 0; i < 5; i += 1) {
+      repo.addOffer({ telefoneOriginal: null, cpf: `1111111110${i}` });
+    }
+
+    let chamouFacta = false;
+    const resultado = await runMargemFactaWorkerOnce({
+      port: repo,
+      configPort: repo,
+      factaService: servicoFake({ consultarCpf: async () => { chamouFacta = true; return { dados: null, respostaBruta: {} }; } }),
+    });
+
+    expect(chamouFacta).toBe(false);
+    expect(resultado.aprovadas).toBe(5); // as 5, num ciclo só (batchSizeDesativado padrão = 300, bem acima)
+  });
+
+  it("integração DESATIVADA respeita um batchSizeDesativado customizado", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("FACTA_MARGEM_CREDENCIAIS", false, { usuario: "u", senha: "s" });
+    for (let i = 0; i < 5; i += 1) {
+      repo.addOffer({ telefoneOriginal: null, cpf: `2222222220${i}` });
+    }
+
+    const resultado = await runMargemFactaWorkerOnce({
+      port: repo,
+      configPort: repo,
+      batchSizeDesativado: 2,
+      factaService: servicoFake(),
+    });
+
+    expect(resultado.aprovadas).toBe(2); // só 2 desse ciclo, mesmo tendo 5 na fila
+  });
 });
