@@ -27,9 +27,9 @@ interface PontoHistorico {
 }
 
 const ROTULO_QUALIDADE: Record<string, { label: string; badge: string }> = {
-  GREEN: { label: "Verde", badge: "good" },
-  YELLOW: { label: "Amarela", badge: "warning" },
-  RED: { label: "Vermelha", badge: "critical" },
+  GREEN: { label: "Alta", badge: "good" },
+  YELLOW: { label: "Média", badge: "warning" },
+  RED: { label: "Baixa", badge: "critical" },
   UNKNOWN: { label: "Desconhecida", badge: "neutral" },
 };
 

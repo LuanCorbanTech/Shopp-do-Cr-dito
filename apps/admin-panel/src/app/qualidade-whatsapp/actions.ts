@@ -34,9 +34,7 @@ export async function salvarConfigQualidadeWhatsapp(formData: FormData): Promise
     body: JSON.stringify({
       ativo: formData.get("ativo") === "on",
       intervaloSegundos: Number(formData.get("intervaloSegundos")) || undefined,
-      batchSize: Number(formData.get("batchSize")) || undefined,
       versaoGraphApi: String(formData.get("versaoGraphApi") || "").trim() || undefined,
-      webhookAlertaUrl: String(formData.get("webhookAlertaUrl") || "").trim() || undefined,
     }),
   });
   revalidatePath(PATH);
@@ -44,6 +42,30 @@ export async function salvarConfigQualidadeWhatsapp(formData: FormData): Promise
 
 export async function alternarQualidadeWhatsappAtivo(ativo: boolean): Promise<void> {
   await adminApiFetch("/admin/qualidade-whatsapp/config/ativo", {
+    method: "POST",
+    body: JSON.stringify({ ativo }),
+  });
+  revalidatePath(PATH);
+}
+
+// Webhook de Relatório de Qualidade WhatsApp (11/09) — config própria,
+// separada da consulta automática acima: substitui o antigo alerta "só
+// quando piora" por um relatório periódico completo, com todos os IDs
+// cadastrados e a qualidade atual de cada um.
+export async function salvarConfigRelatorioQualidadeWhatsapp(formData: FormData): Promise<void> {
+  await adminApiFetch("/admin/qualidade-whatsapp/relatorio-config", {
+    method: "POST",
+    body: JSON.stringify({
+      ativo: formData.get("ativo") === "on",
+      intervaloSegundos: Number(formData.get("intervaloSegundos")) || undefined,
+      webhookUrl: String(formData.get("webhookUrl") || "").trim() || undefined,
+    }),
+  });
+  revalidatePath(PATH);
+}
+
+export async function alternarRelatorioQualidadeWhatsappAtivo(ativo: boolean): Promise<void> {
+  await adminApiFetch("/admin/qualidade-whatsapp/relatorio-config/ativo", {
     method: "POST",
     body: JSON.stringify({ ativo }),
   });

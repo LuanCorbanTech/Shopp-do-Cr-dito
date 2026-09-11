@@ -1581,27 +1581,65 @@ export class AdminRepository {
       include: {
         wabas: {
           orderBy: { createdAt: "asc" },
-          include: { _count: { select: { numeros: true } } },
+          include: {
+            _count: { select: { numeros: true } },
+            // qualityRating de cada número (monta o resumo por cor) +
+            // messagingLimitTier (11/09: a Meta passou a compartilhar esse
+            // limite por BM inteira, não mais por número — ver
+            // meta-qualidade-whatsapp.ts — então todo número de uma mesma BM
+            // deveria vir com o mesmo valor; usamos o primeiro não-nulo que
+            // encontrarmos como "o tier da BM").
+            numeros: { select: { qualityRating: true, messagingLimitTier: true } },
+          },
         },
       },
     });
-    return bms.map((bm) => ({
-      id: bm.id,
-      nome: bm.nome,
-      ativo: bm.ativo,
-      ...mascararTokenBm(bm.tokenAcesso),
-      ultimaConsultaEm: bm.ultimaConsultaEm,
-      ultimoErro: bm.ultimoErro,
-      wabas: bm.wabas.map((w) => ({
-        id: w.id,
-        wabaId: w.wabaId,
-        nome: w.nome,
-        ativo: w.ativo,
-        ultimaConsultaEm: w.ultimaConsultaEm,
-        ultimoErro: w.ultimoErro,
-        totalNumeros: w._count.numeros,
-      })),
-    }));
+    return bms.map((bm) => {
+      const wabas = bm.wabas.map((w) => {
+        const porQualidade: Record<string, number> = {};
+        for (const numero of w.numeros) {
+          porQualidade[numero.qualityRating] = (porQualidade[numero.qualityRating] ?? 0) + 1;
+        }
+        return {
+          id: w.id,
+          wabaId: w.wabaId,
+          nome: w.nome,
+          ativo: w.ativo,
+          ultimaConsultaEm: w.ultimaConsultaEm,
+          ultimoErro: w.ultimoErro,
+          totalNumeros: w._count.numeros,
+          porQualidade,
+        };
+      });
+      const porQualidadeBm: Record<string, number> = {};
+      for (const waba of wabas) {
+        for (const rating of Object.keys(waba.porQualidade)) {
+          porQualidadeBm[rating] = (porQualidadeBm[rating] ?? 0) + (waba.porQualidade[rating] ?? 0);
+        }
+      }
+      // Tier por BM (11/09) — sem valor até a Meta devolver algo de verdade
+      // pra pelo menos 1 número dessa BM; nunca inventamos um placeholder
+      // aqui (pedido explícito: se não vier da Meta, não mostra nada).
+      let tier: string | null = null;
+      for (const waba of bm.wabas) {
+        const encontrado = waba.numeros.find((n) => n.messagingLimitTier)?.messagingLimitTier;
+        if (encontrado) {
+          tier = encontrado;
+          break;
+        }
+      }
+      return {
+        id: bm.id,
+        nome: bm.nome,
+        ativo: bm.ativo,
+        ...mascararTokenBm(bm.tokenAcesso),
+        ultimaConsultaEm: bm.ultimaConsultaEm,
+        ultimoErro: bm.ultimoErro,
+        wabas,
+        porQualidade: porQualidadeBm,
+        tier,
+      };
+    });
   }
 
   async criarBmContaQualidadeWhatsapp(params: { nome: string; tokenAcesso: string }): Promise<{ id: string }> {
@@ -1658,31 +1696,29 @@ export class AdminRepository {
     const config = await this.prisma.integrationConfig.findUnique({ where: { chave: "QUALIDADE_WHATSAPP_CONFIG" } });
     const valor = (config?.valor ?? {}) as {
       intervaloSegundos?: number;
-      batchSize?: number;
       versaoGraphApi?: string;
-      webhookAlertaUrl?: string;
     };
     return {
       ativo: config?.ativo ?? false,
       intervaloSegundos: typeof valor.intervaloSegundos === "number" && valor.intervaloSegundos > 0 ? valor.intervaloSegundos : null,
-      batchSize: typeof valor.batchSize === "number" && valor.batchSize > 0 ? valor.batchSize : null,
       versaoGraphApi: valor.versaoGraphApi || null,
-      webhookAlertaUrl: valor.webhookAlertaUrl || null,
     };
   }
 
+  // batchSize removido (11/09) — a consulta automática agora sempre pega
+  // TODAS as WABAs ativas a cada ciclo (ver wabasQualidadeParaConsultar
+  // abaixo, sem limite); webhookAlertaUrl removido daqui também — o alerta
+  // por piora foi substituído pelo relatório periódico completo (ver
+  // statusRelatorioQualidadeWhatsapp/salvarConfigRelatorioQualidadeWhatsapp
+  // mais abaixo).
   async salvarConfigQualidadeWhatsapp(params: {
     ativo: boolean;
     intervaloSegundos?: number;
-    batchSize?: number;
     versaoGraphApi?: string;
-    webhookAlertaUrl?: string;
   }): Promise<void> {
     const valor = {
       intervaloSegundos: params.intervaloSegundos,
-      batchSize: params.batchSize,
       versaoGraphApi: params.versaoGraphApi,
-      webhookAlertaUrl: params.webhookAlertaUrl,
     };
     await this.prisma.integrationConfig.upsert({
       where: { chave: "QUALIDADE_WHATSAPP_CONFIG" },
@@ -1697,6 +1733,65 @@ export class AdminRepository {
       update: { ativo },
       create: { chave: "QUALIDADE_WHATSAPP_CONFIG", ativo, valor: {} },
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Webhook de Relatório de Qualidade WhatsApp (11/09) — substitui o antigo
+  // alerta "só quando piora": agora, no seu próprio ciclo (config separada da
+  // consulta automática acima), manda 1 POST com TODOS os números
+  // cadastrados e a qualidade atual de cada um (alta/média/baixa/desconhecida).
+  // -------------------------------------------------------------------------
+
+  async statusRelatorioQualidadeWhatsapp(): Promise<QualidadeWhatsappRelatorioConfigStatus> {
+    const config = await this.prisma.integrationConfig.findUnique({
+      where: { chave: "QUALIDADE_WHATSAPP_RELATORIO_CONFIG" },
+    });
+    const valor = (config?.valor ?? {}) as { intervaloSegundos?: number; webhookUrl?: string };
+    return {
+      ativo: config?.ativo ?? false,
+      intervaloSegundos: typeof valor.intervaloSegundos === "number" && valor.intervaloSegundos > 0 ? valor.intervaloSegundos : null,
+      webhookUrl: valor.webhookUrl || null,
+    };
+  }
+
+  async salvarConfigRelatorioQualidadeWhatsapp(params: {
+    ativo: boolean;
+    intervaloSegundos?: number;
+    webhookUrl?: string;
+  }): Promise<void> {
+    const valor = { intervaloSegundos: params.intervaloSegundos, webhookUrl: params.webhookUrl };
+    await this.prisma.integrationConfig.upsert({
+      where: { chave: "QUALIDADE_WHATSAPP_RELATORIO_CONFIG" },
+      update: { valor, ativo: params.ativo },
+      create: { chave: "QUALIDADE_WHATSAPP_RELATORIO_CONFIG", valor, ativo: params.ativo },
+    });
+  }
+
+  async setRelatorioQualidadeWhatsappAtivo(ativo: boolean): Promise<void> {
+    await this.prisma.integrationConfig.upsert({
+      where: { chave: "QUALIDADE_WHATSAPP_RELATORIO_CONFIG" },
+      update: { ativo },
+      create: { chave: "QUALIDADE_WHATSAPP_RELATORIO_CONFIG", ativo, valor: {} },
+    });
+  }
+
+  // Todos os números cadastrados (sem filtro nenhum) com o mínimo que o
+  // relatório periódico precisa: os dois identificadores (o phoneNumberId da
+  // Meta E o telefone) + a qualidade atual + de qual BM/WABA é, pra dar
+  // contexto no relatório. Reaproveita o mesmo formato cru (GREEN/YELLOW/
+  // RED/UNKNOWN) — quem traduz pro rótulo alta/média/baixa/desconhecida é o
+  // worker11 (apps/workers), não este repositório.
+  async listarNumerosParaRelatorioQualidadeWhatsapp(): Promise<NumeroQualidadeParaRelatorio[]> {
+    const numeros = await this.prisma.numeroWhatsapp.findMany({
+      include: { wabaConta: { include: { bmConta: true } } },
+    });
+    return numeros.map((n) => ({
+      phoneNumberId: n.phoneNumberId,
+      displayPhoneNumber: n.displayPhoneNumber,
+      qualityRating: n.qualityRating,
+      wabaId: n.wabaConta.wabaId,
+      bmNome: n.wabaConta.bmConta.nome,
+    }));
   }
 
   // KPIs agregados pro topo do painel — conta todos os números de uma vez
@@ -1801,14 +1896,15 @@ export class AdminRepository {
 
   // ---- daqui pra baixo: métodos usados pelo worker10 (não pelo painel) ----
 
-  // As mais desatualizadas primeiro (nulls first — nunca consultadas ainda),
-  // só WABAs ativas de BMs ativas — é assim que o rodízio cobre todas as
-  // WABAs cadastradas ao longo de vários ciclos, sem nenhuma fila separada.
-  async wabasQualidadeParaConsultar(limite: number): Promise<WabaParaConsultarQualidade[]> {
+  // TODAS as WABAs ativas de BMs ativas, sempre (11/09 — antes era um lote
+  // limitado por ciclo, com rodízio; o usuário pediu pra tirar o lote e
+  // consultar tudo de uma vez todo ciclo). Mantém a ordenação por
+  // ultimaConsultaEm (nulls first) só por organização/depuração — não tem
+  // mais efeito de "rodízio" já que não há mais corte por limite.
+  async wabasQualidadeParaConsultar(): Promise<WabaParaConsultarQualidade[]> {
     const wabas = await this.prisma.wabaConta.findMany({
       where: { ativo: true, bmConta: { ativo: true } },
       orderBy: [{ ultimaConsultaEm: { sort: "asc", nulls: "first" } }],
-      take: limite,
       include: { bmConta: true },
     });
     return wabas.map((w) => ({
@@ -1930,7 +2026,7 @@ export class AdminRepository {
 
     const url = `https://graph.facebook.com/${versao}/${encodeURIComponent(
       waba.wabaId
-    )}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,messaging_limit_tier,status`;
+    )}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,whatsapp_business_manager_messaging_limit,status`;
 
     const resposta = await fetch(url, { method: "GET", headers: { Authorization: `Bearer ${waba.bmConta.tokenAcesso}` } });
     const textoBruto = await resposta.text();
@@ -1959,7 +2055,8 @@ export class AdminRepository {
             displayPhoneNumber: typeof i.display_phone_number === "string" ? i.display_phone_number : "",
             verifiedName: typeof i.verified_name === "string" ? i.verified_name : null,
             qualityRating: typeof i.quality_rating === "string" && i.quality_rating ? i.quality_rating : "UNKNOWN",
-            messagingLimitTier: typeof i.messaging_limit_tier === "string" ? i.messaging_limit_tier : null,
+            messagingLimitTier:
+              typeof i.whatsapp_business_manager_messaging_limit === "string" ? i.whatsapp_business_manager_messaging_limit : null,
             status: typeof i.status === "string" ? i.status : null,
           };
         })
@@ -1982,6 +2079,9 @@ export interface WabaContaQualidadeWhatsapp {
   ultimaConsultaEm: Date | null;
   ultimoErro: string | null;
   totalNumeros: number;
+  // Contagem de números dessa WABA por qualityRating (GREEN/YELLOW/RED/UNKNOWN)
+  // — alimenta o resumo de qualidade mostrado no card da WABA no painel.
+  porQualidade: Record<string, number>;
 }
 
 export interface BmContaQualidadeWhatsapp {
@@ -1993,14 +2093,34 @@ export interface BmContaQualidadeWhatsapp {
   ultimaConsultaEm: Date | null;
   ultimoErro: string | null;
   wabas: WabaContaQualidadeWhatsapp[];
+  // Soma do porQualidade de todas as WABAs dessa BM — dá o resumo de saúde
+  // da BM inteira sem precisar abrir cada WABA (importante com ~50 BMs).
+  porQualidade: Record<string, number>;
+  // Limite de disparo da BM inteira (11/09 — a Meta passou a compartilhar
+  // esse valor por BM, não mais por número). null quando a Meta ainda não
+  // devolveu esse dado pra nenhum número dessa BM — nesse caso o painel não
+  // mostra nada (nunca um placeholder tipo "—" ou "0").
+  tier: string | null;
 }
 
 export interface QualidadeWhatsappConfigStatus {
   ativo: boolean;
   intervaloSegundos: number | null;
-  batchSize: number | null;
   versaoGraphApi: string | null;
-  webhookAlertaUrl: string | null;
+}
+
+export interface QualidadeWhatsappRelatorioConfigStatus {
+  ativo: boolean;
+  intervaloSegundos: number | null;
+  webhookUrl: string | null;
+}
+
+export interface NumeroQualidadeParaRelatorio {
+  phoneNumberId: string;
+  displayPhoneNumber: string;
+  qualityRating: string;
+  wabaId: string;
+  bmNome: string;
 }
 
 export interface ResumoQualidadeWhatsapp {

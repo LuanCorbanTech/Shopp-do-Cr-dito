@@ -1,12 +1,20 @@
 // Cliente da API oficial da Meta (Graph API) usado pelo worker10 pra
 // consultar a qualidade/limite dos números de uma WABA (10/09).
 //
-// Contrato real (fornecido pelo Lucas):
+// Contrato original (fornecido pelo Lucas):
 //   GET https://graph.facebook.com/{versao}/{WABA_ID}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,messaging_limit_tier,status
 //   Header: Authorization: Bearer {token do system user do app da BM}
 //   Resposta 200: { data: [ { id, display_phone_number, verified_name?, quality_rating, messaging_limit_tier?, status? }, ... ] }
 //   Resposta de erro (qualquer status != 2xx): { error: { message, type, code, ... } }
 //
+// ATUALIZAÇÃO (11/09) — a Meta descontinuou "messaging_limit_tier" (campo
+// por número) e passou a calcular o limite de disparo por BM inteira
+// ("Business Portfolio"), compartilhado entre todos os números/WABAs dela.
+// O campo novo é "whatsapp_business_manager_messaging_limit" — trocado
+// abaixo. Documentado pela própria Meta como o substituto direto; ainda não
+// testado contra a API de verdade neste ambiente (sem rede pra graph.facebook.com
+// aqui), então vale confirmar no primeiro "Testar agora" depois do deploy que
+// o campo realmente vem preenchido.
 // O token é o do APP CRIADO DENTRO DA PRÓPRIA BM (cada BM tem o seu — ver
 // BmConta no schema); o WABA_ID muda por WABA dentro da mesma BM (ver
 // WabaConta) — por isso os dois vêm sempre juntos aqui, nunca cacheados
@@ -63,7 +71,8 @@ function mapearNumero(item: unknown): MetaPhoneNumberResult {
     displayPhoneNumber: typeof i.display_phone_number === "string" ? i.display_phone_number : "",
     verifiedName: typeof i.verified_name === "string" ? i.verified_name : null,
     qualityRating: typeof i.quality_rating === "string" && i.quality_rating ? i.quality_rating : "UNKNOWN",
-    messagingLimitTier: typeof i.messaging_limit_tier === "string" ? i.messaging_limit_tier : null,
+    messagingLimitTier:
+      typeof i.whatsapp_business_manager_messaging_limit === "string" ? i.whatsapp_business_manager_messaging_limit : null,
     status: typeof i.status === "string" ? i.status : null,
   };
 }
@@ -74,7 +83,7 @@ function mapearNumero(item: unknown): MetaPhoneNumberResult {
 // aqui, sem precisar mudar nada fora deste arquivo).
 export async function buscarNumerosWhatsappMeta(config: MetaQualidadeConfig): Promise<MetaPhoneNumberResult[]> {
   const versao = normalizarVersao(config.versaoGraphApi);
-  const url = `https://graph.facebook.com/${versao}/${encodeURIComponent(config.wabaId)}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,messaging_limit_tier,status`;
+  const url = `https://graph.facebook.com/${versao}/${encodeURIComponent(config.wabaId)}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,whatsapp_business_manager_messaging_limit,status`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 15_000);

@@ -14,10 +14,10 @@ const MARGEM = { top: 16, right: 16, bottom: 28, left: 90 };
 // Mesma ordem usada em avaliarPioraQualidade (@plataforma-ofertas/domain) —
 // RED embaixo, GREEN em cima, UNKNOWN entre RED e YELLOW.
 const NIVEIS: { chave: string; label: string; cor: string }[] = [
-  { chave: "RED", label: "Vermelha", cor: "var(--status-critical)" },
+  { chave: "RED", label: "Baixa", cor: "var(--status-critical)" },
   { chave: "UNKNOWN", label: "Desconhecida", cor: "var(--neutral-badge-text)" },
-  { chave: "YELLOW", label: "Amarela", cor: "var(--status-warning)" },
-  { chave: "GREEN", label: "Verde", cor: "var(--status-good)" },
+  { chave: "YELLOW", label: "Média", cor: "var(--status-warning)" },
+  { chave: "GREEN", label: "Alta", cor: "var(--status-good)" },
 ];
 
 function nivelDe(rating: string): number {

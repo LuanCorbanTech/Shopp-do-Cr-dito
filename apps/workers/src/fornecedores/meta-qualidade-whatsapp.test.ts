@@ -30,7 +30,7 @@ describe("buscarNumerosWhatsappMeta", () => {
     expect(mock).toHaveBeenCalledTimes(1);
     const [url, init] = mock.mock.calls[0];
     expect(url).toBe(
-      "https://graph.facebook.com/v21.0/123/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,messaging_limit_tier,status"
+      "https://graph.facebook.com/v21.0/123/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,whatsapp_business_manager_messaging_limit,status"
     );
     expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer tok-abc" });
   });
@@ -55,7 +55,7 @@ describe("buscarNumerosWhatsappMeta", () => {
             display_phone_number: "+55 11 90000-0000",
             verified_name: "Loja 1",
             quality_rating: "GREEN",
-            messaging_limit_tier: "TIER_10K",
+            whatsapp_business_manager_messaging_limit: "TIER_10K",
             status: "CONNECTED",
           },
         ],

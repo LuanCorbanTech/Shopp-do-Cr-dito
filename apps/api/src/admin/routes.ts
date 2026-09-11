@@ -635,18 +635,14 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         Body: {
           ativo?: boolean;
           intervaloSegundos?: number;
-          batchSize?: number;
           versaoGraphApi?: string;
-          webhookAlertaUrl?: string;
         };
       }>("/qualidade-whatsapp/config", async (request) => {
         const body = request.body ?? {};
         await adminRepo.salvarConfigQualidadeWhatsapp({
           ativo: Boolean(body.ativo),
           intervaloSegundos: body.intervaloSegundos,
-          batchSize: body.batchSize,
           versaoGraphApi: body.versaoGraphApi,
-          webhookAlertaUrl: body.webhookAlertaUrl,
         });
         return adminRepo.statusQualidadeWhatsapp();
       });
@@ -656,6 +652,29 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
       instance.post<{ Body: { ativo: boolean } }>("/qualidade-whatsapp/config/ativo", async (request) => {
         await adminRepo.setQualidadeWhatsappAtivo(Boolean(request.body?.ativo));
         return adminRepo.statusQualidadeWhatsapp();
+      });
+
+      // Webhook de Relatório de Qualidade WhatsApp (11/09) — config própria,
+      // separada da consulta automática acima: substitui o antigo alerta
+      // "só quando piora" por um relatório periódico completo (ver worker11,
+      // apps/workers).
+      instance.get("/qualidade-whatsapp/relatorio-config", async () => adminRepo.statusRelatorioQualidadeWhatsapp());
+
+      instance.post<{
+        Body: { ativo?: boolean; intervaloSegundos?: number; webhookUrl?: string };
+      }>("/qualidade-whatsapp/relatorio-config", async (request) => {
+        const body = request.body ?? {};
+        await adminRepo.salvarConfigRelatorioQualidadeWhatsapp({
+          ativo: Boolean(body.ativo),
+          intervaloSegundos: body.intervaloSegundos,
+          webhookUrl: body.webhookUrl,
+        });
+        return adminRepo.statusRelatorioQualidadeWhatsapp();
+      });
+
+      instance.post<{ Body: { ativo: boolean } }>("/qualidade-whatsapp/relatorio-config/ativo", async (request) => {
+        await adminRepo.setRelatorioQualidadeWhatsappAtivo(Boolean(request.body?.ativo));
+        return adminRepo.statusRelatorioQualidadeWhatsapp();
       });
 
       instance.get("/qualidade-whatsapp/resumo", async () => adminRepo.resumoQualidadeWhatsapp());

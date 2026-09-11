@@ -33,7 +33,7 @@ export function NovaBmForm() {
   }
 
   return (
-    <form id="form-nova-bm" action={enviar} className="card" style={{ display: "grid", gap: 10, maxWidth: 480 }}>
+    <form id="form-nova-bm" action={enviar} className="add-bm-card">
       <div>
         <label className="field-label" htmlFor="nova-bm-nome">
           Nome/apelido da BM
