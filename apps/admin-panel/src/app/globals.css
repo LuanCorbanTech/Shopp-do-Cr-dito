@@ -244,7 +244,7 @@ button.danger {
   font-size: 13px;
   word-break: break-all;
 }
-input, select {
+input, select, textarea {
   font: inherit;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -252,6 +252,10 @@ input, select {
   background: var(--surface-1);
   color: var(--text-primary);
   width: 100%;
+}
+textarea {
+  resize: vertical;
+  min-height: 80px;
 }
 .radio-option {
   display: flex;
