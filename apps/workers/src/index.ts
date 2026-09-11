@@ -300,7 +300,18 @@ function loop(
   name: string,
   intervalMsPadrao: number,
   run: () => Promise<number>,
-  resolverIntervalo?: () => Promise<number>
+  resolverIntervalo?: () => Promise<number>,
+  // 11/09 — opcional, só usado pelo worker11 até agora: roda o PRIMEIRO
+  // ciclo imediatamente (sem esperar intervalMsPadrao) em vez de só agendar
+  // pra depois. Diagnosticamos em produção um caso em que o primeiro
+  // setTimeout de um worker com intervalo padrão longo (5 minutos) nunca
+  // chegou a disparar sozinho, mesmo com tudo certo (config e rede
+  // confirmadas manualmente) — os ciclos seguintes, reagendados com
+  // intervalos curtos, funcionam normalmente (é o mesmo padrão já usado
+  // pelos outros 10 workers, todos com intervalos padrão bem menores).
+  // Por segurança, o comportamento OMITINDO esse parâmetro continua
+  // idêntico ao de sempre — só afeta quem passar "true" explicitamente.
+  rodarPrimeiroCicloImediatamente?: boolean
 ): void {
   let running = false;
 
@@ -325,7 +336,11 @@ function loop(
   }
 
   logger.info({ worker: name, intervalMsPadrao }, "Worker iniciado");
-  setTimeout(tick, intervalMsPadrao);
+  if (rodarPrimeiroCicloImediatamente) {
+    void tick();
+  } else {
+    setTimeout(tick, intervalMsPadrao);
+  }
 }
 
 const WORKER1_INTERVAL_MS_PADRAO = Number(process.env.WORKER1_INTERVAL_MS ?? 5000);
@@ -597,7 +612,9 @@ loop(
     const numeros = await adminRepo.listarNumerosParaRelatorioQualidadeWhatsapp();
     return runRelatorioQualidadeWhatsappWorkerOnce({ ativo, webhookUrl, webhookAuthToken, numeros });
   },
-  () => resolverIntervaloRelatorioQualidadeWhatsappMs(WORKER11_INTERVAL_MS_PADRAO)
+  () => resolverIntervaloRelatorioQualidadeWhatsappMs(WORKER11_INTERVAL_MS_PADRAO),
+  // Roda o primeiro ciclo na hora — ver comentário na função loop() acima.
+  true
 );
 
 process.on("SIGTERM", async () => {
