@@ -76,6 +76,14 @@ function IconClock() {
   );
 }
 
+function IconSinal() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 20v-4" /><path d="M12 20v-9" /><path d="M20 20V5" />
+    </svg>
+  );
+}
+
 const NAV_GROUPS: NavGroup[] = [
   { titulo: "Visão geral", items: [{ href: "/", label: "Dashboard", icon: <IconGrid /> }] },
   {
@@ -84,6 +92,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/ofertas", label: "Ofertas", icon: <IconList /> },
       { href: "/relatorios", label: "Relatórios", icon: <IconChart /> },
       { href: "/tarefas", label: "Tarefas", icon: <IconClock /> },
+      { href: "/qualidade-whatsapp", label: "Qualidade WhatsApp", icon: <IconSinal /> },
     ],
   },
   {
