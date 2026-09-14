@@ -166,6 +166,7 @@ model Webhook {
 
   offers Offer[]
   tarefas Tarefa[]
+  leadsDescartados WebhookLeadDescartado[]
 
   @@map("webhooks")
 }
@@ -201,6 +202,30 @@ model Tarefa {
   @@index([webhookId, status], map: "idx_tarefas_webhook_status")
   @@index([status, dataHoraExecucao], map: "idx_tarefas_status_data")
   @@map("tarefas")
+}
+
+// ---------------------------------------------------------------------------
+// Descarte por duplicidade em 24h (14/09) — contador "total geral" (pedido
+// explícito: só um total, não quebrado por parceiro/CPF) de quantas vezes um
+// lead foi descartado por já ter chegado do mesmo parceiro+CPF há menos de
+// 24h (ver Offer.ultimoRecebimentoWebhookEm e createOfferIdempotent). Uma
+// linha por descarte; o "contador" do painel é só um count(*) nessa tabela.
+//
+// Deliberadamente SEM offerId/cpf: o caminho de descarte é o mais comum num
+// lote de reenvio (ex.: Odysseia reenviando o lote inteiro por timeout) e
+// precisa ficar o mais rápido possível — guardar só o essencial (webhook +
+// quando) evita qualquer round trip/consulta extra nesse caminho.
+// ---------------------------------------------------------------------------
+
+model WebhookLeadDescartado {
+  id        String   @id @default(uuid())
+  webhookId String   @map("webhook_id")
+  webhook   Webhook  @relation(fields: [webhookId], references: [id])
+
+  criadoEm  DateTime @default(now()) @map("criado_em")
+
+  @@index([criadoEm], map: "idx_webhook_lead_descartados_criado_em")
+  @@map("webhook_lead_descartados")
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +352,18 @@ model Offer {
   disparoEnviadoEm    DateTime? @map("disparo_enviado_em")
   disparoRespondidoEm DateTime? @map("disparo_respondido_em")
 
+  // Regra de descarte por 24h (14/09) — data/hora da ÚLTIMA vez que esse
+  // (webhookId, CPF normalizado) foi ACEITO pelo webhook: criado do zero OU
+  // resetado por já ter passado das 24h. NUNCA avançado por um descarte —
+  // pedido explícito: "a contagem fica sendo a última que ele de fato
+  // passou pelo funil", ou seja, um reenvio descartado não "renova" a
+  // janela. É o campo que createOfferIdempotent usa na condição da
+  // atualização atômica (ver prisma-offers-port.ts) pra decidir entre
+  // descartar (dentro de 24h) ou resetar (fora de 24h). Pra ofertas que já
+  // existiam antes dessa migração, foi retroativamente preenchido com o
+  // próprio created_at (ver migração lead_descarte_24h).
+  ultimoRecebimentoWebhookEm DateTime @default(now()) @map("ultimo_recebimento_webhook_em")
+
   createdAt        DateTime    @default(now()) @map("created_at")
   updatedAt        DateTime    @updatedAt @map("updated_at")
 
@@ -337,12 +374,18 @@ model Offer {
   logs             LogEntry[]
   disparoIndividualTentativas DisparoIndividualTentativa[]
 
-  // NÃO É UM ÍNDICE ÓRFÃO (11/09): existe também "idx_offers_webhook_cpf_normalizado",
-  // um índice FUNCIONAL sobre (webhookId, regexp_replace(cpf, '\D', '', 'g')) —
-  // usado pela checagem de "mesmo parceiro + mesmo CPF" em createOfferIdempotent.
-  // O Prisma não representa índices sobre expressão em @@index, então esse
-  // vive só na migração 20260911170000_indice_cpf_normalizado_webhook — não
-  // remover achando que sobrou de uma limpeza.
+  // NÃO É UM ÍNDICE ÓRFÃO (14/09): existe também "uq_offers_webhook_cpf_normalizado",
+  // um índice ÚNICO FUNCIONAL sobre (webhookId, regexp_replace(cpf, '\D', '', 'g'))
+  // — é o que createOfferIdempotent usa como alvo do ON CONFLICT no INSERT
+  // atômico (ver prisma-offers-port.ts), pra garantir mesmo sob concorrência
+  // que nunca existam 2 ofertas com o mesmo (parceiro, CPF). Substituiu o
+  // índice antigo (não-único) "idx_offers_webhook_cpf_normalizado" criado em
+  // 11/09 — a versão nova além de acelerar a busca também IMPEDE a
+  // duplicata na origem (a antiga só acelerava, não impedia; foi assim que
+  // 3 pares de ofertas duplicadas surgiram por corrida antes dessa
+  // migração). O Prisma não representa índices sobre expressão em @@index,
+  // então esse vive só na migração 20260914130000_indice_unico_cpf_normalizado_webhook
+  // — não remover achando que sobrou de uma limpeza.
   @@unique([webhookId, idempotencyKey], map: "uq_offer_idempotency")
   @@index([status], map: "idx_offers_status")
   @@index([createdAt], map: "idx_offers_created_at")

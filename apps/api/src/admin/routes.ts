@@ -242,6 +242,11 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
 
       instance.get("/webhooks", async () => adminRepo.listWebhooks());
 
+      // "Total geral" (pedido explícito 14/09, sem quebra por parceiro) de
+      // leads descartados por duplicidade dentro de 24h — ver regra em
+      // createOfferIdempotent (packages/database/prisma-offers-port.ts).
+      instance.get("/webhooks/leads-descartados", async () => ({ total: await adminRepo.countLeadsDescartados() }));
+
       instance.post<{
         Body: {
           identificador?: string;

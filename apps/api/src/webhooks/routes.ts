@@ -82,6 +82,9 @@ export function registerWebhookRoutes(
           const criados = outcome.resultados.filter((r) => r.kind === "created").length;
           const resetados = outcome.resultados.filter((r) => r.kind === "reset").length;
           const duplicados = outcome.resultados.filter((r) => r.kind === "duplicate").length;
+          // Mesmo parceiro + mesmo CPF dentro de 24h da última vez aceito —
+          // descartado sem tocar na oferta existente (pedido explícito 14/09).
+          const descartados = outcome.resultados.filter((r) => r.kind === "discarded").length;
           const invalidos = outcome.resultados.filter((r) => r.kind === "invalid_payload").length;
           return reply.code(200).send({
             status: "processado",
@@ -89,6 +92,7 @@ export function registerWebhookRoutes(
             criados,
             resetados,
             duplicados,
+            descartados,
             invalidos,
             resultados: outcome.resultados,
           });
@@ -111,6 +115,12 @@ function sendItemResult(reply: FastifyReply, resultado: WebhookItemOutcome) {
       return reply.code(200).send({ status: "reprocessado", offerId: resultado.offerId });
     case "duplicate":
       return reply.code(200).send({ status: "ja_recebido", offerId: resultado.offerId });
+    case "discarded":
+      // Mesmo fornecedor + mesmo CPF, mas ainda dentro de 24h da última vez
+      // que essa oferta foi aceita — descartado de propósito (pedido
+      // explícito 14/09), sem tocar em nada da oferta existente. 2xx pra não
+      // fazer o parceiro reenviar (não é um erro do lado dele).
+      return reply.code(200).send({ status: "descartado" });
     case "invalid_payload":
       return reply.code(400).send({ error: "payload_invalido", motivo: resultado.reason });
   }

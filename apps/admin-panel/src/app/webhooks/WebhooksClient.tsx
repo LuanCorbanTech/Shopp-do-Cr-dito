@@ -152,6 +152,7 @@ export function WebhooksClient({ publicApiBaseUrl }: { publicApiBaseUrl: string 
   const [error, setError] = useState<string | null>(null);
   const [modalNovo, setModalNovo] = useState(false);
   const [detalhe, setDetalhe] = useState<Webhook | null>(null);
+  const [leadsDescartados, setLeadsDescartados] = useState<number | null>(null);
 
   async function carregar() {
     setCarregando(true);
@@ -167,8 +168,19 @@ export function WebhooksClient({ publicApiBaseUrl }: { publicApiBaseUrl: string 
     }
   }
 
+  async function carregarLeadsDescartados() {
+    try {
+      const resp = await fetch("/api/webhooks/leads-descartados", { cache: "no-store" });
+      const json = await resp.json();
+      setLeadsDescartados(typeof json?.total === "number" ? json.total : null);
+    } catch {
+      setLeadsDescartados(null);
+    }
+  }
+
   useEffect(() => {
     carregar();
+    carregarLeadsDescartados();
   }, []);
 
   return (
@@ -197,6 +209,22 @@ export function WebhooksClient({ publicApiBaseUrl }: { publicApiBaseUrl: string 
         </p>
       )}
       {error && <p className="empty-state">Não foi possível carregar: {error}</p>}
+
+      {leadsDescartados !== null && (
+        <div
+          className="chart-card"
+          style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}
+        >
+          <div>
+            <strong>Leads descartados por duplicidade</strong>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Total geral — mesmo parceiro + mesmo CPF recebido de novo dentro de 24h (nesse caso não duplica nem
+              reinicia o fluxo, só descarta).
+            </div>
+          </div>
+          <div style={{ fontSize: 28, fontWeight: 700 }}>{leadsDescartados}</div>
+        </div>
+      )}
 
       <div className="kpi-grid">
         {carregando && <p className="empty-state">Carregando…</p>}

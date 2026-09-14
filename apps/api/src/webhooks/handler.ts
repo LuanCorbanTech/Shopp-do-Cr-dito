@@ -126,6 +126,11 @@ export type WebhookItemOutcome =
   | { kind: "created"; offerId: string }
   | { kind: "reset"; offerId: string }
   | { kind: "duplicate"; offerId: string }
+  // Mesmo parceiro + mesmo CPF, mas dentro de 24h da última vez que essa
+  // oferta foi aceita — descartado, sem tocar em nada da oferta existente
+  // (pedido explícito 14/09). Sem offerId de propósito: o descarte não
+  // aponta pra nenhuma oferta (ver WebhookLeadDescartado/CreateOfferResult).
+  | { kind: "discarded" }
   | { kind: "invalid_payload"; reason: string };
 
 export type HandleWebhookRequestOutcome =
@@ -219,6 +224,7 @@ async function processOfferItem(
   };
 
   const result = await port.createOfferIdempotent(input);
+  if (result.kind === "discarded") return { kind: "discarded" };
   if (result.kind === "reset") return { kind: "reset", offerId: result.offer.id };
   if (result.kind === "duplicate") return { kind: "duplicate", offerId: result.offer.id };
   return { kind: "created", offerId: result.offer.id };

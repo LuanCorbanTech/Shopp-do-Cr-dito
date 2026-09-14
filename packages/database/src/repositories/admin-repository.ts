@@ -1391,6 +1391,15 @@ export class AdminRepository {
     return this.prisma.offer.count({ where: { webhookId } });
   }
 
+  // "Total geral" (pedido explícito 14/09, sem quebra por parceiro) de leads
+  // descartados por já terem chegado do mesmo parceiro+CPF há menos de 24h
+  // — ver a regra em createOfferIdempotent (prisma-offers-port.ts). Contador
+  // cumulativo (nunca "zera"), mesma filosofia de disparoEnviadoEm/
+  // disparoRespondidoEm: 1 linha por descarte, então count(*) é o total.
+  countLeadsDescartados() {
+    return this.prisma.webhookLeadDescartado.count();
+  }
+
   deleteWebhook(id: string) {
     return this.prisma.webhook.delete({ where: { id } });
   }

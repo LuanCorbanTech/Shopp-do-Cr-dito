@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleWebhookRequest, extrairTelefoneOriginal, extrairBancoAutorizado, type RawWebhookPayload } from "./handler";
 import { computeSignature, computeSimpleHmac } from "./hmac";
 import { createFakeOffersPort } from "./test-support/fake-offers-port";
@@ -57,7 +57,7 @@ describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
     if (outcome.kind === "single") expect(outcome.resultado.kind).toBe("created");
   });
 
-  it("não cria duplicado quando o mesmo CPF chega duas vezes no mesmo webhook (reseta em vez de duplicar)", async () => {
+  it("não cria duplicado quando o mesmo CPF chega duas vezes em seguida no mesmo webhook — descarta, ainda dentro de 24h (pedido explícito 14/09)", async () => {
     const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
     const body = { cpf: "11111111111", telefone: "62999999999", external_id: "abc-1" };
     const rawBody = JSON.stringify(body);
@@ -77,10 +77,10 @@ describe("handleWebhookRequest — item único (esquema ofertas_v1)", () => {
     expect(second.kind).toBe("single");
     if (first.kind === "single" && second.kind === "single") {
       expect(first.resultado.kind).toBe("created");
-      expect(second.resultado.kind).toBe("reset");
-      if (first.resultado.kind === "created" && second.resultado.kind === "reset") {
-        expect(second.resultado.offerId).toBe(first.resultado.offerId);
-      }
+      // Reenvio em seguida (mesmo instante) — ainda dentro da janela de 24h,
+      // então descarta (não duplica, e NÃO reseta ainda: só reseta depois de
+      // 24h — ver describe "CPF repetido" abaixo).
+      expect(second.resultado.kind).toBe("discarded");
     }
   });
 
@@ -236,8 +236,8 @@ describe("handleWebhookRequest — lote (array de leads)", () => {
     }
   });
 
-  it("reenviar o mesmo lote inteiro reseta os itens (mesmo webhook + mesmo CPF nunca duplica — ver regra de reset)", async () => {
-    const { port } = createFakeOffersPort([WEBHOOK_SIMPLES]);
+  it("reenviar o mesmo lote inteiro em seguida descarta os itens (mesmo webhook + mesmo CPF dentro de 24h nunca duplica nem reseta ainda — pedido explícito 14/09)", async () => {
+    const { port, descartes } = createFakeOffersPort([WEBHOOK_SIMPLES]);
     const body = [
       { cpf: "11111111111", telefone: "85992100340", external_id: "lead-1" },
       { cpf: "22222222222", telefone: "85996888516", external_id: "lead-2" },
@@ -258,9 +258,16 @@ describe("handleWebhookRequest — lote (array de leads)", () => {
     expect(second.kind).toBe("batch");
     if (first.kind === "batch" && second.kind === "batch") {
       expect(first.resultados.map((r) => r.kind)).toEqual(["created", "created"]);
-      // Mesmo webhook + mesmo CPF de novo -> reseta (não duplica, não fica "parado" como antes)
-      expect(second.resultados.map((r) => r.kind)).toEqual(["reset", "reset"]);
+      // Mesmo webhook + mesmo CPF de novo, em seguida (dentro de 24h) ->
+      // descarta os dois (não duplica, não reseta ainda — evita justamente o
+      // caso que motivou essa regra: a Odysseia reenviando o lote inteiro
+      // por timeout, o que antes resetava e perdia progresso, ex.: WhatsApp
+      // já validado).
+      expect(second.resultados.map((r) => r.kind)).toEqual(["discarded", "discarded"]);
     }
+    // Contador "total geral" (pedido explícito 14/09) — 1 evento por item descartado.
+    expect(descartes).toHaveLength(2);
+    expect(descartes.every((d) => d.webhookId === "webhook-2")).toBe(true);
   });
 
   it("processa um lote maior que a concorrência padrão (10) mantendo o resultado na ordem certa (bug real: Odysseia, 495 leads, timeout — ver CONCORRENCIA_LOTE_PADRAO)", async () => {
@@ -413,8 +420,19 @@ describe("handleWebhookRequest — formato envelope (ex.: Odysseia manda { teste
   });
 });
 
-describe("handleWebhookRequest — CPF repetido no mesmo webhook (reset, nunca duplica)", () => {
-  it("mesmo webhook + mesmo CPF de novo: reseta a oferta existente em vez de criar outra, mesmo com dados diferentes", async () => {
+describe("handleWebhookRequest — CPF repetido no mesmo webhook, mais de 24h depois (reset, nunca duplica)", () => {
+  // A regra de descarte (14/09) depende de tempo real decorrido (Date.now()
+  // — ver fake-offers-port.ts), não do "nowSeconds" que só serve pra
+  // validar o timestamp da assinatura HMAC. Por isso esses testes usam
+  // vi.useFakeTimers()/setSystemTime pra simular os "2 dias depois" de
+  // verdade, e não só no cálculo da assinatura.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("mesmo webhook + mesmo CPF de novo, mais de 24h depois: reseta a oferta existente em vez de criar outra ou descartar, mesmo com dados diferentes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW * 1000));
     const { port, offersByCpf } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
 
     const body1 = { cpf: "11111111111", telefone: "62999999999", nome: "João", external_id: "lead-1" };
@@ -426,7 +444,8 @@ describe("handleWebhookRequest — CPF repetido no mesmo webhook (reset, nunca d
     expect(primeira.kind).toBe("single");
     if (primeira.kind === "single") expect(primeira.resultado.kind).toBe("created");
 
-    // 2 dias depois: mesmo webhook, mesmo CPF, dados novos, external_id novo
+    // 2 dias depois de verdade (172800s = 48h, > 24h da janela de descarte)
+    vi.setSystemTime(new Date((NOW + 172800) * 1000));
     const body2 = { cpf: "11111111111", telefone: "62988887777", nome: "João Atualizado", external_id: "lead-2" };
     const rawBody2 = JSON.stringify(body2);
     const segunda = await handleWebhookRequest(port, {
@@ -442,6 +461,8 @@ describe("handleWebhookRequest — CPF repetido no mesmo webhook (reset, nunca d
   });
 
   it("reseta mesmo que o CPF venha formatado diferente da 1ª vez (com pontuação vs só dígitos)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW * 1000));
     const { port, offersByCpf } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
 
     const body1 = { cpf: "111.111.111-11", telefone: "62999999999", external_id: "lead-1" };
@@ -451,6 +472,7 @@ describe("handleWebhookRequest — CPF repetido no mesmo webhook (reset, nunca d
       headers: ofertasV1Headers(rawBody1), toleranceSeconds: 300, nowSeconds: NOW,
     });
 
+    vi.setSystemTime(new Date((NOW + 172800) * 1000));
     const body2 = { cpf: "11111111111", telefone: "62988887777", external_id: "lead-2" }; // mesmo CPF, sem pontuação
     const rawBody2 = JSON.stringify(body2);
     const segunda = await handleWebhookRequest(port, {
@@ -463,7 +485,7 @@ describe("handleWebhookRequest — CPF repetido no mesmo webhook (reset, nunca d
     expect(offersByCpf.size).toBe(1); // não criou uma 2ª oferta por causa da formatação diferente
   });
 
-  it("webhooks DIFERENTES com o mesmo CPF continuam gerando ofertas separadas (não reseta entre fornecedores)", async () => {
+  it("webhooks DIFERENTES com o mesmo CPF continuam gerando ofertas separadas (não reseta nem descarta entre fornecedores)", async () => {
     const WEBHOOK_OUTRO = { ...WEBHOOK_OFERTAS_V1, id: "webhook-outro", identificador: "outro-fornecedor" };
     const { port, offersByCpf } = createFakeOffersPort([WEBHOOK_OFERTAS_V1, WEBHOOK_OUTRO]);
 
@@ -482,8 +504,71 @@ describe("handleWebhookRequest — CPF repetido no mesmo webhook (reset, nunca d
     expect(primeira.kind).toBe("single");
     expect(segunda.kind).toBe("single");
     if (primeira.kind === "single") expect(primeira.resultado.kind).toBe("created");
-    if (segunda.kind === "single") expect(segunda.resultado.kind).toBe("created"); // não é "reset"
+    if (segunda.kind === "single") expect(segunda.resultado.kind).toBe("created"); // não é "reset" nem "discarded"
     expect(offersByCpf.size).toBe(2); // 2 ofertas separadas, uma por webhook
+  });
+});
+
+describe("handleWebhookRequest — descarte por duplicidade em 24h (pedido explícito 14/09)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("dentro de 24h: descarta sem tocar na oferta existente (nenhum progresso é perdido)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW * 1000));
+    const { port, offersByCpf, descartes } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
+
+    const body1 = { cpf: "11111111111", telefone: "62999999999", external_id: "lead-1" };
+    const rawBody1 = JSON.stringify(body1);
+    await handleWebhookRequest(port, {
+      identificador: "origem-teste", rawBody: rawBody1, body: body1,
+      headers: ofertasV1Headers(rawBody1), toleranceSeconds: 300, nowSeconds: NOW,
+    });
+    const ofertaOriginal = offersByCpf.get("webhook-1:11111111111");
+
+    // 23h depois (82800s < 24h) — ainda dentro da janela.
+    vi.setSystemTime(new Date((NOW + 82800) * 1000));
+    const body2 = { cpf: "11111111111", telefone: "62988887777", external_id: "lead-2" };
+    const rawBody2 = JSON.stringify(body2);
+    const segunda = await handleWebhookRequest(port, {
+      identificador: "origem-teste", rawBody: rawBody2, body: body2,
+      headers: ofertasV1Headers(rawBody2, NOW + 82800), toleranceSeconds: 300, nowSeconds: NOW + 82800,
+    });
+
+    expect(segunda.kind).toBe("single");
+    if (segunda.kind === "single") expect(segunda.resultado.kind).toBe("discarded");
+    // A oferta existente não foi tocada em nada (mesmo objeto, mesmos dados).
+    expect(offersByCpf.get("webhook-1:11111111111")).toEqual(ofertaOriginal);
+    expect(descartes).toHaveLength(1);
+    expect(descartes[0].webhookId).toBe("webhook-1");
+  });
+
+  it("um descarte NUNCA renova a janela de 24h — a contagem fica sendo a última vez que passou pelo funil de fato (confirmado explicitamente)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW * 1000));
+    const { port } = createFakeOffersPort([WEBHOOK_OFERTAS_V1]);
+
+    const body = { cpf: "11111111111", telefone: "62999999999", external_id: "lead-1" };
+    const rawBody = JSON.stringify(body);
+    const params = {
+      identificador: "origem-teste", rawBody, body,
+      headers: ofertasV1Headers(rawBody), toleranceSeconds: 300, nowSeconds: NOW,
+    };
+    await handleWebhookRequest(port, params); // created, em NOW
+
+    // 10h depois: descarte (dentro de 24h da criação em NOW).
+    vi.setSystemTime(new Date((NOW + 36000) * 1000));
+    const descarte1 = await handleWebhookRequest(port, params);
+    expect(descarte1.kind === "single" && descarte1.resultado.kind).toBe("discarded");
+
+    // Mais 15h depois (25h desde a criação original, mas só 15h desde o
+    // descarte acima) — se o descarte tivesse renovado a janela, isso ainda
+    // estaria "dentro de 24h" e descartaria de novo. Como NÃO renova, já
+    // passou das 24h desde a última vez ACEITA (a criação em NOW) -> reseta.
+    vi.setSystemTime(new Date((NOW + 36000 + 54000) * 1000));
+    const terceira = await handleWebhookRequest(port, params);
+    expect(terceira.kind === "single" && terceira.resultado.kind).toBe("reset");
   });
 });
 
