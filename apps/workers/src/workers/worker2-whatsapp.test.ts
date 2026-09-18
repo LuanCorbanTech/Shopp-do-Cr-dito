@@ -458,3 +458,93 @@ describe("runWhatsappWorkerOnce — caminho de LOTE (checknumber.ai, mínimo 500
     expect(noLote.length).toBe(499);
   });
 });
+
+describe("runWhatsappWorkerOnce — Fase 0: base de upload marcada pra pular a validação (18/09)", () => {
+  const servicoQueNuncaDeveriaSerChamado = {
+    startCheck: async (): Promise<never> => { throw new Error("startCheck não deveria ser chamado — a oferta estava marcada pra pular"); },
+    getCheckResult: async (): Promise<never> => { throw new Error("getCheckResult não deveria ser chamado — a oferta estava marcada pra pular"); },
+    startCheckLote: async (): Promise<never> => { throw new Error("startCheckLote não deveria ser chamado — a oferta estava marcada pra pular"); },
+    getCheckResultLote: async (): Promise<never> => { throw new Error("getCheckResultLote não deveria ser chamado — a oferta estava marcada pra pular"); },
+  };
+
+  it("valida direto como 'possui WhatsApp' (sem chamar a CorbanTech) uma oferta TELEFONE_ATUALIZADO marcada com pularValidacaoWhatsapp=true", async () => {
+    const repo = new InMemoryPipelineRepository();
+    const offer = repo.addOffer({
+      telefoneOriginal: "62999999999",
+      telefoneAtualizado: "5562999999999",
+      status: "TELEFONE_ATUALIZADO",
+      pularValidacaoWhatsapp: true,
+    });
+
+    const processadas = await runWhatsappWorkerOnce({
+      whatsappPort: repo,
+      configPort: repo,
+      loteMinimo: 999999, // garante que, se cair na Fase 1 por engano, nem chegaria a formar lote
+      whatsappService: servicoQueNuncaDeveriaSerChamado,
+    });
+
+    expect(processadas).toBe(1);
+    const updated = repo.offers.get(offer.id);
+    expect(updated?.status).toBe("AGUARDANDO_DISPARO");
+    expect(updated?.possuiWhatsapp).toBe(true);
+    expect(updated?.telefoneValidado).toBe("5562999999999");
+  });
+
+  it("cancela (sem contar como falha pra retry) uma oferta marcada pra pular que não tem telefone nenhum — nem original, nem atualizado", async () => {
+    const repo = new InMemoryPipelineRepository();
+    const offer = repo.addOffer({
+      telefoneOriginal: null,
+      telefoneAtualizado: null,
+      status: "TELEFONE_ATUALIZADO",
+      pularValidacaoWhatsapp: true,
+    });
+
+    await runWhatsappWorkerOnce({
+      whatsappPort: repo,
+      configPort: repo,
+      loteMinimo: 999999,
+      whatsappService: servicoQueNuncaDeveriaSerChamado,
+    });
+
+    expect(repo.offers.get(offer.id)?.status).toBe("CANCELADO");
+  });
+
+  it("NÃO afeta uma oferta TELEFONE_ATUALIZADO comum (pularValidacaoWhatsapp=false) — continua pelo caminho normal (CorbanTech)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    const ofertaUpload = repo.addOffer({
+      telefoneOriginal: "62999999999",
+      telefoneAtualizado: "5562999999999",
+      status: "TELEFONE_ATUALIZADO",
+      pularValidacaoWhatsapp: true,
+    });
+    const ofertaWebhook = repo.addOffer({
+      telefoneOriginal: "62988888888",
+      telefoneAtualizado: "5562988888888",
+      status: "TELEFONE_ATUALIZADO",
+      pularValidacaoWhatsapp: false,
+    });
+
+    let startCheckChamadoPara: string | null = null;
+    await runWhatsappWorkerOnce({
+      whatsappPort: repo,
+      configPort: repo,
+      loteMinimo: 999999,
+      tempoMaximoEsperaLoteMs: -60000,
+      whatsappService: {
+        startCheck: async ({ phone }) => {
+          startCheckChamadoPara = phone;
+          return { requestId: "req-1", phone };
+        },
+        getCheckResult: async () => ({ status: "processing" }),
+        startCheckLote: async () => { throw new Error("não deveria chamar"); },
+        getCheckResultLote: async () => { throw new Error("não deveria chamar"); },
+      },
+    });
+
+    // A de upload foi resolvida na Fase 0, direto pra AGUARDANDO_DISPARO.
+    expect(repo.offers.get(ofertaUpload.id)?.status).toBe("AGUARDANDO_DISPARO");
+    // A de webhook seguiu o caminho normal (Fase 1, consulta individual iniciada).
+    expect(startCheckChamadoPara).toBe("5562988888888");
+    expect(repo.offers.get(ofertaWebhook.id)?.status).toBe("VALIDANDO_WHATSAPP");
+  });
+});

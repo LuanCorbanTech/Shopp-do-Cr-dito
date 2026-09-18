@@ -137,3 +137,17 @@ export async function salvarCredenciaisFacta(formData: FormData): Promise<void> 
   });
   revalidatePath("/integracoes");
 }
+
+// Proporção de disparo (18/09) — "a cada 1 lead disparado de Fornecedor de
+// Webhook, disparar N de base upload". Pesos inteiros >= 1 (a API rejeita
+// qualquer outra coisa); pesos iguais = sem preferência (comportamento de
+// sempre, FIFO puro, sem discriminar origem).
+export async function salvarProporcaoDisparo(formData: FormData): Promise<void> {
+  const pesoFornecedor = Number(String(formData.get("pesoFornecedor") ?? "").trim());
+  const pesoUpload = Number(String(formData.get("pesoUpload") ?? "").trim());
+  await adminApiFetch("/admin/configuracao-proporcao-disparo", {
+    method: "PUT",
+    body: JSON.stringify({ pesoFornecedor, pesoUpload }),
+  });
+  revalidatePath("/integracoes");
+}

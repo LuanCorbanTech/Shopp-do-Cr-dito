@@ -105,6 +105,33 @@ export async function runWhatsappWorkerOnce(params: RunWhatsappWorkerOnceParams)
 
   let processadas = 0;
 
+  // Fase 0 — base de upload (18/09): ofertas marcadas pra pular a
+  // validação de WhatsApp (pularValidacaoWhatsapp=true, "base já quente")
+  // nunca chamam a CorbanTech — resolvidas na hora, TODO ciclo, antes de
+  // qualquer contagem de lote (senão ficariam presas esperando volume de
+  // 500 junto com ofertas normais, sem nenhum motivo pra esperar).
+  const ofertasParaPular = await whatsappPort.claimOffersParaPularValidacao(batchSize);
+  for (const offer of ofertasParaPular) {
+    const telefoneUsado = offer.telefoneAtualizado ?? offer.telefoneOriginal;
+    if (!telefoneUsado) {
+      await whatsappPort.markWhatsappFailed(offer.id, {
+        erro: "Nenhum telefone disponível: não veio na planilha e a Lemit não retornou um para esse CPF.",
+        tentativa: offer.tentativasWhatsapp + 1,
+        proximaTentativaEm: null,
+        cancelar: true,
+      });
+      logger.warn({ offerId: offer.id }, "Validação de WhatsApp cancelada: lead sem telefone (lote marcado pra pular validação)");
+    } else {
+      await whatsappPort.markWhatsappValidated(offer.id, {
+        possuiWhatsapp: true,
+        respostaBruta: { pulado: true, motivo: "Lote de upload marcado pra pular a validação de WhatsApp" },
+        telefoneUsado,
+      });
+      logger.info({ offerId: offer.id, telefone: maskPhone(telefoneUsado) }, "Validação de WhatsApp pulada: lote de upload marcado como já validado");
+    }
+    processadas += 1;
+  }
+
   // Processa uma oferta pelo caminho INDIVIDUAL (eKYC Pro) — usado tanto
   // quando o lote não é a estratégia certa (volume baixo, dentro do prazo
   // aceitável — nesse caso a Fase 1 nem chama isso) quanto no plano B de

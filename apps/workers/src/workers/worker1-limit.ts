@@ -74,18 +74,25 @@ export async function runLimitWorkerOnce(params: RunLimitWorkerOnceParams): Prom
     // nenhum campo de telefone: nem "telefone", nem "cadastro.celulares",
     // nem "whatsapps").
     const semNenhumTelefone = !offer.telefoneOriginal;
-    if (!forcarConsultaLemit && !limitEnabled && !semNenhumTelefone) {
+    // Base de upload (18/09) — pularValidacaoLemit funciona exatamente como
+    // o interruptor global desativado (mesmo caminho, mesma exceção de
+    // segurança pra quem não tem telefone nenhum), só que decidido por
+    // OFERTA em vez de pro sistema inteiro (ver Offer.pularValidacaoLemit).
+    const deveIgnorarLemit = !forcarConsultaLemit && (!limitEnabled || offer.pularValidacaoLemit);
+    if (deveIgnorarLemit && !semNenhumTelefone) {
       await phonePort.markPhoneSkippedLimitDisabled(offer.id);
       logger.info(
         { offerId: offer.id, telefone: maskPhone(offer.telefoneOriginal) },
-        "Consulta Lemit ignorada: integração desativada no painel. Telefone original mantido."
+        offer.pularValidacaoLemit
+          ? "Consulta Lemit ignorada: lote de upload marcado pra pular Lemit. Telefone da planilha mantido."
+          : "Consulta Lemit ignorada: integração desativada no painel. Telefone original mantido."
       );
       return;
     }
-    if (!forcarConsultaLemit && !limitEnabled && semNenhumTelefone) {
+    if (deveIgnorarLemit && semNenhumTelefone) {
       logger.info(
         { offerId: offer.id },
-        "Consulta Lemit forçada mesmo desativada: lead sem telefone nenhum na captação — sem isso, seria cancelado sem nunca ter tido chance."
+        "Consulta Lemit forçada mesmo desativada/marcada pra pular: lead sem telefone nenhum na captação — sem isso, seria cancelado sem nunca ter tido chance."
       );
     }
 

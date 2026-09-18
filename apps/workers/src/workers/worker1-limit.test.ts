@@ -395,3 +395,93 @@ describe("runLimitWorkerOnce — lead SEM telefone nenhum na captação, mesmo c
     expect(repo.offers.get(offer.id)?.status).toBe("TELEFONE_ATUALIZADO"); // segue via "sem documento", não trava
   });
 });
+
+describe("runLimitWorkerOnce — base de upload marcada pra pular Lemit (18/09)", () => {
+  it("pula a consulta Lemit pra uma oferta com pularValidacaoLemit=true, mesmo com a integração ATIVADA no painel", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", true); // ativada geral — não é isso que decide aqui
+    const offer = repo.addOffer({
+      status: "MARGEM_APROVADA",
+      telefoneOriginal: "62999999999",
+      cpf: "85868388372",
+      pularValidacaoLemit: true,
+    });
+
+    let chamouLemit = false;
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: {
+        lookupPhone: async () => {
+          chamouLemit = true;
+          return { telefoneAtualizado: "5562988888888", possuiWhatsappSegundoLemit: true, dadosPessoa: null, respostaBruta: null };
+        },
+      },
+    });
+
+    expect(chamouLemit).toBe(false);
+    expect(repo.offers.get(offer.id)?.status).toBe("TELEFONE_ATUALIZADO");
+    // Mantém o telefone da PLANILHA (telefoneOriginal), não chama a Lemit.
+    expect(repo.offers.get(offer.id)?.telefoneAtualizado).toBeNull();
+  });
+
+  it("continua consultando normalmente uma oferta SEM pularValidacaoLemit (webhook comum), mesmo processada no mesmo ciclo de uma marcada pra pular", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", true);
+    const ofertaUpload = repo.addOffer({
+      status: "MARGEM_APROVADA",
+      telefoneOriginal: "62999999999",
+      cpf: "85868388372",
+      pularValidacaoLemit: true,
+    });
+    const ofertaWebhook = repo.addOffer({
+      status: "MARGEM_APROVADA",
+      telefoneOriginal: "62988888888",
+      cpf: "11111111111",
+      pularValidacaoLemit: false,
+    });
+
+    const documentosConsultados: string[] = [];
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: {
+        lookupPhone: async ({ documento }) => {
+          documentosConsultados.push(documento);
+          return { telefoneAtualizado: "5562977777777", possuiWhatsappSegundoLemit: true, dadosPessoa: null, respostaBruta: null };
+        },
+      },
+    });
+
+    // Só a oferta de webhook (sem a flag) gerou consulta de verdade.
+    expect(documentosConsultados).toEqual(["11111111111"]);
+    expect(repo.offers.get(ofertaUpload.id)?.telefoneAtualizado).toBeNull();
+    expect(repo.offers.get(ofertaWebhook.id)?.telefoneAtualizado).toBe("5562977777777");
+  });
+
+  it("mesmo marcada pra pular, força a consulta de verdade se a oferta não tiver telefone nenhum (mesma exceção de segurança da integração desativada)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("LIMIT_CONSULTA", true);
+    const offer = repo.addOffer({
+      status: "MARGEM_APROVADA",
+      telefoneOriginal: null,
+      cpf: "85868388372",
+      pularValidacaoLemit: true,
+    });
+
+    let chamouLemit = false;
+    await runLimitWorkerOnce({
+      phonePort: repo,
+      configPort: repo,
+      limitService: {
+        lookupPhone: async () => {
+          chamouLemit = true;
+          return { telefoneAtualizado: "5562988888888", possuiWhatsappSegundoLemit: true, dadosPessoa: null, respostaBruta: null };
+        },
+      },
+    });
+
+    expect(chamouLemit).toBe(true);
+    expect(repo.offers.get(offer.id)?.telefoneAtualizado).toBe("5562988888888");
+  });
+});

@@ -102,6 +102,40 @@ enum DispatchQueueStatus {
   FALHOU
 }
 
+// Base de upload (18/09) — distingue a origem de um Webhook: fornecedor
+// parceiro de verdade (padrão, todo webhook que já existia até agora) ou a
+// identidade única e sintética que representa "leads subidos por planilha"
+// (ver seed na migração 20260918..._base_upload). Usado pela regra de
+// proporção de disparo pra saber de "qual lado" cada oferta em
+// AGUARDANDO_DISPARO é (ver claimOffersAguardandoDisparo).
+enum OrigemWebhookTipo {
+  FORNECEDOR
+  BASE_UPLOAD
+}
+
+enum StatusLoteUpload {
+  PENDENTE
+  PROCESSANDO
+  CONCLUIDO
+  ERRO
+}
+
+// Status de cada LINHA dentro de um lote de upload — granular por CPF, pra
+// dar pra mostrar exatamente quantas linhas de cada tipo depois que o
+// processamento terminar (ver tela "Subir Base").
+enum StatusLinhaUpload {
+  PENDENTE
+  // Reivindicada atomicamente (mesmo padrão SKIP LOCKED dos outros workers)
+  // — nunca deve ficar visível por muito tempo; se aparecer parado, é sinal
+  // do worker12 travado no meio do processamento dessa linha.
+  PROCESSANDO
+  CRIADA
+  RESETADA
+  DESCARTADA
+  INVALIDA
+  ERRO
+}
+
 enum DispatchStatus {
   SUCESSO
   FALHA
@@ -161,12 +195,19 @@ model Webhook {
   headerAssinatura  String  @default("x-ofertas-signature") @map("header_assinatura")
   headerTimestamp   String? @default("x-ofertas-timestamp") @map("header_timestamp")
 
+  // Base de upload (18/09) — ver comentário no enum OrigemWebhookTipo. Todo
+  // webhook cadastrado até agora é FORNECEDOR (default); existe uma única
+  // linha BASE_UPLOAD no banco, semeada pela migração, com ativo=false de
+  // propósito (nunca deve aceitar uma chamada HTTP real).
+  tipo       OrigemWebhookTipo @default(FORNECEDOR)
+
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
   offers Offer[]
   tarefas Tarefa[]
   leadsDescartados WebhookLeadDescartado[]
+  lotesUpload LoteUpload[]
 
   @@map("webhooks")
 }
@@ -364,6 +405,27 @@ model Offer {
   // próprio created_at (ver migração lead_descarte_24h).
   ultimoRecebimentoWebhookEm DateTime @default(now()) @map("ultimo_recebimento_webhook_em")
 
+  // Base de upload (18/09) — flags copiadas do Lote de Upload no instante em
+  // que a oferta é criada/resetada (ver processarLinhaLoteUpload), decidindo
+  // se ESSA oferta específica pula a consulta Lemit e/ou a validação de
+  // WhatsApp (ver worker1-limit.ts / worker2-whatsapp.ts). Sempre false para
+  // leads vindos de webhook de parceiro normal — createOfferIdempotent (o
+  // caminho usado pelo recebimento via HTTP) nunca seta essas 2 colunas.
+  pularValidacaoLemit    Boolean     @default(false) @map("pular_validacao_lemit")
+  pularValidacaoWhatsapp Boolean     @default(false) @map("pular_validacao_whatsapp")
+  loteUploadId           String?     @map("lote_upload_id")
+  loteUpload             LoteUpload? @relation(fields: [loteUploadId], references: [id])
+
+  // Proporção de disparo (18/09) — marcado UMA VEZ, no exato instante em que
+  // a oferta sai de AGUARDANDO_DISPARO pra DISPARO_CONSULTADO (ver
+  // claimOffersAguardandoDisparo) — nunca mais tocado depois disso
+  // (diferente de updatedAt, que continua mudando com DISPARO_ENVIADO/
+  // DISPARO_RESPONDIDO, ver POST /api/v1/leads/status). É esse campo que
+  // permite contar "quantas ofertas de cada origem já foram disparadas
+  // desde a última vez que a proporção foi configurada" sem se confundir
+  // com esses eventos posteriores — ver ConfiguracaoProporcaoDisparo.
+  disparoConsultadoEm    DateTime?   @map("disparo_consultado_em")
+
   createdAt        DateTime    @default(now()) @map("created_at")
   updatedAt        DateTime    @updatedAt @map("updated_at")
 
@@ -402,7 +464,111 @@ model Offer {
   @@index([disparoEnviadoEm], map: "idx_offers_disparo_enviado_em")
   @@index([disparoRespondidoEm], map: "idx_offers_disparo_respondido_em")
   @@index([status, whatsappCheckIniciadoEm], map: "idx_offers_status_whatsapp_check_iniciado")
+  @@index([loteUploadId], map: "idx_offers_lote_upload_id")
+  @@index([disparoConsultadoEm], map: "idx_offers_disparo_consultado_em")
   @@map("offers")
+}
+
+// ---------------------------------------------------------------------------
+// Base de upload (18/09) — "Subir Base": nova forma de entrada de leads
+// (upload de planilha .xlsx pelo painel), em vez de webhook HTTP de
+// parceiro. Cada arquivo enviado cria UM LoteUpload (pra dar pra acompanhar
+// progresso e ver o histórico na tela "Subir Base") com uma LoteUploadLinha
+// por CPF da planilha; um worker novo (worker12) processa essas linhas em
+// segundo plano, chamando o MESMO createOfferIdempotent que o webhook usa
+// (reaproveita 100% a idempotência/regra de descarte em 24h) — só que
+// sempre com o webhookId da identidade única "Base Upload" (ver seed na
+// migração e OrigemWebhookTipo), e copiando pularValidacaoLemit/
+// pularValidacaoWhatsapp do lote pra oferta criada/resetada.
+// ---------------------------------------------------------------------------
+
+model LoteUpload {
+  id          String @id @default(uuid())
+  nomeArquivo String @map("nome_arquivo")
+
+  // Sempre a identidade única "Base Upload" — guardado aqui (em vez de fixo
+  // no código) só pra não espalhar esse UUID mágico por vários arquivos;
+  // quem escreve é sempre a mesma consulta (buscar o Webhook com
+  // tipo=BASE_UPLOAD).
+  webhookId String  @map("webhook_id")
+  webhook   Webhook @relation(fields: [webhookId], references: [id])
+
+  // Escolhido no momento do upload (pedido explícito: "bases quentes",
+  // já validadas, então dá pra escolher pular) — ver tela "Subir Base".
+  pularValidacaoLemit    Boolean @default(false) @map("pular_validacao_lemit")
+  pularValidacaoWhatsapp Boolean @default(false) @map("pular_validacao_whatsapp")
+
+  status             StatusLoteUpload @default(PENDENTE)
+  totalLinhas        Int              @default(0) @map("total_linhas")
+  linhasProcessadas  Int              @default(0) @map("linhas_processadas")
+  ofertasCriadas     Int              @default(0) @map("ofertas_criadas")
+  ofertasResetadas   Int              @default(0) @map("ofertas_resetadas")
+  ofertasDescartadas Int              @default(0) @map("ofertas_descartadas")
+  linhasInvalidas    Int              @default(0) @map("linhas_invalidas")
+  erro               String?
+
+  criadoEm    DateTime  @default(now()) @map("criado_em")
+  concluidoEm DateTime? @map("concluido_em")
+
+  linhas LoteUploadLinha[]
+  ofertas Offer[]
+
+  @@index([status], map: "idx_lotes_upload_status")
+  @@index([criadoEm], map: "idx_lotes_upload_criado_em")
+  @@map("lotes_upload")
+}
+
+model LoteUploadLinha {
+  id           String     @id @default(uuid())
+  loteUploadId String     @map("lote_upload_id")
+  loteUpload   LoteUpload @relation(fields: [loteUploadId], references: [id], onDelete: Cascade)
+
+  nome     String?
+  cpf      String
+  telefone String
+  // Qualquer coluna extra que a planilha tiver, além de nome/cpf/telefone
+  // (pedido explícito: "se tiver mais opções salvar") — guardado à parte,
+  // sem tentar adivinhar em qual campo da Oferta cada uma deveria virar;
+  // vai direto pro dadosAdicionais da oferta criada.
+  dadosExtras Json? @map("dados_extras")
+
+  status       StatusLinhaUpload @default(PENDENTE)
+  erro         String?
+  // Preenchido depois de processar (criada ou resetada) — não preenchido
+  // se a linha foi descartada (nenhuma oferta nova, a existente não muda)
+  // ou ficou inválida (sem CPF/telefone, nunca chega a tentar criar).
+  ofertaId     String?           @map("oferta_id")
+
+  criadoEm     DateTime  @default(now()) @map("criado_em")
+  processadoEm DateTime? @map("processado_em")
+
+  @@index([loteUploadId, status], map: "idx_lote_upload_linhas_lote_status")
+  @@map("lote_upload_linhas")
+}
+
+// ---------------------------------------------------------------------------
+// Proporção de disparo (18/09) — "a cada 1 lead de fornecedor webhook,
+// disparar N de base upload" (pedido explícito, proporção geral, não por
+// parceiro). Configuração única (sempre a linha mais antiga é a válida; a
+// tela de painel sempre lê/atualiza essa mesma linha, nunca cria uma
+// segunda) — ver getConfiguracaoProporcao/definirConfiguracaoProporcao.
+// vigenteDesde só é atualizado quando os pesos REALMENTE mudam (não a cada
+// PUT idêntico) — é a partir dele que claimOffersAguardandoDisparo conta
+// quantas ofertas de cada origem já foram disparadas, pra decidir a
+// próxima; assim a proporção se autocorrige sozinha, sem precisar de botão
+// de "resetar contador".
+// ---------------------------------------------------------------------------
+
+model ConfiguracaoProporcaoDisparo {
+  id String @id @default(uuid())
+
+  pesoFornecedor Int @default(1) @map("peso_fornecedor")
+  pesoUpload     Int @default(1) @map("peso_upload")
+
+  vigenteDesde DateTime @default(now()) @map("vigente_desde")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("configuracao_proporcao_disparo")
 }
 
 // ---------------------------------------------------------------------------

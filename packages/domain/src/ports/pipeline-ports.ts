@@ -36,6 +36,11 @@ export interface OfferSnapshot {
   // o mesmo valor (todas do mesmo lote). Ver runWhatsappWorkerOnce.
   whatsappLoteId: string | null;
   whatsappCheckIniciadoEm: Date | null;
+  // Base de upload (18/09) — ver comentário completo no schema.prisma
+  // (campo Offer.pularValidacaoLemit/pularValidacaoWhatsapp). Sempre false
+  // pra ofertas vindas de webhook de parceiro normal.
+  pularValidacaoLemit: boolean;
+  pularValidacaoWhatsapp: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +138,14 @@ export interface PhoneProcessingPort {
 export interface WhatsappValidationPort {
   /** Reserva ofertas TELEFONE_ATUALIZADO -> VALIDANDO_WHATSAPP. */
   claimOffersForValidation(limit: number): Promise<OfferSnapshot[]>;
+  /**
+   * Base de upload (18/09) — reserva especificamente as ofertas marcadas
+   * pra pular a validação de WhatsApp (pularValidacaoWhatsapp=true),
+   * ANTES de qualquer contagem de lote (ver runWhatsappWorkerOnce): essas
+   * nunca chamam a CorbanTech, então não faz sentido esperar formar lote
+   * de 500 junto com elas — são resolvidas na hora, todo ciclo.
+   */
+  claimOffersParaPularValidacao(limit: number): Promise<OfferSnapshot[]>;
   /**
    * A API de validação é assíncrona (POST /check só devolve um request_id) —
    * isto registra que a consulta foi iniciada, para casar com o resultado

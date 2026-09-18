@@ -1,6 +1,6 @@
 import IORedis from "ioredis";
 import { logger } from "@plataforma-ofertas/shared";
-import { prisma, PrismaPipelineRepository, AdminRepository } from "@plataforma-ofertas/database";
+import { prisma, PrismaPipelineRepository, AdminRepository, PrismaUploadBaseRepository } from "@plataforma-ofertas/database";
 import { inicioDoDiaEmBrasilia } from "@plataforma-ofertas/domain";
 import { createLimitService } from "@plataforma-ofertas/integration-limit";
 import { createWhatsAppValidationService } from "@plataforma-ofertas/integration-whatsapp";
@@ -17,6 +17,7 @@ import { runMargemFactaWorkerOnce, type FactaMargemService } from "./workers/wor
 import { runMargemFactaOnlineWorkerOnce, type FactaOnlineService } from "./workers/worker0b-margem-facta-online";
 import { runQualidadeWhatsappWorkerOnce, type MetaQualidadeService } from "./workers/worker10-qualidade-whatsapp";
 import { runRelatorioQualidadeWhatsappWorkerOnce } from "./workers/worker11-relatorio-qualidade-whatsapp";
+import { runUploadBaseWorkerOnce } from "./workers/worker12-processar-lote-upload";
 import { buscarNumerosWhatsappMeta } from "./fornecedores/meta-qualidade-whatsapp";
 import {
   gerarTokenFacta,
@@ -32,6 +33,7 @@ import { definirAtivoOdysseia } from "./fornecedores/odysseia";
 // (o schema/domínio já é o mesmo, só muda como este arquivo é dividido).
 
 const repo = new PrismaPipelineRepository(prisma);
+const uploadBaseRepo = new PrismaUploadBaseRepository(prisma);
 const adminRepo = new AdminRepository(prisma);
 const redis = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 
@@ -614,6 +616,20 @@ loop(
   },
   () => resolverIntervaloRelatorioQualidadeWhatsappMs(WORKER11_INTERVAL_MS_PADRAO),
   // Roda o primeiro ciclo na hora — ver comentário na função loop() acima.
+  true
+);
+
+// Worker12 — Base de upload (18/09): processa as linhas das planilhas
+// enviadas pela tela "Subir Base" (ver POST /admin/lotes-upload). Intervalo
+// curto e primeiro ciclo imediato (igual worker9) — pedido implícito de
+// upload é sempre "quero ver rodando logo", não esperar minutos.
+const WORKER12_INTERVAL_MS = Number(process.env.WORKER12_INTERVAL_MS ?? 5000);
+
+loop(
+  "worker12-processar-lote-upload",
+  WORKER12_INTERVAL_MS,
+  () => runUploadBaseWorkerOnce({ port: uploadBaseRepo, batchSize: 50 }),
+  undefined,
   true
 );
 

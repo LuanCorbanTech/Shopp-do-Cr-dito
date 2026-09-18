@@ -34,6 +34,8 @@ class FakeWhatsappPort implements Pick<WhatsappValidationPort, "findOfferByWhats
       tentativasEnvio: 0,
       whatsappCheckIniciadoEm: new Date(),
       whatsappLoteId: null,
+      pularValidacaoLemit: false,
+      pularValidacaoWhatsapp: false,
       ...offer,
     });
   }

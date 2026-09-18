@@ -18,6 +18,8 @@ import type {
   OfertaParaMargemSnapshot,
   MargemFactaOnlinePort,
   OfertaParaOnlineFactaSnapshot,
+  ProporcaoDisparoPort,
+  ConfiguracaoProporcaoDisparoSnapshot,
 } from "@plataforma-ofertas/domain";
 
 // Implementação Prisma/PostgreSQL de todas as portas usadas pelos workers 1-6.
@@ -51,6 +53,8 @@ type OfferRow = {
   whatsappRequestId: string | null;
   whatsappLoteId: string | null;
   whatsappCheckIniciadoEm: Date | null;
+  pularValidacaoLemit: boolean;
+  pularValidacaoWhatsapp: boolean;
 };
 
 const OFFER_COLUMNS_SQL = Prisma.sql`
@@ -64,7 +68,8 @@ const OFFER_COLUMNS_SQL = Prisma.sql`
   tentativas_telefone AS "tentativasTelefone", tentativas_whatsapp AS "tentativasWhatsapp",
   tentativas_envio AS "tentativasEnvio", reserved_at AS "reservedAt",
   whatsapp_request_id AS "whatsappRequestId", whatsapp_lote_id AS "whatsappLoteId",
-  whatsapp_check_iniciado_em AS "whatsappCheckIniciadoEm"
+  whatsapp_check_iniciado_em AS "whatsappCheckIniciadoEm",
+  pular_validacao_lemit AS "pularValidacaoLemit", pular_validacao_whatsapp AS "pularValidacaoWhatsapp"
 `;
 
 function mapRow(row: OfferRow): OfferSnapshot {
@@ -92,6 +97,8 @@ function mapRow(row: OfferRow): OfferSnapshot {
     whatsappRequestId: row.whatsappRequestId,
     whatsappLoteId: row.whatsappLoteId,
     whatsappCheckIniciadoEm: row.whatsappCheckIniciadoEm,
+    pularValidacaoLemit: row.pularValidacaoLemit,
+    pularValidacaoWhatsapp: row.pularValidacaoWhatsapp,
   };
 }
 
@@ -106,7 +113,8 @@ export class PrismaPipelineRepository
     ReconciliationPort,
     DispatchPollPort,
     MargemFactaPort,
-    MargemFactaOnlinePort
+    MargemFactaOnlinePort,
+    ProporcaoDisparoPort
 {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -317,6 +325,26 @@ export class PrismaPipelineRepository
 
   async claimOffersForValidation(limit: number): Promise<OfferSnapshot[]> {
     return this.claimByStatus(["TELEFONE_ATUALIZADO"], "VALIDANDO_WHATSAPP", limit);
+  }
+
+  // Base de upload (18/09) — mesmo padrão atômico de claimByStatus, mas só
+  // pra ofertas marcadas pra pular a validação de WhatsApp (filtro extra
+  // que o método genérico não suporta, por isso SQL próprio, igual
+  // claimOffersSemWhatsappParaRetentarLemit acima).
+  async claimOffersParaPularValidacao(limit: number): Promise<OfferSnapshot[]> {
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      UPDATE offers
+      SET status = 'VALIDANDO_WHATSAPP'::"OfferStatus", reserved_at = now(), updated_at = now()
+      WHERE id IN (
+        SELECT id FROM offers
+        WHERE status = 'TELEFONE_ATUALIZADO'::"OfferStatus" AND pular_validacao_whatsapp = true
+        ORDER BY created_at
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING ${OFFER_COLUMNS_SQL}
+    `;
+    return rows.map(mapRow);
   }
 
   async markWhatsappCheckStarted(
@@ -734,11 +762,149 @@ export class PrismaPipelineRepository
   // Endpoint de disparo por polling externo — DispatchPollPort
   // -------------------------------------------------------------------------
 
+  // Proporção de disparo (18/09) — pedido explícito: "a cada 1 lead
+  // disparado de fornecedor webhook, disparar N de base upload". Chamado
+  // tanto pelo worker8 (empurra pros endpoints) quanto pelo GET
+  // /api/v1/leads/aguardando-disparo (puxado por fora) — os dois usam esse
+  // MESMO método, então a proporção vale pra qualquer um dos dois sem
+  // precisar saber qual está realmente em uso.
+  //
+  // Sem proporção configurada (pesos iguais, ou algum <= 0 — nunca deveria
+  // acontecer pela tela, mas defensivo) usa o caminho RÁPIDO de sempre (1
+  // UPDATE só, em lote) — sem discriminar origem, idêntico ao
+  // comportamento antigo. Com proporção de verdade, precisa reivindicar
+  // ofertas UMA POR VEZ (decidindo a cada uma de qual origem tirar,
+  // olhando pro histórico desde que a proporção foi configurada), porque
+  // não dá pra saber de antemão quantas de cada tipo existem disponíveis.
   async claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]> {
+    if (limit <= 0) return [];
+    const config = await this.buscarConfiguracaoProporcao();
+    const semProporcao =
+      config.pesoFornecedor <= 0 || config.pesoUpload <= 0 || config.pesoFornecedor === config.pesoUpload;
+    if (semProporcao) {
+      return this.claimAguardandoDisparoSemProporcao(limit);
+    }
+
+    let contFornecedor = await this.contarDisparadosPorTipoDesde("FORNECEDOR", config.vigenteDesde);
+    let contUpload = await this.contarDisparadosPorTipoDesde("BASE_UPLOAD", config.vigenteDesde);
+
+    const resultado: OfferSnapshot[] = [];
+    for (let i = 0; i < limit; i++) {
+      // Quem estiver mais "atrasado" em relação ao peso configurado (menor
+      // razão contagem/peso) tira a vez primeiro — round-robin ponderado
+      // clássico, sem precisar de contador/estado próprio: o histórico
+      // desde vigenteDesde JÁ É o estado.
+      const razaoFornecedor = contFornecedor / config.pesoFornecedor;
+      const razaoUpload = contUpload / config.pesoUpload;
+      const preferido: "FORNECEDOR" | "BASE_UPLOAD" = razaoFornecedor <= razaoUpload ? "FORNECEDOR" : "BASE_UPLOAD";
+      const alternativo: "FORNECEDOR" | "BASE_UPLOAD" = preferido === "FORNECEDOR" ? "BASE_UPLOAD" : "FORNECEDOR";
+
+      let oferta = await this.claimOneAguardandoDisparoPorTipo(preferido);
+      let tipoClaimado = preferido;
+      if (!oferta) {
+        // Fila preferida vazia — pedido explícito: nunca trava esperando
+        // ela ter lead, dispara da outra origem mesmo assim.
+        oferta = await this.claimOneAguardandoDisparoPorTipo(alternativo);
+        tipoClaimado = alternativo;
+      }
+      if (!oferta) break; // as duas filas esvaziaram — para, devolve o que já pegou até aqui.
+
+      resultado.push(oferta);
+      if (tipoClaimado === "FORNECEDOR") contFornecedor += 1;
+      else contUpload += 1;
+    }
+    return resultado;
+  }
+
+  private async claimAguardandoDisparoSemProporcao(limit: number): Promise<OfferSnapshot[]> {
     // Mesmo padrão atômico de claimByStatus (UPDATE...RETURNING com FOR UPDATE
     // SKIP LOCKED) — chamadas concorrentes ao endpoint nunca pegam a mesma
     // oferta. DISPARO_CONSULTADO é terminal: a oferta nunca mais aparece aqui.
-    return this.claimByStatus(["AGUARDANDO_DISPARO"], "DISPARO_CONSULTADO", limit);
+    // disparo_consultado_em marcado igual ao caminho com proporção, pra
+    // manter o contador consistente se a proporção for ativada depois.
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      UPDATE offers
+      SET status = 'DISPARO_CONSULTADO'::"OfferStatus", disparo_consultado_em = now(), updated_at = now()
+      WHERE id IN (
+        SELECT id FROM offers
+        WHERE status = 'AGUARDANDO_DISPARO'::"OfferStatus"
+        ORDER BY created_at
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING ${OFFER_COLUMNS_SQL}
+    `;
+    return rows.map(mapRow);
+  }
+
+  private async claimOneAguardandoDisparoPorTipo(
+    tipo: "FORNECEDOR" | "BASE_UPLOAD"
+  ): Promise<OfferSnapshot | null> {
+    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+      UPDATE offers
+      SET status = 'DISPARO_CONSULTADO'::"OfferStatus", disparo_consultado_em = now(), updated_at = now()
+      WHERE id = (
+        SELECT o.id FROM offers o
+        JOIN webhooks w ON w.id = o.webhook_id
+        WHERE o.status = 'AGUARDANDO_DISPARO'::"OfferStatus" AND w.tipo = ${tipo}::"OrigemWebhookTipo"
+        ORDER BY o.created_at
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING ${OFFER_COLUMNS_SQL}
+    `;
+    return rows[0] ? mapRow(rows[0]) : null;
+  }
+
+  private async contarDisparadosPorTipoDesde(tipo: "FORNECEDOR" | "BASE_UPLOAD", desde: Date): Promise<number> {
+    const rows = await this.prisma.$queryRaw<{ total: bigint }[]>`
+      SELECT count(*) AS total
+      FROM offers o
+      JOIN webhooks w ON w.id = o.webhook_id
+      WHERE w.tipo = ${tipo}::"OrigemWebhookTipo" AND o.disparo_consultado_em >= ${desde}
+    `;
+    return Number(rows[0]?.total ?? 0);
+  }
+
+  // -------------------------------------------------------------------------
+  // Proporção de disparo — ProporcaoDisparoPort
+  // -------------------------------------------------------------------------
+
+  async buscarConfiguracaoProporcao(): Promise<ConfiguracaoProporcaoDisparoSnapshot> {
+    const atual = await this.prisma.configuracaoProporcaoDisparo.findFirst({ orderBy: { vigenteDesde: "asc" } });
+    if (!atual) {
+      // Defensivo — a migração sempre semeia 1 linha (1:1, sem preferência);
+      // nunca deveria faltar, mas nunca deixa o disparo travado por isso.
+      return { pesoFornecedor: 1, pesoUpload: 1, vigenteDesde: new Date(0) };
+    }
+    return { pesoFornecedor: atual.pesoFornecedor, pesoUpload: atual.pesoUpload, vigenteDesde: atual.vigenteDesde };
+  }
+
+  async definirConfiguracaoProporcao(params: {
+    pesoFornecedor: number;
+    pesoUpload: number;
+  }): Promise<ConfiguracaoProporcaoDisparoSnapshot> {
+    const atual = await this.prisma.configuracaoProporcaoDisparo.findFirst({ orderBy: { vigenteDesde: "asc" } });
+    if (!atual) {
+      const criada = await this.prisma.configuracaoProporcaoDisparo.create({
+        data: { pesoFornecedor: params.pesoFornecedor, pesoUpload: params.pesoUpload },
+      });
+      return { pesoFornecedor: criada.pesoFornecedor, pesoUpload: criada.pesoUpload, vigenteDesde: criada.vigenteDesde };
+    }
+    // Salvar os MESMOS pesos de novo não reinicia a janela de contagem —
+    // só muda vigenteDesde quando pelo menos um peso muda de verdade.
+    if (atual.pesoFornecedor === params.pesoFornecedor && atual.pesoUpload === params.pesoUpload) {
+      return { pesoFornecedor: atual.pesoFornecedor, pesoUpload: atual.pesoUpload, vigenteDesde: atual.vigenteDesde };
+    }
+    const atualizada = await this.prisma.configuracaoProporcaoDisparo.update({
+      where: { id: atual.id },
+      data: { pesoFornecedor: params.pesoFornecedor, pesoUpload: params.pesoUpload, vigenteDesde: new Date() },
+    });
+    return {
+      pesoFornecedor: atualizada.pesoFornecedor,
+      pesoUpload: atualizada.pesoUpload,
+      vigenteDesde: atualizada.vigenteDesde,
+    };
   }
 
   // Registra CADA tentativa do Disparo individual (worker8) — sucesso ou

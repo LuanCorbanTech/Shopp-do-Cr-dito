@@ -43,7 +43,7 @@ if (!dispatchApiToken) {
 
 registerWebhookRoutes(app, offersPort, toleranceSeconds, webhookLoteConcorrencia);
 registerWhatsappValidacaoWebhookRoutes(app, pipelineRepo, pipelineRepo, whatsappWebhookToken);
-registerAdminRoutes(app, adminRepo);
+registerAdminRoutes(app, adminRepo, pipelineRepo);
 registerAguardandoDisparoRoutes(app, pipelineRepo, dispatchApiToken);
 registerAtualizarStatusDisparoRoutes(app, pipelineRepo, dispatchApiToken);
 registerBuscarPorTelefoneRoutes(app, pipelineRepo, dispatchApiToken);

@@ -1,15 +1,22 @@
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { AdminRepository } from "@plataforma-ofertas/database";
+import type { ProporcaoDisparoPort } from "@plataforma-ofertas/domain";
 import { requireAdminAuth } from "./auth";
 
 const ESQUEMAS_ASSINATURA_VALIDOS = ["ofertas_v1", "hmac_sha256_simple", "token_simples"];
+
+// Corpo da planilha (tela "Subir Base") pode ter muitas linhas — sobe o
+// limite padrão do Fastify (1MB) só pra essa rota específica, em vez de
+// globalmente (as outras rotas de /admin, e principalmente as rotas
+// públicas de webhook, continuam com o limite padrão).
+const LOTE_UPLOAD_BODY_LIMIT_BYTES = 50 * 1024 * 1024; // 50MB
 
 // API do painel administrativo (seção 8 do doc de arquitetura / itens 31-38 do
 // escopo original): dashboard, toggle do Limit, CRUD de endpoints e regras de
 // roteamento, listagem/detalhe/timeline de ofertas. Tudo sob /admin, protegido por
 // requireAdminAuth.
-export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminRepository): void {
+export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminRepository, proporcaoPort: ProporcaoDisparoPort): void {
   app.register(
     async (instance) => {
       instance.addHook("onRequest", requireAdminAuth);
@@ -239,6 +246,90 @@ export function registerAdminRoutes(app: FastifyInstance, adminRepo: AdminReposi
         });
         return adminRepo.getDisparoIndividualConfig();
       });
+
+      // -----------------------------------------------------------------
+      // Base de upload — tela "Subir Base" (18/09). O parse da planilha
+      // (.xlsx) acontece no navegador; aqui só chegam as linhas já
+      // extraídas (nome/cpf/telefone + extras). Ver AdminRepository
+      // (criarLoteUpload/listarLotesUpload) e worker12 (processamento em
+      // segundo plano).
+      // -----------------------------------------------------------------
+
+      instance.get("/lotes-upload", async () => adminRepo.listarLotesUpload());
+
+      instance.post<{
+        Body: {
+          nomeArquivo?: string;
+          pularValidacaoLemit?: boolean;
+          pularValidacaoWhatsapp?: boolean;
+          linhas?: { nome?: string | null; cpf?: string; telefone?: string; dadosExtras?: Record<string, unknown> | null }[];
+        };
+      }>("/lotes-upload", { bodyLimit: LOTE_UPLOAD_BODY_LIMIT_BYTES }, async (request, reply) => {
+        const body = request.body ?? {};
+        if (!body.nomeArquivo) {
+          reply.code(400);
+          return { error: "nome_arquivo_obrigatorio" };
+        }
+        if (!Array.isArray(body.linhas) || body.linhas.length === 0) {
+          reply.code(400);
+          return { error: "planilha_vazia", mensagem: "A planilha não tem nenhuma linha com dados." };
+        }
+        // Validação mínima aqui — quem garante o formato completo (3 campos
+        // obrigatórios, cabeçalhos certos) é o parser no navegador; aqui só
+        // uma segunda checagem defensiva pra não gravar lixo no banco caso
+        // algo chegue fora do esperado.
+        const linhasInvalidas = body.linhas.filter((linha) => !linha.cpf?.trim() || !linha.telefone?.trim());
+        if (linhasInvalidas.length === body.linhas.length) {
+          reply.code(400);
+          return { error: "nenhuma_linha_valida", mensagem: "Nenhuma linha da planilha tem CPF e telefone preenchidos." };
+        }
+        try {
+          const lote = await adminRepo.criarLoteUpload({
+            nomeArquivo: body.nomeArquivo,
+            pularValidacaoLemit: Boolean(body.pularValidacaoLemit),
+            pularValidacaoWhatsapp: Boolean(body.pularValidacaoWhatsapp),
+            linhas: body.linhas.map((linha) => ({
+              nome: linha.nome?.trim() || null,
+              cpf: (linha.cpf ?? "").trim(),
+              telefone: (linha.telefone ?? "").trim(),
+              dadosExtras: linha.dadosExtras ?? null,
+            })),
+          });
+          reply.code(201);
+          return lote;
+        } catch (error) {
+          reply.code(500);
+          return { error: "falha_criar_lote", mensagem: error instanceof Error ? error.message : String(error) };
+        }
+      });
+
+      // -----------------------------------------------------------------
+      // Proporção de disparo (18/09) — "a cada 1 lead disparado de
+      // Fornecedor de Webhook, disparar N de base upload". Fica dentro de
+      // Integrações no painel, mas por baixo usa ProporcaoDisparoPort
+      // (mesma implementação que os workers/rotas de disparo usam pra
+      // reivindicar ofertas — ver claimOffersAguardandoDisparo em
+      // prisma-pipeline-repository.ts).
+      // -----------------------------------------------------------------
+
+      instance.get("/configuracao-proporcao-disparo", async () => proporcaoPort.buscarConfiguracaoProporcao());
+
+      instance.put<{ Body: { pesoFornecedor?: number; pesoUpload?: number } }>(
+        "/configuracao-proporcao-disparo",
+        async (request, reply) => {
+          const body = request.body ?? {};
+          const pesoFornecedor = Number(body.pesoFornecedor);
+          const pesoUpload = Number(body.pesoUpload);
+          if (!Number.isInteger(pesoFornecedor) || pesoFornecedor <= 0 || !Number.isInteger(pesoUpload) || pesoUpload <= 0) {
+            reply.code(400);
+            return {
+              error: "pesos_invalidos",
+              mensagem: "Informe pesoFornecedor e pesoUpload como números inteiros maiores que zero.",
+            };
+          }
+          return proporcaoPort.definirConfiguracaoProporcao({ pesoFornecedor, pesoUpload });
+        }
+      );
 
       instance.get("/webhooks", async () => adminRepo.listWebhooks());
 

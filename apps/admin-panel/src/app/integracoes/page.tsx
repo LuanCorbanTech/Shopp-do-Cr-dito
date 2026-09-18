@@ -1,5 +1,5 @@
 import { adminApiFetch } from "@/lib/api";
-import { setLimitEnabled, salvarCredenciais, toggleRelatorioPeriodico, salvarRelatorioPeriodico, toggleDisparoIndividual, salvarDisparoIndividual, salvarOdysseiaApiKey, salvarCredenciaisFacta } from "./actions";
+import { setLimitEnabled, salvarCredenciais, toggleRelatorioPeriodico, salvarRelatorioPeriodico, toggleDisparoIndividual, salvarDisparoIndividual, salvarOdysseiaApiKey, salvarCredenciaisFacta, salvarProporcaoDisparo } from "./actions";
 import FactaTestarCpf from "./FactaTestarCpf";
 import { formatarDataHora } from "@/lib/data-hora";
 import DisparoIndividualEndpointsEditor from "./DisparoIndividualEndpointsEditor";
@@ -66,6 +66,12 @@ interface FactaMargemStatus {
   senhaMascarada: string | null;
 }
 
+interface ConfiguracaoProporcaoDisparoStatus {
+  pesoFornecedor: number;
+  pesoUpload: number;
+  vigenteDesde: string;
+}
+
 export default async function IntegracoesPage() {
   let status: LimitStatus | null = null;
   let error: string | null = null;
@@ -113,6 +119,14 @@ export default async function IntegracoesPage() {
     factaMargem = await adminApiFetch<FactaMargemStatus>("/admin/integrations/facta-margem");
   } catch (e) {
     erroFactaMargem = e instanceof Error ? e.message : String(e);
+  }
+
+  let proporcaoDisparo: ConfiguracaoProporcaoDisparoStatus | null = null;
+  let erroProporcaoDisparo: string | null = null;
+  try {
+    proporcaoDisparo = await adminApiFetch<ConfiguracaoProporcaoDisparoStatus>("/admin/configuracao-proporcao-disparo");
+  } catch (e) {
+    erroProporcaoDisparo = e instanceof Error ? e.message : String(e);
   }
 
   return (
@@ -463,6 +477,54 @@ export default async function IntegracoesPage() {
             <button type="submit">Salvar</button>
           </form>
           <FactaTestarCpf />
+        </div>
+      )}
+
+      <h1 style={{ marginTop: 40 }}>Proporção de disparo (Fornecedor x Base Upload)</h1>
+      <p className="subtitle">
+        Controla a mistura, na hora do disparo, entre leads vindos de fornecedor (webhook) e leads da base de
+        upload (tela &quot;Subir Base&quot;). Ex.: peso Fornecedor = 1 e peso Base Upload = 5 dispara 1 lead de
+        fornecedor pra cada 5 da base de upload. Pesos iguais = sem preferência (ordem de chegada, como sempre
+        foi). Se uma das duas origens esvaziar, o disparo continua puxando da outra — nunca trava esperando.
+      </p>
+
+      {erroProporcaoDisparo && <p className="empty-state">Não foi possível carregar: {erroProporcaoDisparo}</p>}
+
+      {proporcaoDisparo && (
+        <div className="card">
+          <form action={salvarProporcaoDisparo} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div>
+              <label htmlFor="proporcao-pesoFornecedor" style={{ display: "block", marginBottom: 4 }}>
+                Peso — Fornecedor (webhook)
+              </label>
+              <input
+                id="proporcao-pesoFornecedor"
+                name="pesoFornecedor"
+                type="number"
+                min={1}
+                step={1}
+                defaultValue={proporcaoDisparo.pesoFornecedor}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div>
+              <label htmlFor="proporcao-pesoUpload" style={{ display: "block", marginBottom: 4 }}>
+                Peso — Base Upload
+              </label>
+              <input
+                id="proporcao-pesoUpload"
+                name="pesoUpload"
+                type="number"
+                min={1}
+                step={1}
+                defaultValue={proporcaoDisparo.pesoUpload}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <button type="submit">Salvar</button>
+            </div>
+          </form>
         </div>
       )}
     </div>

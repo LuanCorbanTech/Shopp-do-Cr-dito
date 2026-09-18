@@ -25,6 +25,8 @@ export function fakeOferta(overrides: Partial<OfferSnapshot> = {}): OfferSnapsho
     whatsappRequestId: null,
     whatsappLoteId: null,
     whatsappCheckIniciadoEm: null,
+    pularValidacaoLemit: false,
+    pularValidacaoWhatsapp: false,
     ...overrides,
   };
 }

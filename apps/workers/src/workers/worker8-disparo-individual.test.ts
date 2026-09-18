@@ -32,6 +32,8 @@ function ofertaFake(overrides: Partial<OfferSnapshot> = {}): OfferSnapshot {
     whatsappRequestId: null,
     whatsappLoteId: null,
     whatsappCheckIniciadoEm: null,
+    pularValidacaoLemit: false,
+    pularValidacaoWhatsapp: false,
     ...overrides,
   };
 }

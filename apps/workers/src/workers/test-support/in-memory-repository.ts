@@ -125,6 +125,8 @@ export class InMemoryPipelineRepository
       dadosFactaOnline: partial.dadosFactaOnline ?? null,
       tentativasOnlineFacta: partial.tentativasOnlineFacta ?? 0,
       proximaTentativaOnlineFactaEm: partial.proximaTentativaOnlineFactaEm ?? null,
+      pularValidacaoLemit: partial.pularValidacaoLemit ?? false,
+      pularValidacaoWhatsapp: partial.pularValidacaoWhatsapp ?? false,
     };
     this.offers.set(offer.id, offer);
     return offer;
@@ -269,6 +271,22 @@ export class InMemoryPipelineRepository
   // ---------------------------------------------------------------------------
   async claimOffersForValidation(limit: number): Promise<OfferSnapshot[]> {
     return this.claimByStatus(["TELEFONE_ATUALIZADO"], "VALIDANDO_WHATSAPP", limit);
+  }
+
+  // Base de upload (18/09) — mesmo espírito de claimOffersForValidation,
+  // só que filtrado por quem o lote marcou pra pular a validação de
+  // verdade (ver worker2-whatsapp.ts, "Fase 0"). Réplica do filtro
+  // adicional (pularValidacaoWhatsapp = true) da versão Prisma real.
+  async claimOffersParaPularValidacao(limit: number): Promise<OfferSnapshot[]> {
+    const candidates = [...this.offers.values()]
+      .filter((o) => o.status === "TELEFONE_ATUALIZADO" && o.pularValidacaoWhatsapp)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, limit);
+    for (const o of candidates) {
+      o.status = "VALIDANDO_WHATSAPP";
+      o.reservedAt = new Date();
+    }
+    return candidates.map((o) => this.snapshot(o));
   }
 
   async markWhatsappCheckStarted(

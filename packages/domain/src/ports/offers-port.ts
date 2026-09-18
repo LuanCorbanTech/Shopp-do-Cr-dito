@@ -43,6 +43,14 @@ export interface CreateOfferInput {
   parcelas?: number | null;
   payloadOriginal: unknown;
   dadosAdicionais?: unknown | null;
+  // Base de upload (18/09) — preenchidos só pelo caminho de upload
+  // (prisma-upload-base-repository.ts); undefined nos dois pra quem chama
+  // pelo webhook de parceiro normal, o que createOfferIdempotent trata como
+  // "não pular nada" (false) e "nenhum lote" (null), do jeito que já era
+  // implicitamente antes dessa mudança.
+  pularValidacaoLemit?: boolean;
+  pularValidacaoWhatsapp?: boolean;
+  loteUploadId?: string | null;
 }
 
 export type CreateOfferResult =

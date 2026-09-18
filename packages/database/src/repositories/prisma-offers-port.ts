@@ -60,6 +60,7 @@ export class PrismaOffersPort implements OffersPort {
         id, webhook_id, idempotency_key, external_id, nome, cpf,
         telefone_original, banco_autorizado, produto, valor, parcelas,
         payload_original, dados_adicionais, status,
+        pular_validacao_lemit, pular_validacao_whatsapp, lote_upload_id,
         ultimo_recebimento_webhook_em, created_at, updated_at
       ) VALUES (
         ${randomUUID()}, ${input.webhookId}, ${input.idempotencyKey}, ${input.externalId ?? null},
@@ -69,6 +70,7 @@ export class PrismaOffersPort implements OffersPort {
         ${JSON.stringify(input.payloadOriginal)}::jsonb,
         ${input.dadosAdicionais != null ? JSON.stringify(input.dadosAdicionais) : null}::jsonb,
         'RECEBIDO'::"OfferStatus",
+        ${input.pularValidacaoLemit ?? false}, ${input.pularValidacaoWhatsapp ?? false}, ${input.loteUploadId ?? null},
         now(), now(), now()
       )
       ON CONFLICT (webhook_id, (regexp_replace(cpf, '\\D', '', 'g')))
@@ -84,6 +86,14 @@ export class PrismaOffersPort implements OffersPort {
         payload_original = EXCLUDED.payload_original,
         dados_adicionais = EXCLUDED.dados_adicionais,
         status = 'RECEBIDO'::"OfferStatus",
+        -- Base de upload (18/09): a oferta reaproveitada passa a valer com as
+        -- flags/lote da submissão NOVA (a que está resetando agora) - se um
+        -- parceiro webhook reenviar um CPF que tinha vindo de upload antes,
+        -- volta a false/null (webhook nunca seta essas colunas); se for outro
+        -- upload resetando, usa as flags desse lote novo.
+        pular_validacao_lemit = EXCLUDED.pular_validacao_lemit,
+        pular_validacao_whatsapp = EXCLUDED.pular_validacao_whatsapp,
+        lote_upload_id = EXCLUDED.lote_upload_id,
         data_nascimento = NULL, sexo = NULL, nome_mae = NULL, email = NULL,
         telefone_lemit = NULL, whatsapp_lemit = NULL, endereco = NULL, uf = NULL,
         cep = NULL, bairro = NULL, cidade = NULL, numero = NULL, logradouro = NULL,
@@ -94,6 +104,7 @@ export class PrismaOffersPort implements OffersPort {
         tentativas_envio = 0, proxima_tentativa_em = NULL,
         whatsapp_request_id = NULL, whatsapp_check_iniciado_em = NULL,
         disparo_enviado_em = NULL, disparo_respondido_em = NULL,
+        disparo_consultado_em = NULL,
         ultimo_recebimento_webhook_em = now(),
         updated_at = now()
       WHERE offers.ultimo_recebimento_webhook_em < now() - interval '24 hours'

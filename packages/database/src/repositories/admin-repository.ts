@@ -2121,6 +2121,71 @@ export class AdminRepository {
     const { pioraram } = await this.registrarConsultaWabaSucesso({ wabaContaId, numeros });
     return { numeros, pioraram };
   }
+
+  // -----------------------------------------------------------------
+  // Base de upload — tela "Subir Base" (18/09). O parse da planilha
+  // (.xlsx) acontece no navegador (lib xlsx já instalada no
+  // admin-panel) — aqui só chega o resultado já extraído (nome/cpf/
+  // telefone + qualquer coluna extra) e a escolha de pular Lemit/
+  // WhatsApp pra esse lote. Grava o lote + as linhas de uma vez
+  // (bulk insert) e devolve na hora — o processamento de cada linha
+  // (criar a oferta de verdade, pelo mesmo caminho de idempotência do
+  // webhook) é feito em segundo plano pelo worker12
+  // (PrismaUploadBaseRepository), pra não deixar a tela esperando uma
+  // planilha grande inteira processar antes de responder.
+  // -----------------------------------------------------------------
+
+  async criarLoteUpload(params: {
+    nomeArquivo: string;
+    pularValidacaoLemit: boolean;
+    pularValidacaoWhatsapp: boolean;
+    linhas: { nome: string | null; cpf: string; telefone: string; dadosExtras: Record<string, unknown> | null }[];
+  }): Promise<LoteUploadResumo> {
+    // A identidade "Base Upload" é sempre a mesma (webhook com
+    // tipo=BASE_UPLOAD, semeado pela migração) — buscada pelo tipo em vez
+    // de fixa no código pra não espalhar o UUID mágico por vários arquivos.
+    const webhookBaseUpload = await this.prisma.webhook.findFirst({ where: { tipo: "BASE_UPLOAD" } });
+    if (!webhookBaseUpload) {
+      throw new Error(
+        "Identidade 'Base Upload' não encontrada (nenhum webhook com tipo=BASE_UPLOAD). Verifique se a migração foi aplicada."
+      );
+    }
+
+    const lote = await this.prisma.$transaction(async (tx) => {
+      const criado = await tx.loteUpload.create({
+        data: {
+          nomeArquivo: params.nomeArquivo,
+          webhookId: webhookBaseUpload.id,
+          pularValidacaoLemit: params.pularValidacaoLemit,
+          pularValidacaoWhatsapp: params.pularValidacaoWhatsapp,
+          totalLinhas: params.linhas.length,
+        },
+      });
+      if (params.linhas.length > 0) {
+        await tx.loteUploadLinha.createMany({
+          data: params.linhas.map((linha) => ({
+            loteUploadId: criado.id,
+            nome: linha.nome,
+            cpf: linha.cpf,
+            telefone: linha.telefone,
+            dadosExtras: (linha.dadosExtras ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          })),
+        });
+      }
+      return criado;
+    });
+
+    return mapLoteUploadParaResumo(lote);
+  }
+
+  // Histórico completo (mais recente primeiro) pra tabela da tela "Subir
+  // Base" — sem paginação por enquanto (mesmo padrão de /webhooks, que
+  // também lista tudo de uma vez; o volume de LOTES, diferente do de
+  // ofertas, é baixo — um lote por upload, não um por lead).
+  async listarLotesUpload(): Promise<LoteUploadResumo[]> {
+    const lotes = await this.prisma.loteUpload.findMany({ orderBy: { criadoEm: "desc" } });
+    return lotes.map(mapLoteUploadParaResumo);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2233,4 +2298,69 @@ export interface NumeroWhatsappPiorouQualidade {
   motivo: string;
   qualityRatingAnterior: string | null;
   qualityRatingAtual: string;
+}
+
+// ---------------------------------------------------------------------------
+// Tipos — Base de upload / tela "Subir Base" (18/09)
+// ---------------------------------------------------------------------------
+
+export interface LoteUploadResumo {
+  id: string;
+  nomeArquivo: string;
+  status: "PENDENTE" | "PROCESSANDO" | "CONCLUIDO" | "ERRO";
+  pularValidacaoLemit: boolean;
+  pularValidacaoWhatsapp: boolean;
+  totalLinhas: number;
+  linhasProcessadas: number;
+  ofertasCriadas: number;
+  ofertasResetadas: number;
+  ofertasDescartadas: number;
+  linhasInvalidas: number;
+  // Derivado (não é uma coluna própria): tudo que já foi processado mas não
+  // caiu em nenhum dos outros 4 baldes — ver comentário em
+  // PrismaUploadBaseRepository.finalizarLinha (linhasProcessadas incrementa
+  // em TODO caminho, inclusive erro).
+  linhasComErro: number;
+  erro: string | null;
+  criadoEm: Date;
+  concluidoEm: Date | null;
+}
+
+function mapLoteUploadParaResumo(lote: {
+  id: string;
+  nomeArquivo: string;
+  status: string;
+  pularValidacaoLemit: boolean;
+  pularValidacaoWhatsapp: boolean;
+  totalLinhas: number;
+  linhasProcessadas: number;
+  ofertasCriadas: number;
+  ofertasResetadas: number;
+  ofertasDescartadas: number;
+  linhasInvalidas: number;
+  erro: string | null;
+  criadoEm: Date;
+  concluidoEm: Date | null;
+}): LoteUploadResumo {
+  const linhasComErro = Math.max(
+    0,
+    lote.linhasProcessadas - lote.ofertasCriadas - lote.ofertasResetadas - lote.ofertasDescartadas - lote.linhasInvalidas
+  );
+  return {
+    id: lote.id,
+    nomeArquivo: lote.nomeArquivo,
+    status: lote.status as LoteUploadResumo["status"],
+    pularValidacaoLemit: lote.pularValidacaoLemit,
+    pularValidacaoWhatsapp: lote.pularValidacaoWhatsapp,
+    totalLinhas: lote.totalLinhas,
+    linhasProcessadas: lote.linhasProcessadas,
+    ofertasCriadas: lote.ofertasCriadas,
+    ofertasResetadas: lote.ofertasResetadas,
+    ofertasDescartadas: lote.ofertasDescartadas,
+    linhasInvalidas: lote.linhasInvalidas,
+    linhasComErro,
+    erro: lote.erro,
+    criadoEm: lote.criadoEm,
+    concluidoEm: lote.concluidoEm,
+  };
 }
