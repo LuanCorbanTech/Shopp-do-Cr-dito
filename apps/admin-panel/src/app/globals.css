@@ -253,6 +253,25 @@ input, select, textarea {
   color: var(--text-primary);
   width: 100%;
 }
+/* A regra genérica acima (width: 100%, padding, border) é pensada pra campo de
+   texto — aplicada sem querer em checkbox/radio, ela dava pro controle uma
+   caixa de layout enorme e invisível (o quadradinho continuava pequeno, mas o
+   espaço que ele ocupava na linha virava a largura inteira do container),
+   empurrando o texto do label pra longe do quadradinho em qualquer label com
+   display:flex. Reseta só pra esses 2 tipos, mantendo o resto do formulário
+   igual. */
+input[type="checkbox"],
+input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  flex: 0 0 auto;
+  accent-color: var(--series-1);
+}
 textarea {
   resize: vertical;
   min-height: 80px;

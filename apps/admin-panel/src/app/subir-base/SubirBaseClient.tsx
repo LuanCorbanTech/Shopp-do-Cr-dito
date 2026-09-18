@@ -208,15 +208,33 @@ export function SubirBaseClient() {
           />
         </div>
 
-        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <input type="checkbox" checked={validarLemit} onChange={(e) => setValidarLemit(e.target.checked)} />
-          Validar CPF na Lemit (desmarque se essa base já vem com telefone confirmado — pula essa etapa pra
-          essas linhas)
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={validarLemit}
+            onChange={(e) => setValidarLemit(e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            Validar CPF na Lemit
+            <span style={{ display: "block", fontSize: 12, color: "var(--text-muted)" }}>
+              Desmarque se essa base já vem com telefone confirmado — pula essa etapa pra essas linhas.
+            </span>
+          </span>
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-          <input type="checkbox" checked={validarWhatsapp} onChange={(e) => setValidarWhatsapp(e.target.checked)} />
-          Validar número no WhatsApp (desmarque se essa base já vem confirmada como tendo WhatsApp — pula essa
-          etapa pra essas linhas)
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 16, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={validarWhatsapp}
+            onChange={(e) => setValidarWhatsapp(e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            Validar número no WhatsApp
+            <span style={{ display: "block", fontSize: 12, color: "var(--text-muted)" }}>
+              Desmarque se essa base já vem confirmada como tendo WhatsApp — pula essa etapa pra essas linhas.
+            </span>
+          </span>
         </label>
 
         {erroEnvio && (
