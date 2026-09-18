@@ -224,12 +224,12 @@ describe("runMargemFactaWorkerOnce", () => {
     expect(resultado.aprovadas).toBe(3);
   });
 
-  it("integração ATIVA, batchSize padrão (sem passar nada): processa só 1 por ciclo mesmo com mais ofertas na fila (respeita o limite de 3s da Facta)", async () => {
+  it("integração ATIVA, batchSize padrão (sem passar nada): processa até 10 por ciclo (limite novo de 12/s da Facta, 18/09 — era 1 por ciclo quando o limite era 1 a cada 3s)", async () => {
     const repo = new InMemoryPipelineRepository();
     repo.setConfig("FACTA_MARGEM_CREDENCIAIS", true, { usuario: "u", senha: "s" });
-    repo.addOffer({ telefoneOriginal: null, cpf: "11111111111" });
-    repo.addOffer({ telefoneOriginal: null, cpf: "22222222222" });
-    repo.addOffer({ telefoneOriginal: null, cpf: "33333333333" });
+    for (let i = 0; i < 12; i += 1) {
+      repo.addOffer({ telefoneOriginal: null, cpf: `1111111110${i}` });
+    }
 
     const resultado = await runMargemFactaWorkerOnce({
       port: repo,
@@ -237,7 +237,68 @@ describe("runMargemFactaWorkerOnce", () => {
       factaService: servicoFake(),
     });
 
-    expect(resultado.aprovadas).toBe(1);
+    // 12 na fila, batchSize padrão agora é 10 — pega só as 10 mais antigas.
+    expect(resultado.aprovadas).toBe(10);
+  });
+
+  it("processa o lote de verdade EM PARALELO, não uma de cada vez (várias consultas com a Facta em voo ao mesmo tempo)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("FACTA_MARGEM_CREDENCIAIS", true, { usuario: "u", senha: "s" });
+    for (let i = 0; i < 5; i += 1) {
+      repo.addOffer({ telefoneOriginal: null, cpf: `3333333330${i}` });
+    }
+
+    let emVoo = 0;
+    let picoEmVoo = 0;
+    const resultado = await runMargemFactaWorkerOnce({
+      port: repo,
+      configPort: repo,
+      batchSize: 5,
+      factaService: servicoFake({
+        consultarCpf: async () => {
+          emVoo += 1;
+          picoEmVoo = Math.max(picoEmVoo, emVoo);
+          // Cede o controle pra dar chance de outras chamadas concorrentes
+          // começarem antes desta terminar — se fosse sequencial (uma de
+          // cada vez), picoEmVoo nunca passaria de 1.
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          emVoo -= 1;
+          return { dados: { valorMargemDisponivel: "100" }, respostaBruta: {} };
+        },
+      }),
+    });
+
+    expect(resultado.aprovadas).toBe(5);
+    expect(picoEmVoo).toBeGreaterThan(1);
+  });
+
+  it("token: se a própria busca do token falhar, aplica erro/retry pra CADA oferta já reivindicada (não trava nem crasha o ciclo)", async () => {
+    const repo = new InMemoryPipelineRepository();
+    repo.setConfig("FACTA_MARGEM_CREDENCIAIS", true, { usuario: "u", senha: "s" });
+    const o1 = repo.addOffer({ telefoneOriginal: null, cpf: "44444444444" });
+    const o2 = repo.addOffer({ telefoneOriginal: null, cpf: "55555555555" });
+
+    const resultado = await runMargemFactaWorkerOnce({
+      port: repo,
+      configPort: repo,
+      batchSize: 2,
+      factaService: servicoFake({
+        gerarToken: async () => { throw new Error("Facta indisponível pra gerar token"); },
+      }),
+    });
+
+    expect(resultado.erros).toBe(2);
+    expect(resultado.aprovadas).toBe(0);
+    const a1 = repo.offers.get(o1.id)!;
+    const a2 = repo.offers.get(o2.id)!;
+    // Continuam RECEBIDO (não ficam presas em CONSULTANDO_MARGEM_FACTA) e
+    // com tentativa/próxima-tentativa registradas, iguais a uma falha
+    // normal de consulta — o worker de retry pega de novo depois.
+    expect(a1.status).toBe("RECEBIDO");
+    expect(a1.tentativasMargemFacta).toBe(1);
+    expect(a1.proximaTentativaMargemEm).not.toBeNull();
+    expect(a2.status).toBe("RECEBIDO");
+    expect(a2.tentativasMargemFacta).toBe(1);
   });
 
   it("integração DESATIVADA: processa MUITO MAIS que 1 por ciclo (usa batchSizeDesativado, não o limite de 3s da Facta que só vale quando ativa), mesmo sem passar o parâmetro explicitamente", async () => {

@@ -1,4 +1,4 @@
-import { logger } from "@plataforma-ofertas/shared";
+import { logger, mapWithConcurrencyLimit } from "@plataforma-ofertas/shared";
 import {
   nextAttemptDate,
   hasExceededMaxAttempts,
@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_TENTATIVAS,
   type MargemFactaPort,
   type IntegrationConfigPort,
+  type OfertaParaMargemSnapshot,
 } from "@plataforma-ofertas/domain";
 import { FactaMargemError, type FactaMargemConfig } from "../fornecedores/facta-margem";
 
@@ -26,18 +27,23 @@ import { FactaMargemError, type FactaMargemConfig } from "../fornecedores/facta-
 //                                 não bloqueia o funil por um problema
 //                                 nosso/da Facta, só não teve como checar)
 //
-// IMPORTANTE — limite de taxa da própria Facta: só pode consultar
-// /clt/base-offline 1 vez a cada 3 segundos. Por isso esse worker processa
-// NO MÁXIMO 1 oferta por ciclo (batchSize sempre 1 na prática — ver
-// index.ts, que chama esse worker num intervalo de ciclo que já respeita
-// essa folga), mesmo que o parâmetro permita mais.
+// IMPORTANTE — limite de taxa da própria Facta: a Facta liberou 12
+// consultas/segundo pra `/clt/base-offline` (18/09 — antes era só 1 a cada
+// 3s). Por isso esse worker agora processa até `batchSize` ofertas por
+// ciclo EM PARALELO (mapWithConcurrencyLimit, mesmo utilitário já usado no
+// recebimento de lote de webhook — ver packages/shared/src/concurrency.ts),
+// com `batchSize` default de 10, com folga em relação aos 12/s liberados
+// (ver index.ts pro intervalo do ciclo). O token é obtido UMA VEZ por ciclo
+// (antes de abrir o lote em paralelo), não por oferta — evita que várias
+// chamadas concorrentes decidam ao mesmo tempo que o cache expirou e gerem
+// token duplicado.
 //
 // EXCEÇÃO (11/09) — integração DESATIVADA no painel: nesse caso não tem
 // NENHUMA chamada de rede pra Facta (é só um "aprova direto", loop local no
-// banco), então o limite de 3s não se aplica e não faz sentido processar só
-// 1 por ciclo — isso deixaria RECEBIDO acumulando indefinidamente sempre
-// que a Facta estiver desligada e o volume de leads for maior que ~1 a
-// cada intervalo do ciclo. Por isso, quando desativada, usa um lote bem
+// banco), então o limite de taxa não se aplica e não faz sentido processar
+// só `batchSize` por ciclo — isso deixaria RECEBIDO acumulando
+// indefinidamente sempre que a Facta estiver desligada e o volume de leads
+// for maior que isso por ciclo. Por isso, quando desativada, usa um lote bem
 // maior (batchSizeDesativado, ver abaixo) pra escoar a fila rápido.
 
 // Serviço injetado (não importa gerarTokenFacta/consultarBaseOfflineFacta
@@ -57,7 +63,12 @@ export interface RunMargemFactaWorkerOnceParams {
   port: MargemFactaPort;
   configPort: IntegrationConfigPort;
   factaService: FactaMargemService;
-  /** Usado só quando a integração está ATIVA (respeita o limite de 3s da Facta). Padrão: 1. */
+  /**
+   * Usado só quando a integração está ATIVA — quantas ofertas esse ciclo
+   * processa, EM PARALELO entre si (respeitando os 12 requisições/segundo
+   * que a Facta liberou pra `/clt/base-offline`, ver comentário no topo do
+   * arquivo). Padrão: 10.
+   */
   batchSize?: number;
   /** Usado só quando a integração está DESATIVADA no painel (sem chamada de rede, não tem limite de taxa). Padrão: 300. */
   batchSizeDesativado?: number;
@@ -80,7 +91,7 @@ function paraNumero(valor: unknown): number | null {
 export async function runMargemFactaWorkerOnce(
   params: RunMargemFactaWorkerOnceParams
 ): Promise<RunMargemFactaWorkerOnceResultado> {
-  const { port, configPort, factaService, batchSize = 1, batchSizeDesativado = 300, now = new Date() } = params;
+  const { port, configPort, factaService, batchSize = 10, batchSizeDesativado = 300, now = new Date() } = params;
 
   let aprovadas = 0;
   let negativas = 0;
@@ -142,6 +153,9 @@ export async function runMargemFactaWorkerOnce(
     return gerado.token;
   }
 
+  // Sem CPF não tem como consultar — resolve na hora (sem chamada de rede),
+  // fora do lote paralelo (não compete pelo limite de taxa da Facta).
+  const ofertasComCpf: OfertaParaMargemSnapshot[] = [];
   for (const oferta of ofertas) {
     if (!oferta.cpf) {
       await port.marcarMargemAprovada(oferta.id, { valorMargemDisponivel: null, dadosCompletos: null });
@@ -149,55 +163,101 @@ export async function runMargemFactaWorkerOnce(
       logger.info({ offerId: oferta.id }, "Consulta de margem Facta ignorada: lead sem CPF, liberado sem checar.");
       continue;
     }
+    ofertasComCpf.push(oferta);
+  }
 
+  if (ofertasComCpf.length === 0) {
+    return { aprovadas, negativas, aguardandoOnline, erros };
+  }
+
+  type Desfecho = "aprovada" | "negativa" | "aguardandoOnline" | "erro";
+
+  // Mesma lógica de erro/retry/falha-aberta de sempre, só extraída em
+  // função (18/09) porque agora tem 2 lugares que podem precisar dela: uma
+  // falha ao CONSULTAR o CPF (como sempre) e uma falha ao OBTER O TOKEN em
+  // si (novo, ver abaixo — antes o token era buscado dentro do try/catch de
+  // cada oferta; agora é buscado 1 vez só, fora do lote paralelo, então
+  // precisa desse tratamento separado pra não deixar as ofertas já
+  // reivindicadas (claimOffersParaMargem já marcou como
+  // CONSULTANDO_MARGEM_FACTA) presas pra sempre nesse status transitório
+  // caso a busca do token falhe).
+  async function tratarFalha(oferta: OfertaParaMargemSnapshot, error: unknown): Promise<Desfecho> {
     const tentativa = oferta.tentativasMargemFacta + 1;
+    const mensagem = error instanceof Error ? error.message : String(error);
+    const cancelar = hasExceededMaxAttempts(tentativa, maxTentativas);
+
+    if (cancelar) {
+      // Esgotou as tentativas — "falha aberta": libera pro fluxo normal em
+      // vez de deixar o lead preso pra sempre por causa de uma
+      // instabilidade da Facta (ou nossa). Fica registrado no log e nos
+      // dados salvos (dadosCompletos null + erro só no log) que essa
+      // oferta especificamente NÃO foi checada de verdade.
+      await port.marcarMargemAprovada(oferta.id, { valorMargemDisponivel: null, dadosCompletos: null });
+      logger.error(
+        { offerId: oferta.id, tentativa, error: mensagem },
+        "Consulta de margem Facta falhou repetidamente — liberado sem checar (falha aberta) após esgotar tentativas."
+      );
+      return "aprovada";
+    }
+
+    await port.marcarErroMargem(oferta.id, {
+      erro: mensagem,
+      tentativa,
+      proximaTentativaEm: nextAttemptDate(tentativa, now, schedule),
+    });
+    const rateLimited = error instanceof FactaMargemError && error.rateLimited;
+    logger.warn({ offerId: oferta.id, tentativa, rateLimited, error: mensagem }, "Falha na consulta de margem Facta");
+    return "erro";
+  }
+
+  // Token obtido UMA VEZ, antes de abrir o lote em paralelo (não por
+  // oferta) — senão, com várias chamadas concorrentes, todas poderiam ver o
+  // cache como expirado ao mesmo tempo e cada uma gerar um token novo à toa.
+  let token: string;
+  try {
+    token = await obterTokenValido();
+  } catch (error) {
+    // Sem token não dá pra consultar ninguém desse lote — aplica a mesma
+    // lógica de erro/retry/falha-aberta pra CADA oferta já reivindicada
+    // (sequencial aqui é suficiente: é só gravação local no banco, sem
+    // chamada de rede, então não tem limite de taxa a respeitar).
+    for (const oferta of ofertasComCpf) {
+      const desfecho = await tratarFalha(oferta, error);
+      if (desfecho === "aprovada") aprovadas += 1;
+      else erros += 1;
+    }
+    return { aprovadas, negativas, aguardandoOnline, erros };
+  }
+
+  // Processa até `batchSize` ofertas EM PARALELO (mapWithConcurrencyLimit) —
+  // ver comentário no topo do arquivo sobre o limite de 12/s da Facta.
+  const desfechos = await mapWithConcurrencyLimit(ofertasComCpf, batchSize, async (oferta): Promise<Desfecho> => {
     try {
-      const token = await obterTokenValido();
-      const resultado = await factaService.consultarCpf(factaConfig, token, oferta.cpf);
+      const resultado = await factaService.consultarCpf(factaConfig, token, oferta.cpf as string);
 
       if (resultado.dados === null) {
         await port.marcarAguardandoConsultaOnline(oferta.id, resultado.respostaBruta);
-        aguardandoOnline += 1;
-        continue;
+        return "aguardandoOnline";
       }
 
       const valorMargem = paraNumero(resultado.dados.valorMargemDisponivel);
       if (valorMargem !== null && valorMargem > 0) {
         await port.marcarMargemAprovada(oferta.id, { valorMargemDisponivel: valorMargem, dadosCompletos: resultado.dados });
-        aprovadas += 1;
-      } else {
-        await port.marcarMargemNegativa(oferta.id, { valorMargemDisponivel: valorMargem ?? 0, dadosCompletos: resultado.dados });
-        negativas += 1;
-        logger.info({ offerId: oferta.id, valorMargem }, "Margem indisponível (Facta) — processo encerrado.");
+        return "aprovada";
       }
+      await port.marcarMargemNegativa(oferta.id, { valorMargemDisponivel: valorMargem ?? 0, dadosCompletos: resultado.dados });
+      logger.info({ offerId: oferta.id, valorMargem }, "Margem indisponível (Facta) — processo encerrado.");
+      return "negativa";
     } catch (error) {
-      const mensagem = error instanceof Error ? error.message : String(error);
-      const cancelar = hasExceededMaxAttempts(tentativa, maxTentativas);
-
-      if (cancelar) {
-        // Esgotou as tentativas — "falha aberta": libera pro fluxo normal em
-        // vez de deixar o lead preso pra sempre por causa de uma
-        // instabilidade da Facta (ou nossa). Fica registrado no log e nos
-        // dados salvos (dadosCompletos null + erro só no log) que essa
-        // oferta especificamente NÃO foi checada de verdade.
-        await port.marcarMargemAprovada(oferta.id, { valorMargemDisponivel: null, dadosCompletos: null });
-        aprovadas += 1;
-        logger.error(
-          { offerId: oferta.id, tentativa, error: mensagem },
-          "Consulta de margem Facta falhou repetidamente — liberado sem checar (falha aberta) após esgotar tentativas."
-        );
-        continue;
-      }
-
-      await port.marcarErroMargem(oferta.id, {
-        erro: mensagem,
-        tentativa,
-        proximaTentativaEm: nextAttemptDate(tentativa, now, schedule),
-      });
-      erros += 1;
-      const rateLimited = error instanceof FactaMargemError && error.rateLimited;
-      logger.warn({ offerId: oferta.id, tentativa, rateLimited, error: mensagem }, "Falha na consulta de margem Facta");
+      return tratarFalha(oferta, error);
     }
+  });
+
+  for (const desfecho of desfechos) {
+    if (desfecho === "aprovada") aprovadas += 1;
+    else if (desfecho === "negativa") negativas += 1;
+    else if (desfecho === "aguardandoOnline") aguardandoOnline += 1;
+    else erros += 1;
   }
 
   return { aprovadas, negativas, aguardandoOnline, erros };
