@@ -1,6 +1,6 @@
-import type { DispatchPollPort, OfferSnapshot } from "@plataforma-ofertas/domain";
+import type { DispatchPollPort, OfferSnapshot, OfferParaDisparoSnapshot } from "@plataforma-ofertas/domain";
 
-export function fakeOferta(overrides: Partial<OfferSnapshot> = {}): OfferSnapshot {
+export function fakeOferta(overrides: Partial<OfferParaDisparoSnapshot> = {}): OfferParaDisparoSnapshot {
   return {
     id: "offer-1",
     webhookId: "webhook-1",
@@ -27,20 +27,22 @@ export function fakeOferta(overrides: Partial<OfferSnapshot> = {}): OfferSnapsho
     whatsappCheckIniciadoEm: null,
     pularValidacaoLemit: false,
     pularValidacaoWhatsapp: false,
+    // fornecedor (18/09) — padrão simula uma oferta de webhook de parceiro.
+    fornecedor: "odysseia",
     ...overrides,
   };
 }
 
 export class FakeDispatchPollPort implements DispatchPollPort {
-  ofertasDisponiveis: OfferSnapshot[] = [];
+  ofertasDisponiveis: OfferParaDisparoSnapshot[] = [];
   ultimoLimitPedido: number | null = null;
   // chave: id ou externalId usado na chamada -> a oferta "existente" nesse fake
-  ofertasPorChave: Map<string, OfferSnapshot> = new Map();
+  ofertasPorChave: Map<string, OfferParaDisparoSnapshot> = new Map();
   // Origem (nome do webhook/parceiro) por id de oferta — pros testes que
   // precisam de um valor específico; sem entrada aqui, usa um padrão.
   origemPorOfertaId: Map<string, string> = new Map();
 
-  async claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]> {
+  async claimOffersAguardandoDisparo(limit: number): Promise<OfferParaDisparoSnapshot[]> {
     this.ultimoLimitPedido = limit;
     const consumidas = this.ofertasDisponiveis.slice(0, limit);
     // simula o consumo atômico: uma vez lida, não aparece mais.

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { logger } from "@plataforma-ofertas/shared";
-import type { OfferSnapshot } from "@plataforma-ofertas/domain";
+import type { OfferSnapshot, OfferParaDisparoSnapshot } from "@plataforma-ofertas/domain";
 
 // Worker 8 — Disparo individual (push). Diferente do endpoint GET
 // /api/v1/leads/aguardando-disparo (onde um sistema externo é quem puxa,
@@ -36,7 +36,7 @@ import type { OfferSnapshot } from "@plataforma-ofertas/domain";
 // envio é independente (Promise.allSettled, não Promise.all).
 
 export interface DisparoIndividualPort {
-  claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]>;
+  claimOffersAguardandoDisparo(limit: number): Promise<OfferParaDisparoSnapshot[]>;
   // Grava cada tentativa (sucesso ou falha) pra ficar visível na tela de
   // detalhes da oferta — nunca lança exceção nem trava o envio em si (ver
   // uso em enviarParaEndpoint: chamado depois de decidir o resultado, e
@@ -92,6 +92,11 @@ export interface DisparoIndividualBodyHyperflow {
   produto: string | null;
   valor: number | null;
   parcelas: number | null;
+  // fornecedor (18/09) — identificador do webhook de parceiro (ex.:
+  // "odysseia"), ou "base_upload" pra ofertas vindas de planilha (Subir
+  // Base). Só nesse modelo — "ararahq" mantém o contrato mínimo já
+  // combinado com esse cliente (ver montarDisparoIndividualBodyAraraHQ).
+  fornecedor: string;
 }
 
 // Formato do modelo "ararahq" — bem mais simples, confirmado com o cliente:
@@ -101,7 +106,7 @@ export interface DisparoIndividualBodyAraraHQ {
   name: string | null;
 }
 
-export function montarDisparoIndividualBody(o: OfferSnapshot): DisparoIndividualBodyHyperflow {
+export function montarDisparoIndividualBody(o: OfferParaDisparoSnapshot): DisparoIndividualBodyHyperflow {
   return {
     id: o.id,
     externalId: o.externalId,
@@ -114,6 +119,7 @@ export function montarDisparoIndividualBody(o: OfferSnapshot): DisparoIndividual
     produto: o.produto,
     valor: o.valor,
     parcelas: o.parcelas,
+    fornecedor: o.fornecedor,
   };
 }
 
@@ -148,7 +154,7 @@ interface RequisicaoMontada {
 
 function montarRequisicao(
   endpoint: DisparoIndividualEndpoint,
-  lead: OfferSnapshot,
+  lead: OfferParaDisparoSnapshot,
   ararahqApiKey: string | null | undefined,
   gerarIdempotencyKey: () => string
 ): RequisicaoMontada {
@@ -197,7 +203,7 @@ async function registrarTentativaComSeguranca(
 
 async function enviarParaEndpoint(
   endpoint: DisparoIndividualEndpoint,
-  lead: OfferSnapshot,
+  lead: OfferParaDisparoSnapshot,
   fetchImpl: typeof fetch,
   timeoutMs: number,
   ararahqApiKey: string | null | undefined,

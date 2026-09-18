@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OfferSnapshot } from "@plataforma-ofertas/domain";
+import type { OfferParaDisparoSnapshot } from "@plataforma-ofertas/domain";
 import {
   montarDisparoIndividualBody,
   montarDisparoIndividualBodyAraraHQ,
@@ -7,7 +7,7 @@ import {
   type DisparoIndividualEndpoint,
 } from "./worker8-disparo-individual";
 
-function ofertaFake(overrides: Partial<OfferSnapshot> = {}): OfferSnapshot {
+function ofertaFake(overrides: Partial<OfferParaDisparoSnapshot> = {}): OfferParaDisparoSnapshot {
   return {
     id: "offer-1",
     webhookId: "webhook-1",
@@ -34,6 +34,8 @@ function ofertaFake(overrides: Partial<OfferSnapshot> = {}): OfferSnapshot {
     whatsappCheckIniciadoEm: null,
     pularValidacaoLemit: false,
     pularValidacaoWhatsapp: false,
+    // fornecedor (18/09) — padrão simula uma oferta de webhook de parceiro.
+    fornecedor: "odysseia",
     ...overrides,
   };
 }
@@ -62,12 +64,21 @@ describe("montarDisparoIndividualBody", () => {
       produto: "consignado",
       valor: 5000,
       parcelas: 12,
+      fornecedor: "odysseia",
     });
   });
 
   it("dataNascimento nula vira null, não quebra", () => {
     const body = montarDisparoIndividualBody(ofertaFake({ dataNascimento: null }));
     expect(body.dataNascimento).toBeNull();
+  });
+
+  // fornecedor (18/09) — pedido explícito: "odysseia" pra oferta de webhook
+  // de parceiro, "base_upload" (literal, não o identificador real do
+  // webhook interno) pra oferta vinda de planilha.
+  it("fornecedor vem exatamente como a claim devolveu — inclusive 'base_upload' pra base de upload", () => {
+    const body = montarDisparoIndividualBody(ofertaFake({ fornecedor: "base_upload" }));
+    expect(body.fornecedor).toBe("base_upload");
   });
 });
 
@@ -376,6 +387,15 @@ describe("montarDisparoIndividualBodyAraraHQ", () => {
   it("telefone nulo vira null, não quebra", () => {
     const body = montarDisparoIndividualBodyAraraHQ(ofertaFake({ telefoneValidado: null }));
     expect(body.phone).toBeNull();
+  });
+
+  // fornecedor (18/09) — confirmado explicitamente com o Lucas: "quando for
+  // ararahq não precisa enviar fornecedor". O contrato {phone, name} não tem
+  // esse campo, mesmo que a oferta em si tenha um "fornecedor" definido.
+  it("nunca inclui 'fornecedor' — contrato mínimo já combinado com esse cliente", () => {
+    const body = montarDisparoIndividualBodyAraraHQ(ofertaFake({ fornecedor: "base_upload" }));
+    expect(body).not.toHaveProperty("fornecedor");
+    expect(Object.keys(body).sort()).toEqual(["name", "phone"]);
   });
 });
 

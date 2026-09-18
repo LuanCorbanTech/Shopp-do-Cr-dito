@@ -58,7 +58,25 @@ describe("GET /api/v1/leads/aguardando-disparo", () => {
       dataNascimento: "1990-02-03T02:00:00.000Z",
       telefoneWhatsapp: "5562993718537",
       possuiWhatsapp: true,
+      fornecedor: "odysseia",
     });
+  });
+
+  // fornecedor (18/09) — pedido explícito: identificador do webhook (ex.:
+  // "odysseia") pra lead de parceiro, "base_upload" (literal) pra lead vindo
+  // de planilha (Subir Base).
+  it("fornecedor vem como 'base_upload' pra ofertas da base de upload", async () => {
+    const port = new FakeDispatchPollPort();
+    port.ofertasDisponiveis = [fakeOferta({ fornecedor: "base_upload" })];
+    const app = buildApp(port, TOKEN);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leads/aguardando-disparo",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+
+    expect(res.json().leads[0].fornecedor).toBe("base_upload");
   });
 
   it("usa limit=50 por padrão e respeita o teto de 200", async () => {

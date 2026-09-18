@@ -59,6 +59,9 @@ export function registerAguardandoDisparoRoutes(
           produto: o.produto,
           valor: o.valor,
           parcelas: o.parcelas,
+          // fornecedor (18/09) — identificador do webhook de parceiro (ex.:
+          // "odysseia"), ou "base_upload" pra ofertas vindas de planilha.
+          fornecedor: o.fornecedor,
         })),
       };
     }

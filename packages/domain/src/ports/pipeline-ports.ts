@@ -44,6 +44,28 @@ export interface OfferSnapshot {
 }
 
 // ---------------------------------------------------------------------------
+// "fornecedor" no disparo (18/09) — pedido do Lucas: o sistema externo de
+// disparo (Hyperflow) quer saber a origem de cada lead. Não vira campo do
+// OfferSnapshot genérico (usado por TODOS os workers, a maioria sem
+// nenhuma relação com disparo) pra não precisar de um JOIN com webhooks em
+// toda consulta do pipeline — só as duas consultas que alimentam o disparo
+// (claimOffersAguardandoDisparo, usada tanto pelo polling GET quanto pelo
+// push do Worker 8) calculam e devolvem esse valor extra.
+// ---------------------------------------------------------------------------
+
+export interface OfferParaDisparoSnapshot extends OfferSnapshot {
+  /**
+   * Identificador (slug) do webhook de parceiro que originou a oferta (ex.:
+   * "odysseia") — ou o literal fixo "base_upload" quando a oferta veio de
+   * uma planilha (Subir Base), em vez do identificador real do webhook
+   * interno "Base Upload" ("base-upload-interna"): o disparador externo
+   * pediu especificamente esse valor fixo pra esse caso, não o identificador
+   * de verdade.
+   */
+  fornecedor: string;
+}
+
+// ---------------------------------------------------------------------------
 // Configuração dinâmica (seção 27 do escopo original)
 // ---------------------------------------------------------------------------
 
@@ -334,9 +356,10 @@ export interface DispatchPollPort {
    * Reserva e marca como DISPARO_CONSULTADO até `limit` ofertas em
    * AGUARDANDO_DISPARO (mais antigas primeiro), devolvendo os dados delas.
    * Operação atômica de "ler e consumir" — chamadas concorrentes nunca pegam
-   * a mesma oferta.
+   * a mesma oferta. Inclui o campo "fornecedor" (18/09) — ver
+   * OfferParaDisparoSnapshot.
    */
-  claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]>;
+  claimOffersAguardandoDisparo(limit: number): Promise<OfferParaDisparoSnapshot[]>;
 
   /**
    * Atualiza o status de disparo de uma oferta específica (chamado pelo

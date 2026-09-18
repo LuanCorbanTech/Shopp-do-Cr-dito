@@ -12,6 +12,7 @@ import type {
   ReconciliationPort,
   StuckOfferSnapshot,
   OfferSnapshot,
+  OfferParaDisparoSnapshot,
   DispatchPollPort,
   InfoPessoaLemit,
   MargemFactaPort,
@@ -100,6 +101,36 @@ function mapRow(row: OfferRow): OfferSnapshot {
     pularValidacaoLemit: row.pularValidacaoLemit,
     pularValidacaoWhatsapp: row.pularValidacaoWhatsapp,
   };
+}
+
+// "fornecedor" no disparo (18/09) — só as 2 consultas que alimentam o
+// disparo (claimAguardandoDisparoSemProporcao e claimOneAguardandoDisparoPorTipo,
+// por baixo de claimOffersAguardandoDisparo) precisam desse campo extra, então
+// em vez de mexer no OFFER_COLUMNS_SQL/OfferRow/mapRow genéricos (reusados por
+// TODAS as outras consultas do pipeline, que não têm nenhuma relação com
+// disparo), essas 2 consultas fazem JOIN com webhooks e usam esse conjunto de
+// colunas à parte — com "offers." explícito no id pra não ficar ambíguo com o
+// id da tabela webhooks depois do JOIN.
+type OfferRowComFornecedor = OfferRow & { fornecedor: string };
+
+const OFFER_COLUMNS_COM_FORNECEDOR_SQL = Prisma.sql`
+  offers.id, offers.webhook_id AS "webhookId", offers.external_id AS "externalId", offers.nome, offers.cpf,
+  offers.data_nascimento AS "dataNascimento",
+  offers.telefone_original AS "telefoneOriginal", offers.telefone_atualizado AS "telefoneAtualizado",
+  offers.telefone_validado AS "telefoneValidado", offers.possui_whatsapp AS "possuiWhatsapp",
+  offers.banco_autorizado AS "bancoAutorizado",
+  offers.produto, offers.valor, offers.parcelas, offers.status::text AS status,
+  offers.routing_rule_id AS "routingRuleId", offers.endpoint_id AS "endpointId",
+  offers.tentativas_telefone AS "tentativasTelefone", offers.tentativas_whatsapp AS "tentativasWhatsapp",
+  offers.tentativas_envio AS "tentativasEnvio", offers.reserved_at AS "reservedAt",
+  offers.whatsapp_request_id AS "whatsappRequestId", offers.whatsapp_lote_id AS "whatsappLoteId",
+  offers.whatsapp_check_iniciado_em AS "whatsappCheckIniciadoEm",
+  offers.pular_validacao_lemit AS "pularValidacaoLemit", offers.pular_validacao_whatsapp AS "pularValidacaoWhatsapp",
+  CASE WHEN w.tipo = 'BASE_UPLOAD'::"OrigemWebhookTipo" THEN 'base_upload' ELSE w.identificador END AS "fornecedor"
+`;
+
+function mapRowParaDisparo(row: OfferRowComFornecedor): OfferParaDisparoSnapshot {
+  return { ...mapRow(row), fornecedor: row.fornecedor };
 }
 
 export class PrismaPipelineRepository
@@ -776,7 +807,7 @@ export class PrismaPipelineRepository
   // ofertas UMA POR VEZ (decidindo a cada uma de qual origem tirar,
   // olhando pro histórico desde que a proporção foi configurada), porque
   // não dá pra saber de antemão quantas de cada tipo existem disponíveis.
-  async claimOffersAguardandoDisparo(limit: number): Promise<OfferSnapshot[]> {
+  async claimOffersAguardandoDisparo(limit: number): Promise<OfferParaDisparoSnapshot[]> {
     if (limit <= 0) return [];
     const config = await this.buscarConfiguracaoProporcao();
     const semProporcao =
@@ -788,7 +819,7 @@ export class PrismaPipelineRepository
     let contFornecedor = await this.contarDisparadosPorTipoDesde("FORNECEDOR", config.vigenteDesde);
     let contUpload = await this.contarDisparadosPorTipoDesde("BASE_UPLOAD", config.vigenteDesde);
 
-    const resultado: OfferSnapshot[] = [];
+    const resultado: OfferParaDisparoSnapshot[] = [];
     for (let i = 0; i < limit; i++) {
       // Quem estiver mais "atrasado" em relação ao peso configurado (menor
       // razão contagem/peso) tira a vez primeiro — round-robin ponderado
@@ -816,44 +847,55 @@ export class PrismaPipelineRepository
     return resultado;
   }
 
-  private async claimAguardandoDisparoSemProporcao(limit: number): Promise<OfferSnapshot[]> {
+  private async claimAguardandoDisparoSemProporcao(limit: number): Promise<OfferParaDisparoSnapshot[]> {
     // Mesmo padrão atômico de claimByStatus (UPDATE...RETURNING com FOR UPDATE
     // SKIP LOCKED) — chamadas concorrentes ao endpoint nunca pegam a mesma
     // oferta. DISPARO_CONSULTADO é terminal: a oferta nunca mais aparece aqui.
     // disparo_consultado_em marcado igual ao caminho com proporção, pra
     // manter o contador consistente se a proporção for ativada depois.
-    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+    // JOIN com webhooks (18/09) só pra devolver o "fornecedor" — usa UPDATE
+    // ... FROM (join) pra poder incluir a coluna computada no RETURNING; a
+    // seleção/travamento das linhas (SKIP LOCKED) continua olhando só pra
+    // offers, sem mudança de comportamento nenhuma.
+    const rows = await this.prisma.$queryRaw<OfferRowComFornecedor[]>`
       UPDATE offers
       SET status = 'DISPARO_CONSULTADO'::"OfferStatus", disparo_consultado_em = now(), updated_at = now()
-      WHERE id IN (
-        SELECT id FROM offers
-        WHERE status = 'AGUARDANDO_DISPARO'::"OfferStatus"
-        ORDER BY created_at
-        LIMIT ${limit}
-        FOR UPDATE SKIP LOCKED
-      )
-      RETURNING ${OFFER_COLUMNS_SQL}
+      FROM webhooks w
+      WHERE offers.webhook_id = w.id
+        AND offers.id IN (
+          SELECT id FROM offers
+          WHERE status = 'AGUARDANDO_DISPARO'::"OfferStatus"
+          ORDER BY created_at
+          LIMIT ${limit}
+          FOR UPDATE SKIP LOCKED
+        )
+      RETURNING ${OFFER_COLUMNS_COM_FORNECEDOR_SQL}
     `;
-    return rows.map(mapRow);
+    return rows.map(mapRowParaDisparo);
   }
 
   private async claimOneAguardandoDisparoPorTipo(
     tipo: "FORNECEDOR" | "BASE_UPLOAD"
-  ): Promise<OfferSnapshot | null> {
-    const rows = await this.prisma.$queryRaw<OfferRow[]>`
+  ): Promise<OfferParaDisparoSnapshot | null> {
+    // Mesmo JOIN-pra-RETURNING de claimAguardandoDisparoSemProporcao acima —
+    // a subquery mantém seu próprio JOIN (alias w2) só pra filtrar por tipo;
+    // o JOIN externo (alias w) é só pra expor "fornecedor" no RETURNING.
+    const rows = await this.prisma.$queryRaw<OfferRowComFornecedor[]>`
       UPDATE offers
       SET status = 'DISPARO_CONSULTADO'::"OfferStatus", disparo_consultado_em = now(), updated_at = now()
-      WHERE id = (
-        SELECT o.id FROM offers o
-        JOIN webhooks w ON w.id = o.webhook_id
-        WHERE o.status = 'AGUARDANDO_DISPARO'::"OfferStatus" AND w.tipo = ${tipo}::"OrigemWebhookTipo"
-        ORDER BY o.created_at
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )
-      RETURNING ${OFFER_COLUMNS_SQL}
+      FROM webhooks w
+      WHERE offers.webhook_id = w.id
+        AND offers.id = (
+          SELECT o.id FROM offers o
+          JOIN webhooks w2 ON w2.id = o.webhook_id
+          WHERE o.status = 'AGUARDANDO_DISPARO'::"OfferStatus" AND w2.tipo = ${tipo}::"OrigemWebhookTipo"
+          ORDER BY o.created_at
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        )
+      RETURNING ${OFFER_COLUMNS_COM_FORNECEDOR_SQL}
     `;
-    return rows[0] ? mapRow(rows[0]) : null;
+    return rows[0] ? mapRowParaDisparo(rows[0]) : null;
   }
 
   private async contarDisparadosPorTipoDesde(tipo: "FORNECEDOR" | "BASE_UPLOAD", desde: Date): Promise<number> {
