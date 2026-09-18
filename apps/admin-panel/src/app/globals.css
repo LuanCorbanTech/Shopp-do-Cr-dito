@@ -304,6 +304,31 @@ textarea {
   color: var(--text-primary);
 }
 
+/* Botão "Atualizar" da barra de filtros do Dashboard — usa o mesmo
+   button.secondary de sempre (fundo transparente, borda, texto padrão),
+   só adiciona o layout do ícone + o giro suave enquanto carrega. */
+.btn-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+}
+.btn-refresh:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn-refresh .icon-refresh {
+  display: inline-flex;
+  line-height: 0;
+}
+.btn-refresh .icon-refresh.spinning {
+  animation: btn-refresh-spin 0.85s linear infinite;
+}
+@keyframes btn-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* multi-select de status: botão que abre um painel com checkboxes */
 .multiselect {
   position: relative;
@@ -732,7 +757,7 @@ textarea {
 @media (max-width: 640px) {
   .dash-header { flex-direction: column; align-items: stretch; }
   .dash-filters { flex-direction: column; align-items: stretch; }
-  .dash-filters select, .dash-filters input[type="date"], .multiselect-btn { width: 100%; }
+  .dash-filters select, .dash-filters input[type="date"], .multiselect-btn, .btn-refresh { width: 100%; justify-content: center; }
   .action-bar { flex-direction: column; align-items: stretch; }
   .action-bar input[type="text"] { min-width: 0; }
   .kpi-grid { grid-template-columns: 1fr 1fr; }

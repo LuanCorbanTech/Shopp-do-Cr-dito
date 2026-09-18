@@ -150,6 +150,18 @@ function IconCheckCheck() {
     </svg>
   );
 }
+// Ícone do botão "Atualizar" (setas circulares) — gira via CSS (classe
+// "spinning", aplicada só enquanto `carregando` é true; ver globals.css).
+function IconRefresh() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M23 4v6h-6" />
+      <path d="M1 20v-6h6" />
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+      <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
+    </svg>
+  );
+}
 
 function KpiCard({
   icon,
@@ -315,6 +327,25 @@ export function DashboardClient() {
             <option value="mes">Este mês</option>
             <option value="personalizado">Personalizado</option>
           </select>
+          {/* Botão "Atualizar" (14/09) — reaproveita a MESMA função `carregar`
+              usada no efeito de troca de período e no auto-refresh de 30s (sem
+              lógica nova): sempre lê periodo/customFrom/customTo/statusSelecionados
+              atuais (closure do useCallback), desabilita durante o carregamento
+              (evita clique duplicado) e o próprio `carregar` já reseta o
+              contador de 30s no "finally" — não precisa de nada extra pra isso. */}
+          <button
+            type="button"
+            className="secondary btn-refresh"
+            onClick={carregar}
+            disabled={carregando}
+            aria-label="Atualizar dashboard agora"
+            title="Atualizar agora"
+          >
+            <span className={`icon-refresh${carregando ? " spinning" : ""}`} aria-hidden="true">
+              <IconRefresh />
+            </span>
+            Atualizar
+          </button>
           {periodo === "personalizado" && (
             <>
               <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
